@@ -50,19 +50,33 @@ class LandlordCounterApp:
         """主循环。rounds=None 表示一直运行"""
         if not self._check_environment():
             return
+        use_vlm = self.recognizer.cfg.vlm_available() and self.recognizer.profile.vlm_first
         last_hand: list[str] = []
+        last_sig: Optional[bytes] = None  # 手牌行像素签名，变了才调 VLM（省调用）
         n_round = 0
-        print("▶ 记牌器运行中... (Ctrl+C 退出)\n")
+        print(f"▶ 记牌器运行中... (Ctrl+C 退出)  识别链路: {'VLM直读(' + self.recognizer.cfg.vlm_model + ')' if use_vlm else '模板匹配'}\n")
         try:
             while rounds is None or n_round < rounds:
                 try:
-                    hand = self.recognizer.recognize_hand_best(
-                        self.capturer.capture_roi(self.cfg.screen.hand_roi)
-                    )
+                    img = self.capturer.capture()  # 整屏（VLM 直读需自行定位手牌行）
                 except ADBError as e:
                     print(f"⚠ 截屏失败: {e}，1秒后重试")
                     time.sleep(1)
                     continue
+
+                if use_vlm:
+                    sig = self._band_signature(img)
+                    if sig != last_sig:
+                        hand = self.recognizer.read_hand_vlm(img)
+                        last_sig = sig
+                    else:
+                        hand = last_hand  # 画面没变，沿用上次结果，不重复调用 VLM
+                else:
+                    roi = img[
+                        int(self.cfg.screen.hand_roi[1] * img.shape[0]) : int(self.cfg.screen.hand_roi[3] * img.shape[0]),
+                        int(self.cfg.screen.hand_roi[0] * img.shape[1]) : int(self.cfg.screen.hand_roi[2] * img.shape[1]),
+                    ]
+                    hand = self.recognizer.recognize_hand_best(roi)
 
                 if hand and hand != last_hand:
                     # 手牌变化 → 推导谁出了什么牌
@@ -75,6 +89,18 @@ class LandlordCounterApp:
                 n_round += 1
         except KeyboardInterrupt:
             print("\n■ 已停止")
+
+    @staticmethod
+    def _band_signature(img) -> Optional[bytes]:
+        """整屏缩小灰度指纹：画面变化(含对手出牌/切页)才触发 VLM，避免空轮询烧 token。"""
+        try:
+            import cv2
+
+            small = cv2.resize(img, (64, 36), interpolation=cv2.INTER_AREA)
+            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+            return gray.tobytes()
+        except Exception:
+            return None
 
     def _on_hand_change(self, old: list[str], new: list[str]):
         """手牌变化时更新记牌状态"""

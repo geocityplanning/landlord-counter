@@ -32,6 +32,84 @@ class CardRecognizer:
         self.cfg = config
         self.templates: dict[str, np.ndarray] = self._load_templates()
         self._masks: dict[str, np.ndarray] = self._build_masks()
+        # 游戏视觉适配包（doudizhu_wishday 等）：决定怎么"看懂"当前 App 的画面
+        from ..profiles import get_profile
+
+        self.profile = get_profile(config.profile_name)
+
+    # ---------- VLM 直读主链路（模板对重度重叠画面失效时的正解） ----------
+
+    def locate_hand_band(self, img: np.ndarray) -> Optional[tuple[int, int, int, int]]:
+        """定位手牌行亮色条带 (x0,y0,x1,y1)。策略: 找白色(卡面)行带, 取最底部一条。
+
+        适配 wishday 等横屏斗地主：手牌是屏幕底部一行白色扇形。
+        """
+        if img is None or img.size == 0:
+            return None
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape[:2]
+        # 每行亮像素计数
+        rows = []
+        for y in range(0, h, 2):
+            c = int(np.sum(gray[y : y + 2, ::4] > 225))
+            rows.append((y, c))
+        mx = max((c for _, c in rows), default=0)
+        if mx <= 0:
+            return None
+        # 聚合行带
+        bands = []
+        for y, c in rows:
+            if c > mx * self.profile.band_min_ratio:
+                if bands and y - bands[-1][1] <= 6:
+                    bands[-1][1] = y
+                else:
+                    bands.append([y, y])
+        if not bands:
+            return None
+        band = bands[-1]  # 最底部 = 自己手牌
+        y0, y1 = max(0, band[0] - self.profile.crop_pad), min(h, band[1] + self.profile.crop_pad)
+        # 横向范围: 带内亮列
+        strip = gray[y0:y1, :]
+        cols = np.where(np.sum(strip > 225, axis=0) > 0)[0]
+        if cols.size == 0:
+            return None
+        x0, x1 = max(0, int(cols.min()) - self.profile.crop_pad), min(w, int(cols.max()) + self.profile.crop_pad)
+        return (x0, y0, x1, y1)
+
+    def read_hand_vlm(self, img_full: np.ndarray, expected: int = 0) -> list[str]:
+        """按 profile 从整屏截图直读手牌: 定位亮带 → 裁剪放大 → VLM → 解析点数。"""
+        if not self.cfg.vlm_available():
+            return []
+        band = self.locate_hand_band(img_full)
+        if band is None:
+            return []
+        x0, y0, x1, y1 = band
+        roi = img_full[y0:y1, x0:x1]
+        if roi.size == 0:
+            return []
+        scale = self.profile.upscale
+        if scale != 1.0:
+            roi = cv2.resize(roi, (int(roi.shape[1] * scale), int(roi.shape[0] * scale)), interpolation=cv2.INTER_LANCZOS4)
+        n_expect = expected or self.profile.expected_cards
+        # profile 提示词里嵌入期望张数（构造专用提示）
+        prompt = self._band_prompt(n_expect)
+        text = self.recognize_with_vlm(roi, prompt)
+        if not text:
+            return []
+        from ..profiles import parse_rank_tokens
+
+        ranks = parse_rank_tokens(text)
+        return ranks[: max(n_expect, 24)] if ranks else []
+
+    def _band_prompt(self, expected: int) -> str:
+        from ..profiles import _build_prompt
+
+        return _build_prompt(expected, self.profile.display) if self.profile.vlm_prompt == "" else (
+            self.profile.vlm_prompt
+            + (f" 你应该输出 {expected} 个点数。" if expected > 0 else "")
+            + " 只输出点数列表，从左到右，逗号分隔。"
+        )
+
 
     def _load_templates(self) -> dict[str, np.ndarray]:
         """加载模板图片（assets/card_templates/<rank>.png）"""

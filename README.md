@@ -46,17 +46,23 @@ adb devices          # 应看到设备
 uv run landlord-counter
 ```
 
-## 🔧 配置（环境变量）
+## 🔧 配置（环境变量，或复制 `.env.example` 为 `.env`）
 
 | 变量 | 说明 | 默认 |
 |------|------|------|
-| `VLM_API_KEY` | 视觉大模型密钥（模板识别失败时兜底） | 空（不用） |
-| `VLM_API_BASE` | VLM 服务地址 | 空 |
-| `VLM_MODEL` | VLM 模型名 | 空 |
+| `ADB_SERIAL` | 设备序列号（多设备必填，如 127.0.0.1:5555） | 空(自动选唯一设备) |
+| `GAME_PROFILE` | 游戏视觉适配包（`doudizhu_wishday`…） | `doudizhu_wishday` |
+| `VLM_API_KEY` | **识别主链路**：视觉大模型密钥（智谱等） | 空（模板匹配兜底） |
+| `VLM_API_BASE` | VLM 服务地址（智谱: open.bigmodel.cn/api/paas/v4） | 空 |
+| `VLM_MODEL` | VLM 模型名（重度重叠画面建议 `glm-4v-plus`） | `glm-4v-plus` |
 | `LLM_ENABLED` | 启用大模型牌型分析 | `0` |
 | `LLM_API_KEY` | 大模型密钥 | 空 |
 | `LLM_API_BASE` | 大模型 API 地址 | DeepSeek |
 | `LLM_MODEL` | 分析模型 | `deepseek-v4-flash` |
+
+> 识别双链路：模板匹配（OpenCV，本地免费）→ 失败/不适配时 **VLM 直读**（按
+> `GAME_PROFILE` 定位手牌行→放大→视觉大模型读点数）。重度重叠画面（如 wishday 扇形牌）
+> 直接走 VLM 主链路；`config.py` 会自动加载项目根 `.env`，无需手动 source。
 
 示例：
 ```bash

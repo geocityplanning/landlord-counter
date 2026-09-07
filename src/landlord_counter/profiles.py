@@ -91,6 +91,8 @@ PROFILES: dict[str, GameProfile] = {
         vlm_first=True,
         vlm_prompt=_PROMPT_BASE,
         expected_cards=17,
+        # 托管按钮标定(wishday 1280x720 实测): pass=不出(已验), hint=提示(待验)
+        actions_roi={"pass": (203, 193), "hint": (592, 191)},
     ),
 }
 

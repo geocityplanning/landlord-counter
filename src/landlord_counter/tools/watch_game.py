@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from landlord_counter.config import load_config
+from landlord_counter.config import PROJECT_ROOT, load_config
 from landlord_counter.screen.adb_capture import ScreenCapturer
 from landlord_counter.vision.card_recognizer import CardRecognizer
 
@@ -31,7 +31,7 @@ def main() -> None:
         print("✗ 未配置 VLM（.env 的 VLM_API_KEY）")
         sys.exit(1)
 
-    log_dir = Path(__file__).resolve().parent.parent.parent / "logs"
+    log_dir = PROJECT_ROOT / "logs"
     log_dir.mkdir(exist_ok=True)
     log_path = log_dir / f"game_{datetime.now():%Y%m%d_%H%M%S}.jsonl"
     print(f"▶ 观测器启动  model={rec.cfg.vlm_model}  log={log_path}")

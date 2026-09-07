@@ -1,0 +1,20 @@
+[project]
+name = "landlord-counter"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.28.1",
+    "numpy>=2.4.6",
+    "opencv-python-headless>=5.0.0.93",
+    "pillow>=12.3.0",
+]
+
+[project.scripts]
+landlord-counter = "landlord_counter.main:main"
+gen-templates = "landlord_counter.tools.gen_templates:generate_cli"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"

@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Run rules engine tests (斗地主 + 掼蛋)
+        run: uv run python -m landlord_counter.tools.test_rules
+
+      - name: Run self-test (模板识别 + 记牌逻辑)
+        run: uv run python -m landlord_counter.tools.self_test
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --frozen
+      - name: Ruff lint & format check (非阻塞)
+        continue-on-error: true
+        run: |
+          uv run --with ruff ruff check src
+          uv run --with ruff ruff format --check src

@@ -8,3 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
+
+# 密钥与本地配置（勿提交）
+.env
+*.env
+!.env.example

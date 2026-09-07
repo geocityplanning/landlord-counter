@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 @dataclass
 class ScreenConfig:
     """屏幕与ROI配置（像素坐标，手机横屏/竖屏可调）"""
-    adb_serial: str = ""  # 留空自动选择唯一设备
+    adb_serial: str = field(default_factory=lambda: os.getenv("ADB_SERIAL", os.getenv("AGENT_ADB_SERIAL", "")))  # 多设备时建议显式指定
     screen_scale: float = 1.0  # 截图缩放系数
     # 各识别区域 ROI: (x1, y1, x2, y2)，默认竖屏 1080x2400 比例
     hand_roi: tuple = (0.0, 0.78, 1.0, 1.0)  # 自己手牌区（归一化坐标）

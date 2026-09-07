@@ -90,6 +90,15 @@ class Tracker:
                 time.sleep(self.poll)
                 continue
 
+            # 新一局信号: live 中再次出现叫分按钮(不叫/1分…) = 上一局已结束、新局已发
+            if self.phase == "live" and self.belief is not None and ("不叫" in w or "叫分" in w or "3分" in w):
+                self.phase = "idle"
+                self.belief = None
+                self._hand_sig = None
+                self._log(log_path, {"kind": "phase", "phase": "new_round(叫分重现, 重置)"})
+                time.sleep(1.0)
+                continue
+
             if self.phase in ("idle", "ended"):
                 if any(g in w for g in GAME_WORDS):
                     self.phase = "voting"

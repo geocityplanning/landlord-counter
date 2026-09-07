@@ -9,11 +9,16 @@ dependencies = [
     "numpy>=2.4.6",
     "opencv-python-headless>=5.0.0.93",
     "pillow>=12.3.0",
+    "rapidocr-onnxruntime>=1.4.4",
 ]
 
 [project.scripts]
 landlord-counter = "landlord_counter.main:main"
 gen-templates = "landlord_counter.tools.gen_templates:generate_cli"
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]

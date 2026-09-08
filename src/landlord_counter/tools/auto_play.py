@@ -461,6 +461,32 @@ def _dz_role_counts(ap: "AutoPlay", hand: list[int]) -> tuple[str, dict]:
     return role_human, counts
 
 
+def _sanitize_read(tokens: list[str]) -> list[str] | None:
+    """合理性检查: 大王/小王各≤1、每点≤4、总∈[1,20]。异常返回 None(弃读)。"""
+    from collections import Counter
+
+    c = Counter(tokens)
+    if not tokens or not (1 <= len(tokens) <= 20):
+        return None
+    for t in ("小", "大", "BJ", "RJ"):
+        if c.get(t, 0) > 1:
+            return None
+    for t, n in c.items():
+        if n > 4:
+            return None
+    return sorted(tokens, key=lambda x: E.token_to_rank(x))
+
+
+def read_hand_sane(rec, img, expected: int = 0) -> list[int]:
+    """读数+合理性消毒(最多2次)。返回 rank 升序列表; 失败 []。"""
+    for _ in range(2):
+        toks = rec.read_hand_vlm(img, expected=expected)
+        ok = _sanitize_read(toks)
+        if ok is not None:
+            return sorted(E.token_to_rank(t) for t in ok)
+    return []
+
+
 def main():
     cfg = load_config()
     rec = CardRecognizer(cfg.vision)
@@ -494,9 +520,8 @@ def main():
                 hand = []
                 ap.round_reset()
             if not hand:  # 新局: 发牌已展示, 读一次建立 belief
-                ranks = rec.read_hand_vlm(img)
-                if ranks:
-                    hand = sorted(E.token_to_rank(t) for t in ranks)
+                hand = read_hand_sane(rec, img)
+                if hand:
                     print(f"[新局] 屏读 hand={[E.rank_to_token(r) for r in hand]}")
             score = bot.decide_bid(hand)
             # 不叫=灰钮(单色, 恒最左); 3分=红钮(单色, 最右)。禁用多色union(相邻钮会桥接成巨块)
@@ -523,18 +548,18 @@ def main():
         grey, green = st_row["grey"], st_row["green"]
         if pending_relandlord and hand:
             # 等底牌并入手牌后按 20 张重读(现在大概率已是地主回合/立刻会到)
-            ranks = rec.read_hand_vlm(img, expected=20)
+            ranks = read_hand_sane(rec, img, expected=20)
             if len(ranks) >= 18:
-                hand = sorted(E.token_to_rank(t) for t in ranks)
+                hand = ranks
                 pending_relandlord = False
                 print(f"[成地主] 重读20张: {[E.rank_to_token(r) for r in hand]}")
             else:
                 time.sleep(1.0)
                 continue
         if not hand:
-            ranks = rec.read_hand_vlm(img)
-            hand = sorted(E.token_to_rank(t) for t in ranks) if ranks else []
-            print(f"[建belief] hand={[E.rank_to_token(r) for r in hand]}")
+            hand = read_hand_sane(rec, img)
+            if hand:
+                print(f"[建belief] hand={[E.rank_to_token(r) for r in hand]}")
             time.sleep(0.6)
             continue
         # 主动策略(短跑实验): 不读zone, 一律尝试压(提示钮自决); 领打直选
@@ -573,6 +598,40 @@ def main():
                 time.sleep(1.2)
                 continue
             print(f"  ✗ 直选失败({st}) → 提示钮兜底")
+        # 跟牌 DouZero: 读上家牌堆 → 决策(含pass候选) → 直选/不出; 失败回落 play_smart
+        if tag.startswith("跟牌") and dz is not None:
+            zone = ap.last_played_zone(img)
+            if zone:
+                ranks = ap.read_zone_cards(img, zone)
+                ok_read = 0 < len(ranks) <= 10 and not (
+                    len(ranks) >= 9 and E.identify(ranks).type == E.T.STRAIGHT and ranks[-1] == 14)
+                if ok_read:
+                    try:
+                        last_toks = [E.rank_to_token(r) for r in ranks]
+                        role, counts = _dz_role_counts(ap, hand)
+                        htok = [E.rank_to_token(r) for r in hand]
+                        out_t = dz.decide(role, htok, counts, {}, last_toks, can_pass=True)
+                        if out_t is None:
+                            if tap_pass(ap):
+                                print(f"[跟牌·DouZero] 压不过 {last_toks} → 不出 (role={role})")
+                                ap.zone_acted = True
+                                time.sleep(1.2)
+                                continue
+                            # 无灰钮可不出? 落入 play_smart 提示自决
+                        else:
+                            g = E.identify_str(out_t)
+                            if not g.is_invalid and all(hand.count(E.token_to_rank(t)) >= out_t.count(t) for t in set(out_t)):
+                                print(f"[跟牌·DouZero] 决策出 {E.group_to_str(g)} 压 {last_toks} (role={role})")
+                                st = attempt_play(ap, hand, g)
+                                if st == "ok":
+                                    remove_all(hand, [E.token_to_rank(t) for t in out_t])
+                                    print("  ✓ DouZero 跟牌出牌成功")
+                                    ap.last_zone_key, ap.zone_acted = None, False
+                                    time.sleep(1.2)
+                                    continue
+                                print(f"  ✗ DouZero 跟牌直选失败({st}) → 回落提示钮")
+                    except Exception as e:  # noqa: BLE001
+                        print(f"  DouZero 跟牌异常({e}) → 回落提示钮")
         print(f"[{tag}] → play_smart")
         st = play_smart(ap)
         if st == "ok":

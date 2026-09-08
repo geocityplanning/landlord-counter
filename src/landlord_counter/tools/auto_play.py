@@ -67,10 +67,10 @@ class AutoPlay:
 
     # ---------- 相位 & 动作检测 ----------
     def button_row(self, img) -> dict:
-        """返回按钮行内的块: grey/green 及其中心。min_w=200 过滤细噪声(实测按钮宽340)."""
-        grey = mask_blobs(img, GREY, 30, 120, 300, 200, 60)
+        """按钮行内 grey/green。grey 含按压暗色 #424242 兜底(min_w150)防瞬态漏检。"""
+        grey = self.grey_loose(img)
         green = mask_blobs(img, GREEN, 35, 120, 300, 150, 60)
-        out = {"grey": grey[0] if grey else None}
+        out = {"grey": grey}
         out["green"] = min(green, key=lambda b: b[2]) if green else None
         return out
 
@@ -328,6 +328,16 @@ def main():
                 print("  ✓ 出牌成功")
                 ap.last_zone_key, ap.zone_acted = None, False
             else:
+                if st == "pass":
+                    # 实际是可不出(灰钮瞬态漏检被当领打) → 直接不出, 别空转
+                    img2 = snap()
+                    g2 = ap.button_row(img2)["grey"] if img2 is not None else None
+                    if g2:
+                        adb("shell", "input", "tap", str(g2[0]), str(g2[1]))
+                        print("  ✗ 实为可不出 → 改不出")
+                        ap.last_zone_key, ap.zone_acted = None, False
+                        time.sleep(1.2)
+                        continue
                 print(f"  ✗ 直选失败({st}) → 提示钮兜底")
                 if hint_fallback(ap):
                     print("  ✓ 提示兜底成功(牌面未知, 重建belief)")

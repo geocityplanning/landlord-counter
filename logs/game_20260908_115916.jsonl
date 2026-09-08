@@ -1,0 +1,16 @@
+{"kind": "phase", "phase": "voting(三读)", "ts": "2026-09-08T11:59:18"}
+{"kind": "vote", "count": 17, "cards": "2 2 3 3 4 4 5 5 6 6 7 8 8 8 K Q RJ", "reads": [17, 17, 0], "ts": "2026-09-08T11:59:52"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T12:00:03"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T12:00:09"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T12:00:16"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T12:00:21"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T12:00:35"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T12:00:50"}
+{"kind": "hand", "count": 0, "cards": "", "obs_count": 0, "dropped": {}, "added_back": {}, "notes": [], "ts": "2026-09-08T12:01:11"}
+{"kind": "hand_same", "count": 0, "ts": "2026-09-08T12:01:33"}
+{"kind": "phase", "phase": "new_round(叫分按钮颜色检出, 重置)", "ts": "2026-09-08T12:01:37"}
+{"kind": "phase", "phase": "voting(三读)", "ts": "2026-09-08T12:01:39"}
+{"kind": "vote", "count": 4, "cards": "6 6 Q Q", "reads": [7, 0, 0], "ts": "2026-09-08T12:02:33"}
+{"kind": "phase", "phase": "new_round(叫分按钮颜色检出, 重置)", "ts": "2026-09-08T12:02:36"}
+{"kind": "phase", "phase": "voting(三读)", "ts": "2026-09-08T12:02:41"}
+{"kind": "vote", "count": 17, "cards": "10 10 3 3 3 4 4 4 5 5 6 7 8 A J K Q", "reads": [17, 17, 17], "ts": "2026-09-08T12:02:59"}

@@ -57,6 +57,36 @@ class Tracker:
     def _read(self, img) -> list[str]:
         return self.rec.read_hand_vlm(img)
 
+    # ---- 颜色检测(源码几何: 按钮行 y144-274) ----
+    BID_COLORS = [(0x61, 0x61, 0x61), (0x19, 0x76, 0xD2), (0xF5, 0x7C, 0x00), (0xD3, 0x2F, 0x2F)]
+    GREEN = (0x38, 0x8E, 0x3C)
+
+    def _color_blocks(self, img, colors, tol, y0=120, y1=300, min_w=80, min_h=50):
+        import cv2
+
+        import numpy as np
+
+        band = img[y0:y1, :]
+        m = np.zeros(band.shape[:2], np.uint8)
+        for c in colors:
+            bgr = np.array(c[::-1], dtype=np.int16)
+            sub = (np.abs(band.astype(np.int16) - bgr).sum(axis=2) <= tol * 3)
+            m[sub] = 255
+        m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+        cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        out = []
+        for c in cnts:
+            x, y, w, h = cv2.boundingRect(c)
+            if w >= min_w and h >= min_h:
+                out.append((x, y, w, h))
+        return out
+
+    def _is_bidding_row(self, img):
+        """按钮行出现叫分色块(灰/蓝/橙/红)且无绿(出牌绿) => 正在叫我叫分。"""
+        bid = self._color_blocks(img, self.BID_COLORS, 25)
+        green = self._color_blocks(img, [self.GREEN], 25)
+        return bool(bid) and not green
+
     def _sig(self, img) -> bytes:
         import cv2
 
@@ -90,12 +120,13 @@ class Tracker:
                 time.sleep(self.poll)
                 continue
 
-            # 新一局信号: live 中再次出现叫分按钮(不叫/1分…) = 上一局已结束、新局已发
-            if self.phase == "live" and self.belief is not None and ("不叫" in w or "叫分" in w or "3分" in w):
+            # 新一局信号(颜色法, 零OCR): 按钮行(§y144-274)出现叫分按钮(灰/蓝/橙/红, 无绿)
+            #   => 上一局已结束、新一轮叫分中 → 重置并重新投票
+            if self.phase == "live" and self.belief is not None and self._is_bidding_row(img):
                 self.phase = "idle"
                 self.belief = None
                 self._hand_sig = None
-                self._log(log_path, {"kind": "phase", "phase": "new_round(叫分重现, 重置)"})
+                self._log(log_path, {"kind": "phase", "phase": "new_round(叫分按钮颜色检出, 重置)"})
                 time.sleep(1.0)
                 continue
 

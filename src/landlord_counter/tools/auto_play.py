@@ -215,6 +215,26 @@ def my_turn(ap: "AutoPlay", img) -> bool:
     return row["grey"] is not None or row["green"] is not None
 
 
+def my_turn_stable(ap: "AutoPlay") -> tuple[bool, dict | None]:
+    """稳定双帧回合判定: 0.35s两连拍; 必须绿钮(出牌)两帧一致出现才算出牌轮。
+    (我方出牌轮必有绿钮; 灰钮单存可能是机器人静态头像 → 不以灰为准)"""
+    a = snap()
+    if a is None:
+        return False, None
+    time.sleep(0.35)
+    b = snap()
+    if b is None:
+        return False, None
+    ra, rb = ap.button_row(a), ap.button_row(b)
+    ga = ra["green"]
+    gb = rb["green"]
+    if ga is None or gb is None:
+        return False, None
+    if abs(ga[0] - gb[0]) > 25 or abs(ga[1] - gb[1]) > 25:
+        return False, None
+    return True, rb
+
+
 def lifted_count(img) -> int:
     """估计已选中的手牌数: 条带 y424..484(未选中时为空)亮列宽/间距。"""
     if img is None:
@@ -244,6 +264,12 @@ def tap_pass(ap: "AutoPlay") -> bool:
     return True
 
 
+def turn_ended(ap: "AutoPlay") -> bool:
+    """我回合是否已结束(稳定双帧, 滤机器人头像误报)。"""
+    ok, _ = my_turn_stable(ap)
+    return not ok
+
+
 def play_lead_direct(ap: "AutoPlay", hand: list[int]) -> str:
     """领打: 直接点最小单张(物理已验证命中几何)+出牌绿钮; 'ok'|'fail'。"""
     if not hand:
@@ -265,11 +291,8 @@ def play_lead_direct(ap: "AutoPlay", hand: list[int]) -> str:
         if not btns["green"]:
             return "fail"
         adb("shell", "input", "tap", str(btns["green"][0]), str(btns["green"][1]))
-        time.sleep(1.8)
-        img2 = snap()
-        if img2 is None:
-            return "fail"
-        if not my_turn(ap, img2):
+        time.sleep(2.0)
+        if turn_ended(ap):
             return "ok"
     return "fail"
 
@@ -279,14 +302,15 @@ def play_smart(ap: "AutoPlay") -> str:
     img = snap()
     if img is None:
         return "fail"
-    if not my_turn(ap, img):
+    ok, _ = my_turn_stable(ap)
+    if not ok:
         return "end"  # 决策期间回合已结束(结算/轮到别人)
     for _ in range(2):
         blue = mask_blobs(img, BLUE, 25, 120, 300, 120, 50)
         if not blue:
             return "fail"
         adb("shell", "input", "tap", str(blue[0][0]), str(blue[0][1]))
-        time.sleep(1.2)
+        time.sleep(1.3)
         img2 = snap()
         lift = lifted_count(img2)
         if lift == 0:
@@ -295,13 +319,10 @@ def play_smart(ap: "AutoPlay") -> str:
         if not btns["green"]:
             return "fail"
         adb("shell", "input", "tap", str(btns["green"][0]), str(btns["green"][1]))
-        time.sleep(1.8)
-        img3 = snap()
-        if img3 is None:
-            return "fail"
-        if not my_turn(ap, img3):
+        time.sleep(2.0)
+        if turn_ended(ap):
             return "ok"
-        img = img3  # 重试一次用最新帧
+        img = img2  # 重试一次用最新帧
     return "fail"
 
 
@@ -420,10 +441,13 @@ def main():
                 print(f"[叫分] {label}@({target[0]},{target[1]})")
             time.sleep(3.0)  # 等发牌入场动画(逐张滑入 ~3s)落定
             continue
-        # 2) 我回合统一处理: 读上家→决策(出/不出)→play_smart执行→按结果走
+        # 2) 我回合统一处理(稳定双帧判定, 滤机器人头像误报)
         ap.update_zones(img)
-        row = ap.button_row(img)
-        grey, green = row["grey"], row["green"]
+        turn_ok, st_row = my_turn_stable(ap)
+        if not turn_ok:
+            time.sleep(0.5)
+            continue
+        grey, green = st_row["grey"], st_row["green"]
         if not hand:
             ranks = rec.read_hand_vlm(img)
             hand = sorted(E.token_to_rank(t) for t in ranks) if ranks else []

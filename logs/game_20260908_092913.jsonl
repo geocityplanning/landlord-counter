@@ -127,3 +127,5 @@
 {"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:41:54"}
 {"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:41:59"}
 {"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:42:03"}
+{"kind": "hand", "count": 0, "cards": "", "obs_count": 0, "dropped": {}, "added_back": {}, "notes": [], "ts": "2026-09-08T09:42:08"}
+{"kind": "hand_same", "count": 0, "ts": "2026-09-08T09:42:12"}

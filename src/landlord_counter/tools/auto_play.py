@@ -27,7 +27,7 @@ from landlord_counter.vision.card_recognizer import CardRecognizer
 CARD_W, CARD_H = 136.0, 195.5
 HAND_AVAIL = 1216.0
 HAND_Y = 580
-TABLE_CROP = {"L": (80, 140, 600, 430), "R": (680, 140, 1200, 430)}  # 电脑B/A 牌堆区
+TABLE_CROP = {"L": (150, 200, 610, 350), "R": (670, 200, 1130, 350)}  # 电脑B/A 牌堆带(mini卡 y190..357)
 ZONES = ("L", "R")
 PROMPT_PLAYED = (
     "这是斗地主桌面上某一玩家刚打出的牌堆, 牌面朝上(白底, 左上角有点数)。"
@@ -62,6 +62,8 @@ class AutoPlay:
         self.zone_sig: dict[str, bytes | None] = {}
         self.zone_ts: dict[str, float] = {z: 0.0 for z in ZONES}
         self.n_actions = 0
+        self.last_zone_key: bytes | None = None
+        self.zone_acted = False
 
     # ---------- 相位 & 动作检测 ----------
     def button_row(self, img) -> dict:
@@ -128,7 +130,8 @@ class AutoPlay:
         sp = min(max((HAND_AVAIL - CARD_W) / max(len(hand) - 1, 1), CARD_W * 0.35), CARD_W * 0.90)
         start_x = (1280.0 - (sp * (len(hand) - 1) + CARD_W)) / 2
         for i in pos:
-            x = int(start_x + i * sp + CARD_W / 2)
+            # 关键: 卡重叠(间距67 < 卡宽136), 点卡左可见带而非中心(中心被右邻卡覆盖)
+            x = int(start_x + i * sp + sp * 0.5)
             adb("shell", "input", "tap", str(x), str(HAND_Y))
             time.sleep(0.16)
         # 点"出牌"(绿钮)
@@ -137,6 +140,44 @@ class AutoPlay:
             adb("shell", "input", "tap", str(btns["green"][0]), str(btns["green"][1]))
             return True
         return False
+
+
+BLUE = (0x19, 0x76, 0xD2)
+
+
+def remove_all(hand: list[int], ranks: list[int]):
+    for r in ranks:
+        if r in hand:
+            hand.remove(r)
+
+
+def attempt_play(ap: "AutoPlay", hand: list[int], choice: E.Group) -> bool:
+    """点选+出牌, 1.4s 后确认(按钮行消失=成功)。"""
+    if not ap.play(snap(), choice, hand):
+        return False
+    time.sleep(1.6)
+    img2 = snap()
+    if img2 is None:
+        return False
+    row2 = ap.button_row(img2)
+    return row2["grey"] is None and row2["green"] is None
+
+
+def hint_fallback(ap: "AutoPlay", img):
+    """出牌点选失败兜底: 点"提示"让游戏自动选牌, 再点出牌(必然合法)。"""
+    blue = mask_blobs(img, BLUE, 25, 120, 300, 120, 50)
+    if not blue:
+        print("  ✗ 未找到提示钮")
+        return
+    adb("shell", "input", "tap", str(blue[0][0]), str(blue[0][1]))
+    time.sleep(0.9)
+    img2 = snap()
+    if img2 is None:
+        return
+    btns = ap.button_row(img2)
+    if btns["green"]:
+        adb("shell", "input", "tap", str(btns["green"][0]), str(btns["green"][1]))
+        print("  ✓ 提示兜底出牌")
 
 
 def main():
@@ -166,6 +207,13 @@ def main():
             continue
         # 1) 叫分轮(无绿=只有叫分按钮)
         if not green:
+            if hand:  # 上一局残念 → 新局重置
+                hand = []
+            if not hand:  # 新局: 发牌已展示, 读一次建立 belief
+                ranks = rec.read_hand_vlm(img)
+                if ranks:
+                    hand = sorted(E.token_to_rank(t) for t in ranks)
+                    print(f"[新局] 屏读 hand={[E.rank_to_token(r) for r in hand]}")
             score = bot.decide_bid(hand)
             target = grey  # 不叫
             if score > 0:
@@ -178,39 +226,69 @@ def main():
                 print(f"[叫分] 不叫@({target[0]},{target[1]})")
             time.sleep(2)
             continue
-        # 2) 出牌轮: 需知道上一手
+        # 2) 出牌轮(我回合: 有灰钮=可跟, 无灰钮=必出/领打)
         ap.update_zones(img)
-        n = len(hand)
-        zone = ap.last_played_zone(img)
-        if zone and grey and n > 0:  # 有人刚出牌, 可跟/不跟
-            ranks = ap.read_zone_cards(img, zone)
-            print(f"[跟牌] 上一手({zone}): {[E.rank_to_token(r) for r in ranks]}")
-            last = E.identify(ranks) if ranks else E.Group()
-            choice = bot.pick_follow(hand, last if not last.is_invalid else None)
-            if choice is None:
-                adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
-                print("  → 不出")
+        row = ap.button_row(img)
+        grey, green = row["grey"], row["green"]
+        if not hand:
+            ranks = rec.read_hand_vlm(img)
+            hand = sorted(E.token_to_rank(t) for t in ranks) if ranks else []
+            print(f"[建belief] hand={[E.rank_to_token(r) for r in hand]}")
+            time.sleep(0.6)
+            continue
+        if grey is None:
+            # ---- 领打/必出: 最小合法牌; 失败→提示钮兜底 ----
+            choice = bot.pick_lead(hand)
+            print(f"[领打] 试出 {E.group_to_str(choice)}")
+            if attempt_play(ap, hand, choice):
+                remove_all(hand, choice.ranks)
+                print("  ✓ 出牌成功")
+                ap.last_zone_key, ap.zone_acted = None, False
             else:
-                ok = ap.play(img, choice, hand)
-                print(f"  → 出 {E.group_to_str(choice)} ok={ok}")
-                for r in choice.ranks:
-                    if r in hand:
-                        hand.remove(r)
+                print("  ✗ 点选失败 → 走提示钮兜底")
+                hint_fallback(ap, img)
+            time.sleep(1.0)
+            continue
+        # ---- 跟牌(有人出了, 可跟可不跟) ----
+        zone = ap.last_played_zone(img)
+        zone_key = ap.zone_sig.get(zone) if zone else None
+        if zone and zone_key == ap.last_zone_key and ap.zone_acted:
+            # 同一牌堆已决策过且仍是我回合 → 上次动作没生效, 保守不出
+            print("  → 重复回合, 保守不出")
+            adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
+            ap.last_zone_key, ap.zone_acted = None, False
             time.sleep(1.2)
             continue
-        # 3) 领打 / 手牌未知
-        if n == 0:
-            print("[待牌] 屏读一次建立 belief(应配合 watch_game 投票)")
-            ranks = rec.read_hand_vlm(img)
-            hand = sorted(E.token_to_rank(t) for t in ranks)
-            print(f"  hand={[E.rank_to_token(r) for r in hand]}")
-            time.sleep(1.5)
+        ap.last_zone_key, ap.zone_acted = zone_key, False
+        ranks = ap.read_zone_cards(img, zone) if zone else []
+        if len(ranks) > 10 or (len(ranks) >= 9 and E.identify(ranks).type == E.T.STRAIGHT and ranks[-1] == 14):
+            print(f"[跟牌] 读数可疑({len(ranks)}张) 弃读 → 不出")
+            adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
+            ap.zone_acted = True
+            time.sleep(1.2)
             continue
-        choice = bot.pick_lead(hand)
-        ok = ap.play(img, choice, hand)
-        print(f"[领打] 出 {E.group_to_str(choice)} ok={ok}")
-        for r in choice.ranks:
-            hand.remove(r)
+        last = E.identify(ranks) if ranks else E.Group()
+        if last.is_invalid or last.type == E.T.ROCKET:
+            print(f"[跟牌] 上一手(zone={zone}) 读空或火箭 → 不出")
+            adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
+            time.sleep(1.2)
+            continue
+        print(f"[跟牌] 上一手({zone}): {[E.rank_to_token(r) for r in ranks]} = {last.type.name}")
+        choice = bot.pick_follow(hand, last)
+        if choice is None:
+            adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
+            print("  → 不出")
+            time.sleep(1.2)
+            continue
+        print(f"[跟牌] 试出 {E.group_to_str(choice)}")
+        if attempt_play(ap, hand, choice):
+            remove_all(hand, choice.ranks)
+            print("  ✓ 出牌成功")
+            ap.zone_acted = True
+        else:
+            print("  ✗ 点选失败 → 保守不出")
+            adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
+            ap.zone_acted = True
         time.sleep(1.2)
         continue
 

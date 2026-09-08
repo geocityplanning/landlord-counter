@@ -1,0 +1,34 @@
+{"kind": "phase", "phase": "voting(三读)", "ts": "2026-09-08T09:47:37"}
+{"kind": "vote", "count": 17, "cards": "10 2 3 3 5 5 5 6 6 8 8 9 9 A J K Q", "reads": [18, 18, 17], "ts": "2026-09-08T09:47:49"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:47:54"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:48:00"}
+{"kind": "hand", "count": 14, "cards": "10 3 3 5 5 5 6 6 8 8 9 A K Q", "obs_count": 14, "dropped": {"7": 1}, "added_back": {"3": 1}, "notes": ["单调性删7×1"], "ts": "2026-09-08T09:48:05"}
+{"kind": "hand_same", "count": 14, "ts": "2026-09-08T09:48:11"}
+{"kind": "hand_same", "count": 14, "ts": "2026-09-08T09:48:16"}
+{"kind": "hand_same", "count": 14, "ts": "2026-09-08T09:48:23"}
+{"kind": "hand_same", "count": 14, "ts": "2026-09-08T09:48:35"}
+{"kind": "hand_same", "count": 14, "ts": "2026-09-08T09:48:39"}
+{"kind": "hand_same", "count": 14, "ts": "2026-09-08T09:48:44"}
+{"kind": "hand_same", "count": 14, "ts": "2026-09-08T09:48:50"}
+{"kind": "hand_same", "count": 14, "ts": "2026-09-08T09:48:55"}
+{"kind": "hand_same", "count": 14, "ts": "2026-09-08T09:49:01"}
+{"kind": "hand_same", "count": 14, "ts": "2026-09-08T09:49:06"}
+{"kind": "hand_same", "count": 14, "ts": "2026-09-08T09:49:12"}
+{"kind": "phase", "phase": "new_round(叫分按钮颜色检出, 重置)", "ts": "2026-09-08T09:49:15"}
+{"kind": "phase", "phase": "voting(三读)", "ts": "2026-09-08T09:49:18"}
+{"kind": "vote", "count": 17, "cards": "2 3 5 5 5 6 7 7 8 A A BJ J K K Q Q", "reads": [17, 17, 17], "ts": "2026-09-08T09:49:30"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:49:35"}
+{"kind": "hand", "count": 15, "cards": "2 3 5 5 5 6 7 7 8 A A BJ J K Q", "obs_count": 15, "dropped": {}, "added_back": {}, "notes": [], "ts": "2026-09-08T09:49:39"}
+{"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:49:47"}
+{"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:49:53"}
+{"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:49:58"}
+{"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:50:03"}
+{"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:50:08"}
+{"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:50:20"}
+{"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:50:27"}
+{"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:50:34"}
+{"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:50:40"}
+{"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:50:46"}
+{"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:50:54"}
+{"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:51:07"}
+{"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:51:14"}

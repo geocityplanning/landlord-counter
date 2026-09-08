@@ -1,0 +1,34 @@
+{"kind": "phase", "phase": "voting(三读)", "ts": "2026-09-08T09:51:22"}
+{"kind": "vote", "count": 17, "cards": "2 3 5 5 5 6 7 7 8 A A BJ J K K Q Q", "reads": [17, 17, 17], "ts": "2026-09-08T09:51:36"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:51:44"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:51:50"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:51:56"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:52:03"}
+{"kind": "hand", "count": 15, "cards": "2 3 5 5 6 7 7 8 A A BJ J K K Q", "obs_count": 15, "dropped": {}, "added_back": {}, "notes": [], "ts": "2026-09-08T09:52:11"}
+{"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:52:18"}
+{"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:52:25"}
+{"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:52:32"}
+{"kind": "hand_same", "count": 15, "ts": "2026-09-08T09:52:37"}
+{"kind": "phase", "phase": "new_round(叫分按钮颜色检出, 重置)", "ts": "2026-09-08T09:52:39"}
+{"kind": "phase", "phase": "voting(三读)", "ts": "2026-09-08T09:52:47"}
+{"kind": "vote", "count": 17, "cards": "3 3 4 4 6 6 7 8 8 9 9 9 J K Q Q RJ", "reads": [17, 17, 17], "ts": "2026-09-08T09:52:59"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:53:05"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:53:12"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:53:23"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:53:28"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:53:33"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:53:40"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:53:48"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:53:54"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:53:59"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:54:05"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:54:12"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:54:16"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:54:22"}
+{"kind": "phase", "phase": "new_round(叫分按钮颜色检出, 重置)", "ts": "2026-09-08T09:54:25"}
+{"kind": "phase", "phase": "voting(三读)", "ts": "2026-09-08T09:54:27"}
+{"kind": "vote", "count": 17, "cards": "10 10 2 2 3 3 4 5 5 6 8 9 9 A J K Q", "reads": [17, 17, 17], "ts": "2026-09-08T09:54:39"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:54:47"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:54:52"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:55:03"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T09:55:11"}

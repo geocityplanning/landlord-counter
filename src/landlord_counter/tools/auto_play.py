@@ -187,6 +187,50 @@ def my_turn(ap: "AutoPlay", img) -> bool:
     return row["grey"] is not None or row["green"] is not None
 
 
+def lifted_count(img) -> int:
+    """估计已选中的手牌数: 条带 y424..484(未选中时为空)亮列宽/间距。"""
+    if img is None:
+        return 0
+    gray = cv2.cvtColor(img[424:484, 20:1260], cv2.COLOR_BGR2GRAY)
+    cols = (gray > 205).any(axis=0)
+    run = width = 0
+    for v in cols:
+        if v:
+            run += 1
+            width = max(width, run)
+        else:
+            run = 0
+    if width < 60:
+        return 0
+    # 选中相邻牌: 宽度≈sp*(k-1)+卡宽 ~ 取亮宽/88 估算
+    return max(1, int(round(width / 95)))
+
+
+def play_smart(ap: "AutoPlay") -> str:
+    """提示钮出牌+抬起确认。'ok'(已出) | 'none'(无牌可出→应pass) | 'fail'(卡住)。"""
+    for _ in range(2):
+        img = snap()
+        if img is None:
+            return "fail"
+        blue = mask_blobs(img, BLUE, 25, 120, 300, 120, 50)
+        if not blue:
+            return "fail"
+        adb("shell", "input", "tap", str(blue[0][0]), str(blue[0][1]))
+        time.sleep(1.2)
+        img2 = snap()
+        if lifted_count(img2) == 0:
+            return "none"  # 提示无解(没有能出的牌) → 该不出
+        btns = ap.button_row(img2)
+        if not btns["green"]:
+            return "fail"
+        adb("shell", "input", "tap", str(btns["green"][0]), str(btns["green"][1]))
+        time.sleep(1.8)
+        img3 = snap()
+        if img3 is not None and not my_turn(ap, img3):
+            return "ok"
+    return "fail"
+
+
 def attempt_play(ap: "AutoPlay", hand: list[int], choice: E.Group) -> str:
     """引擎直选+出牌(失败重试一次)。'ok'|'pass'(可不出)|'fail'(卡住)。"""
     for _ in range(2):
@@ -302,7 +346,7 @@ def main():
                 print(f"[叫分] {label}@({target[0]},{target[1]})")
             time.sleep(3.0)  # 等发牌入场动画(逐张滑入 ~3s)落定
             continue
-        # 2) 出牌轮(我回合: 有灰钮=可跟, 无灰钮=必出/领打)
+        # 2) 我回合统一处理: 读上家→决策(出/不出)→play_smart执行→按结果走
         ap.update_zones(img)
         row = ap.button_row(img)
         grey, green = row["grey"], row["green"]
@@ -312,86 +356,61 @@ def main():
             print(f"[建belief] hand={[E.rank_to_token(r) for r in hand]}")
             time.sleep(0.6)
             continue
-        if grey is None:
-            # 取证: 保存判断帧(限频), 供复盘灰钮漏检/真领打
-            import time as _t
-            if _t.time() - getattr(ap, "_dbg_ts", 0) > 8:
-                ap._dbg_ts = _t.time()
-                cv2.imwrite("/tmp/lead_dbg.png", img)
-            # ---- 领打/必出: 引擎最小合法牌直选; 失败→提示钮兜底(游戏自选必然合法) ----
-            if not hand:
-                ranks = rec.read_hand_vlm(img)
-                hand = sorted(E.token_to_rank(t) for t in ranks) if ranks else []
-                print(f"[建belief] hand={[E.rank_to_token(r) for r in hand]}")
-                time.sleep(0.6)
-                continue
-            choice = bot.pick_lead(hand)
-            print(f"[领打] 直选 {E.group_to_str(choice)}")
-            st = attempt_play(ap, hand, choice)
-            if st == "ok":
-                remove_all(hand, choice.ranks)
-                print("  ✓ 出牌成功")
-                ap.last_zone_key, ap.zone_acted = None, False
-            else:
-                if st == "pass":
-                    # 实际是可不出(灰钮瞬态漏检被当领打) → 直接不出, 别空转
-                    img2 = snap()
-                    g2 = ap.button_row(img2)["grey"] if img2 is not None else None
-                    if g2:
-                        adb("shell", "input", "tap", str(g2[0]), str(g2[1]))
-                        print("  ✗ 实为可不出 → 改不出")
-                        ap.last_zone_key, ap.zone_acted = None, False
-                        time.sleep(1.2)
-                        continue
-                print(f"  ✗ 直选失败({st}) → 提示钮兜底")
-                if hint_fallback(ap):
-                    print("  ✓ 提示兜底成功(牌面未知, 重建belief)")
-                    hand = []
-                else:
-                    print("  ✗ 兜底未成, 下轮再试")
-            time.sleep(1.0)
-            continue
-        # ---- 跟牌(有人出了, 可跟可不跟) ----
         zone = ap.last_played_zone(img)
         zone_key = ap.zone_sig.get(zone) if zone else None
-        if zone and zone_key == ap.last_zone_key and ap.zone_acted:
-            # 同一牌堆已决策过且仍是我回合 → 上次动作没生效, 保守不出
-            print("  → 重复回合, 保守不出")
-            adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
-            ap.last_zone_key, ap.zone_acted = None, False
-            time.sleep(1.2)
-            continue
-        ap.last_zone_key, ap.zone_acted = zone_key, False
-        ranks = ap.read_zone_cards(img, zone) if zone else []
-        if len(ranks) > 10 or (len(ranks) >= 9 and E.identify(ranks).type == E.T.STRAIGHT and ranks[-1] == 14):
-            print(f"[跟牌] 读数可疑({len(ranks)}张) 弃读 → 不出")
-            adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
-            ap.zone_acted = True
-            time.sleep(1.2)
-            continue
-        last = E.identify(ranks) if ranks else E.Group()
-        if last.is_invalid or last.type == E.T.ROCKET:
-            print(f"[跟牌] 上一手(zone={zone}) 读空或火箭 → 不出")
-            adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
-            time.sleep(1.2)
-            continue
-        print(f"[跟牌] 上一手({zone}): {[E.rank_to_token(r) for r in ranks]} = {last.type.name}")
-        choice = bot.pick_follow(hand, last)
-        if choice is None:
-            adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
-            print("  → 不出")
-            time.sleep(1.2)
-            continue
-        # 引擎直选(命中分界修正后应稳定); 失败→保守不出
-        print(f"[跟牌] 决策=出({E.group_to_str(choice)})")
-        st = attempt_play(ap, hand, choice)
+        do_play = True  # 默认领打/必出
+        tag = "领打/必出"
+        if zone:
+            if zone_key == ap.last_zone_key and ap.zone_acted:
+                print("  → 重复回合, 保守不出")
+                adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
+                ap.last_zone_key, ap.zone_acted = None, False
+                time.sleep(1.2)
+                continue
+            ap.last_zone_key, ap.zone_acted = zone_key, False
+            ranks = ap.read_zone_cards(img, zone)
+            if len(ranks) > 10 or (len(ranks) >= 9 and E.identify(ranks).type == E.T.STRAIGHT and ranks[-1] == 14):
+                print(f"[跟牌] 读数可疑({len(ranks)}张) 弃读 → 不出")
+                adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
+                ap.zone_acted = True
+                time.sleep(1.2)
+                continue
+            last = E.identify(ranks) if ranks else E.Group()
+            if last.is_invalid or last.type == E.T.ROCKET or not last.ranks:
+                print(f"[跟牌] 上一手({zone}) 读空/火箭 → 不出")
+                adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
+                time.sleep(1.2)
+                continue
+            print(f"[跟牌] 上一手({zone}): {[E.rank_to_token(r) for r in ranks]} = {last.type.name}")
+            choice = bot.pick_follow(hand, last)
+            if choice is None:
+                print("  → 不出")
+                adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
+                time.sleep(1.2)
+                continue
+            tag = f"跟牌(压{last.type.name})"
+        # 执行: 提示钮出牌(必然合法), 抬起确认; 无解→不出
+        print(f"[{tag}] → play_smart")
+        st = play_smart(ap)
         if st == "ok":
-            remove_all(hand, choice.ranks)
-            print("  ✓ 出牌成功")
+            print("  ✓ 出牌成功(提示所选, belief重建)")
+            hand = []
+            ap.last_zone_key, ap.zone_acted = None, False
+        elif st == "none":
+            print("  → 提示无解, 不出")
+            img2 = snap()
+            g2 = ap.button_row(img2)["grey"] if img2 is not None else None
+            if g2:
+                adb("shell", "input", "tap", str(g2[0]), str(g2[1]))
+            ap.zone_acted = True
         else:
-            print(f"  ✗ 直选出牌失败({st}) → 保守不出")
-            adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
-        ap.zone_acted = True
+            print(f"  ✗ play_smart失败({st})")
+            img2 = snap()
+            g2 = ap.button_row(img2)["grey"] if img2 is not None else None
+            if g2:
+                adb("shell", "input", "tap", str(g2[0]), str(g2[1]))
+                print("  → 保守不出")
+                ap.zone_acted = True
         time.sleep(1.2)
         continue
 

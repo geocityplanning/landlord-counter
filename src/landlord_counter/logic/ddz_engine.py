@@ -30,21 +30,24 @@ class T(Enum):
 
 
 # 我们的牌面字符串 <-> rank int (rank 即 wishday Card.rank)
-TOK = ["", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A", "2", "BJ", "RJ"]
+TOK = ["", "", "", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A", "2", "BJ", "RJ"]
+TOKEN2RANK = {
+    "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9, "10": 10,
+    "J": 11, "Q": 12, "K": 13, "A": 14, "2": 15,
+    "BJ": 16, "RJ": 17, "小": 16, "大": 17, "小王": 16, "大王": 17,
+}
 
 
 def token_to_rank(t: str) -> int:
-    if t in ("BJ", "小"):
-        return 16
-    if t in ("RJ", "大"):
-        return 17
-    try:
-        return int(t)
-    except ValueError:
-        return "JQKA".index(t) + 11
+    t = t.strip()
+    if t in TOKEN2RANK:
+        return TOKEN2RANK[t]
+    raise ValueError(f"未知牌面: {t!r}")
 
 
 def rank_to_token(r: int) -> str:
+    if r == 15:
+        return "2"
     if r == 16:
         return "小"
     if r == 17:

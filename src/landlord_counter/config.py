@@ -54,13 +54,51 @@ class VisionConfig:
     match_threshold: float = 0.80  # 模板匹配置信度阈值
     # 游戏视觉适配包（哪个 App 的画面）：doudizhu_wishday 等，见 profiles.py
     profile_name: str = field(default_factory=lambda: os.getenv("GAME_PROFILE", "doudizhu_wishday"))
-    # VLM 直读（模板对重度重叠无效时的主链路，需 API key）
-    vlm_api_base: str = os.getenv("VLM_API_BASE", "")
-    vlm_api_key: str = os.getenv("VLM_API_KEY", "")
-    vlm_model: str = os.getenv("VLM_MODEL", "glm-4v-plus")
+    # VLM 直读（模板对重度重叠无效时的主链路）—— 多提供商: VLM_PROVIDER 选择
+    vlm_api_base: str = field(default_factory=lambda: _vlm_settings()[0])
+    vlm_api_key: str = field(default_factory=lambda: _vlm_settings()[1])
+    vlm_model: str = field(default_factory=lambda: _vlm_settings()[2])
+    vlm_provider: str = field(default_factory=lambda: os.getenv("VLM_PROVIDER", "zhipu"))
 
     def vlm_available(self) -> bool:
-        return bool(self.vlm_api_base and self.vlm_api_key)
+        return bool(self.vlm_api_base and self.vlm_api_key and self.vlm_model)
+
+
+VLM_PROVIDER_BASE = {
+    "zhipu": ("VLM_API_BASE", "https://open.bigmodel.cn/api/paas/v4"),
+    "deepseek": ("DEEPSEEK_API_BASE", "https://api.deepseek.com"),
+    "doubao": ("DOUBAO_API_BASE", "https://ark.cn-beijing.volces.com/api/v3"),
+    "qianfan": ("QIANFAN_API_BASE", "https://qianfan.baidubce.com/v2"),
+}
+VLM_PROVIDER_KEY = {
+    "zhipu": "VLM_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "doubao": "DOUBAO_API_KEY",
+    "qianfan": "QIANFAN_API_KEY",
+}
+VLM_PROVIDER_MODEL_ENV = {
+    "zhipu": "VLM_MODEL", "deepseek": "DEEPSEEK_MODEL",
+    "doubao": "DOUBAO_MODEL", "qianfan": "QIANFAN_MODEL",
+}
+VLM_PROVIDER_MODEL_DEFAULT = {
+    "zhipu": "glm-4v-plus",
+    "deepseek": "deepseek-v4-flash-vision-exp",
+    "doubao": "",  # 火山方舟模型/推理接入点由用户填 DOUBAO_MODEL
+    "qianfan": "",  # 千帆 VL 模型名由用户填 QIANFAN_MODEL
+}
+
+
+def _vlm_settings() -> tuple[str, str, str]:
+    """按 VLM_PROVIDER 返回 (base, key, model)。key 为空时回退 VLM_API_KEY(智谱旧键)。"""
+    prov = os.getenv("VLM_PROVIDER", "zhipu")
+    base_env, base_def = VLM_PROVIDER_BASE.get(prov, VLM_PROVIDER_BASE["zhipu"])
+    key_env = VLM_PROVIDER_KEY.get(prov, "VLM_API_KEY")
+    model_env = VLM_PROVIDER_MODEL_ENV.get(prov, "VLM_MODEL")
+    model_def = VLM_PROVIDER_MODEL_DEFAULT.get(prov, "glm-4v-plus")
+    base = os.getenv(base_env) or base_def
+    key = os.getenv(key_env) or os.getenv("VLM_API_KEY", "")
+    model = os.getenv(model_env) or model_def
+    return base, key, model
 
 
 @dataclass

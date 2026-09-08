@@ -67,11 +67,12 @@ class AutoPlay:
 
     # ---------- 相位 & 动作检测 ----------
     def button_row(self, img) -> dict:
-        """按钮行内 grey/green。grey 含按压暗色 #424242 兜底(min_w150)防瞬态漏检。"""
+        """按钮行内 grey/green。grey 含按压暗色 #424242 兜底(min_w150)防瞬态漏检。
+        出牌绿钮取最右(实测x≈980/786; 机器人头像绿块在x≈260, 最左, 必须排除)。"""
         grey = self.grey_loose(img)
         green = mask_blobs(img, GREEN, 35, 120, 300, 150, 60)
         out = {"grey": grey}
-        out["green"] = min(green, key=lambda b: b[2]) if green else None
+        out["green"] = green[-1] if green else None  # 最右=真出牌
         return out
 
     def result_screen(self, img):
@@ -216,8 +217,8 @@ def my_turn(ap: "AutoPlay", img) -> bool:
 
 
 def my_turn_stable(ap: "AutoPlay") -> tuple[bool, dict | None]:
-    """稳定双帧回合判定: 0.35s两连拍; 必须绿钮(出牌)两帧一致出现才算出牌轮。
-    (我方出牌轮必有绿钮; 灰钮单存可能是机器人静态头像 → 不以灰为准)"""
+    """稳定双帧回合判定: 0.35s两连拍; 必须绿钮(出牌, x≥700)两帧一致才算出牌轮。
+    (我方出牌绿钮中心实测 786/980; 机器人头像绿块在 x≈260 → 用x≥700滤除)"""
     a = snap()
     if a is None:
         return False, None
@@ -229,6 +230,8 @@ def my_turn_stable(ap: "AutoPlay") -> tuple[bool, dict | None]:
     ga = ra["green"]
     gb = rb["green"]
     if ga is None or gb is None:
+        return False, None
+    if ga[0] < 700 or gb[0] < 700:
         return False, None
     if abs(ga[0] - gb[0]) > 25 or abs(ga[1] - gb[1]) > 25:
         return False, None
@@ -454,46 +457,11 @@ def main():
             print(f"[建belief] hand={[E.rank_to_token(r) for r in hand]}")
             time.sleep(0.6)
             continue
-        zone = ap.last_played_zone(img)
-        zone_key = ap.zone_sig.get(zone) if zone else None
-        tag = "领打/必出"
-        if grey is not None and zone:
-            # 跟牌决策(只有能不出时才需要判断; 无灰=真领打, 直接出)
-            if zone_key == ap.last_zone_key and ap.zone_acted:
-                print("  → 重复回合, 保守不出")
-                if not tap_pass(ap):
-                    print("    无灰钮, 转出牌")
-                ap.last_zone_key, ap.zone_acted = None, False
-                time.sleep(1.2)
-                continue
-            ap.last_zone_key, ap.zone_acted = zone_key, False
-            ranks = ap.read_zone_cards(img, zone)
-            if len(ranks) > 10 or (len(ranks) >= 9 and E.identify(ranks).type == E.T.STRAIGHT and ranks[-1] == 14):
-                print(f"[跟牌] 读数可疑({len(ranks)}张) 弃读 → 不出")
-                if not tap_pass(ap):
-                    print("    无灰钮, 转出牌")
-                ap.zone_acted = True
-                time.sleep(1.2)
-                continue
-            last = E.identify(ranks) if ranks else E.Group()
-            if last.is_invalid or last.type == E.T.ROCKET or not last.ranks:
-                print(f"[跟牌] 上一手({zone}) 读空/火箭 → 不出")
-                if not tap_pass(ap):
-                    print("    无灰钮, 转出牌")
-                time.sleep(1.2)
-                continue
-            print(f"[跟牌] 上一手({zone}): {[E.rank_to_token(r) for r in ranks]} = {last.type.name}")
-            choice = bot.pick_follow(hand, last)
-            if choice is None:
-                print("  → 不出")
-                if not tap_pass(ap):
-                    print("    无灰钮, 转出牌")
-                time.sleep(1.2)
-                continue
-            tag = f"跟牌(压{last.type.name})"
-        elif grey is not None:
-            # 可不出但上家牌堆未知/过期: 交给提示钮自决(能压则hint会选中)
-            tag = "跟牌(上家未知→提示自决)"
+        # 主动策略(短跑实验): 不读zone, 一律尝试压(提示钮自决); 领打直选
+        if grey is None:
+            tag = "领打/必出"
+        else:
+            tag = "跟牌(主动:提示自决)"
         # 执行: 领打=直选最小单张(物理几何已验证); 跟牌=提示钮(必然合法); 抬起确认
         if tag == "领打/必出":
             print("[领打/必出] 直选最小单张")

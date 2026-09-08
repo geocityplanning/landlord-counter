@@ -75,8 +75,12 @@ class AutoPlay:
         return out
 
     def result_screen(self, img):
-        g = mask_blobs(img, GREEN, 35, 380, 700, 250, 80)
-        return g[0] if g else None
+        """结算屏=再来一局(绿大钮)+返回主界面(蓝大钮)同现。防主界面'普通'绿钮误判。"""
+        g = mask_blobs(img, GREEN, 35, 380, 700, 250, 60)
+        b = mask_blobs(img, BLUE, 25, 380, 700, 250, 60)
+        if not g or not b:
+            return None
+        return g[0]
 
     def grey_loose(self, img):
         """宽松灰检测: #616161±30 或按压色 #424242±20, 宽≥150。"""
@@ -183,24 +187,31 @@ def my_turn(ap: "AutoPlay", img) -> bool:
     return row["grey"] is not None or row["green"] is not None
 
 
-def attempt_play(ap: "AutoPlay", hand: list[int], choice: E.Group) -> str:
-    """点选+出牌(失败重试一次)。返回 'ok' | 'pass'(可不出,建议pass) | 'fail'(卡住)。"""
-    for attempt in range(2):
-        img0 = snap()
-        if img0 is None:
+def play_via_hint(ap: "AutoPlay") -> str:
+    """点提示(自动选牌)→点出牌。返回 'ok'|'pass'|'fail'。"""
+    for _ in range(2):
+        img = snap()
+        if img is None:
             return "fail"
-        if not ap.play(img0, choice, hand):
+        blue = mask_blobs(img, BLUE, 25, 120, 300, 120, 50)
+        if not blue:
             return "fail"
-        time.sleep(1.7)
+        adb("shell", "input", "tap", str(blue[0][0]), str(blue[0][1]))
+        time.sleep(1.0)
         img2 = snap()
         if img2 is None:
             return "fail"
-        if not my_turn(ap, img2):
+        btns = ap.button_row(img2)
+        if not btns["green"]:
+            return "fail"
+        adb("shell", "input", "tap", str(btns["green"][0]), str(btns["green"][1]))
+        time.sleep(1.8)
+        img3 = snap()
+        if img3 is None:
+            return "fail"
+        if not my_turn(ap, img3):
             return "ok"
-        # 仍是我回合 → 失败; 若有灰钮说明可不出
-    img2 = snap()
-    grey2 = ap.button_row(img2)["grey"] if img2 is not None else None
-    return "pass" if grey2 else "fail"
+    return "fail"
 
 
 def hint_fallback(ap: "AutoPlay") -> bool:
@@ -290,21 +301,15 @@ def main():
                 # 落回跟牌逻辑: 直接跳到跟牌块
                 pass
             else:
-                # ---- 领打/必出: 最小合法牌; 失败→提示钮兜底(游戏自选,必然合法) ----
-                choice = bot.pick_lead(hand)
-                print(f"[领打] 试出 {E.group_to_str(choice)}")
-                st = attempt_play(ap, hand, choice)
+                # ---- 领打/必出: 提示钮(游戏自选, 必然合法) ----
+                print("[领打/必出] 提示钮出牌")
+                st = play_via_hint(ap)
                 if st == "ok":
-                    remove_all(hand, choice.ranks)
                     print("  ✓ 出牌成功")
+                    hand = []  # 提示自选, 牌未知 → 下回合重建 belief
                     ap.last_zone_key, ap.zone_acted = None, False
                 else:
-                    print(f"  ✗ 领打出牌失败({st}) → 提示钮兜底")
-                    if hint_fallback(ap):
-                        print("  ✓ 提示兜底出牌成功")
-                        remove_all(hand, choice.ranks)
-                    else:
-                        print("  ✗ 兜底未成, 下轮再试")
+                    print(f"  ✗ 提示出牌失败({st}), 下轮再试")
                 time.sleep(1.0)
                 continue
         # ---- 跟牌(有人出了, 可跟可不跟) ----
@@ -338,11 +343,12 @@ def main():
             print("  → 不出")
             time.sleep(1.2)
             continue
-        print(f"[跟牌] 试出 {E.group_to_str(choice)}")
-        st = attempt_play(ap, hand, choice)
+        # 提示钮出牌(必然合法; 引擎候选仅用于决策)
+        print(f"[跟牌] 决策=出({E.group_to_str(choice)}), 执行走提示钮")
+        st = play_via_hint(ap)
         if st == "ok":
-            remove_all(hand, choice.ranks)
             print("  ✓ 出牌成功")
+            hand = []  # 提示自选 → 下回合重建 belief
         else:
             print(f"  ✗ 出牌失败({st}) → 保守不出")
             adb("shell", "input", "tap", str(grey[0]), str(grey[1]))

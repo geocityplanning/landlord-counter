@@ -201,7 +201,7 @@ class CardRecognizer:
                     ],
                 }
             ],
-            "max_tokens": 256,
+            "max_tokens": 2048,  # 推理型VLM(如deepseek-vision)需预留 reasoning+答案 空间
         }
         try:
             resp = httpx.post(

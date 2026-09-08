@@ -69,22 +69,26 @@ VLM_PROVIDER_BASE = {
     "deepseek": ("DEEPSEEK_API_BASE", "https://api.deepseek.com"),
     "doubao": ("DOUBAO_API_BASE", "https://ark.cn-beijing.volces.com/api/v3"),
     "qianfan": ("QIANFAN_API_BASE", "https://qianfan.baidubce.com/v2"),
+    "laozhang": ("LAOZHANG_API_BASE", "https://api.laozhang.ai/v1"),  # 中转站: 仅识图用
 }
 VLM_PROVIDER_KEY = {
     "zhipu": "VLM_API_KEY",
     "deepseek": "DEEPSEEK_API_KEY",
     "doubao": "DOUBAO_API_KEY",
     "qianfan": "QIANFAN_API_KEY",
+    "laozhang": "LAOZHANG_API_KEY",
 }
 VLM_PROVIDER_MODEL_ENV = {
     "zhipu": "VLM_MODEL", "deepseek": "DEEPSEEK_MODEL",
     "doubao": "DOUBAO_MODEL", "qianfan": "QIANFAN_MODEL",
+    "laozhang": "LAOZHANG_MODEL",
 }
 VLM_PROVIDER_MODEL_DEFAULT = {
     "zhipu": "glm-4v-plus",
     "deepseek": "deepseek-v4-flash-vision-exp",
     "doubao": "",  # 火山方舟模型/推理接入点由用户填 DOUBAO_MODEL
     "qianfan": "",  # 千帆 VL 模型名由用户填 QIANFAN_MODEL
+    "laozhang": "",  # 中转站识图模型名由用户填 LAOZHANG_MODEL(如 glm-4v-plus)
 }
 
 

@@ -1,0 +1,18 @@
+{"kind": "phase", "phase": "voting(三读)", "ts": "2026-09-08T11:53:15"}
+{"kind": "vote", "count": 17, "cards": "10 10 2 3 4 5 6 6 6 8 9 A J K K K Q", "reads": [17, 17, 17], "ts": "2026-09-08T11:53:32"}
+{"kind": "hand_same", "count": 17, "ts": "2026-09-08T11:53:38"}
+{"kind": "hand", "count": 0, "cards": "", "obs_count": 0, "dropped": {}, "added_back": {}, "notes": [], "ts": "2026-09-08T11:53:59"}
+{"kind": "hand_same", "count": 0, "ts": "2026-09-08T11:54:03"}
+{"kind": "hand_same", "count": 0, "ts": "2026-09-08T11:54:09"}
+{"kind": "hand_same", "count": 0, "ts": "2026-09-08T11:54:14"}
+{"kind": "hand_same", "count": 0, "ts": "2026-09-08T11:54:28"}
+{"kind": "hand_same", "count": 0, "ts": "2026-09-08T11:54:40"}
+{"kind": "hand_same", "count": 0, "ts": "2026-09-08T11:55:00"}
+{"kind": "hand_same", "count": 0, "ts": "2026-09-08T11:55:10"}
+{"kind": "hand_same", "count": 0, "ts": "2026-09-08T11:55:31"}
+{"kind": "hand_same", "count": 0, "ts": "2026-09-08T11:55:51"}
+{"kind": "hand_same", "count": 0, "ts": "2026-09-08T11:56:15"}
+{"kind": "hand_same", "count": 0, "ts": "2026-09-08T11:56:23"}
+{"kind": "hand_same", "count": 0, "ts": "2026-09-08T11:56:31"}
+{"kind": "hand_same", "count": 0, "ts": "2026-09-08T11:56:52"}
+{"kind": "hand_same", "count": 0, "ts": "2026-09-08T11:57:17"}

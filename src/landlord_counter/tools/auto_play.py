@@ -158,8 +158,8 @@ class AutoPlay:
         sp = min(max((HAND_AVAIL - CARD_W) / max(len(hand) - 1, 1), CARD_W * 0.35), CARD_W * 0.90)
         start_x = (1280.0 - (sp * (len(hand) - 1) + CARD_W)) / 2
         for i in pos:
-            # 关键: 卡重叠(间距67 < 卡宽136), 点卡左可见带而非中心(中心被右邻卡覆盖)
-            x = int(start_x + i * sp + sp * 0.5)
+            # 命中=相邻牌中心分界(hitTestCard): 点 0.4*sp 处(避开右边界, 中心更稳)
+            x = int(start_x + i * sp + sp * 0.4)
             adb("shell", "input", "tap", str(x), str(HAND_Y))
             time.sleep(0.16)
         # 点"出牌"(绿钮)
@@ -185,6 +185,25 @@ def remove_all(hand: list[int], ranks: list[int]):
 def my_turn(ap: "AutoPlay", img) -> bool:
     row = ap.button_row(img)
     return row["grey"] is not None or row["green"] is not None
+
+
+def attempt_play(ap: "AutoPlay", hand: list[int], choice: E.Group) -> str:
+    """引擎直选+出牌(失败重试一次)。'ok'|'pass'(可不出)|'fail'(卡住)。"""
+    for _ in range(2):
+        img0 = snap()
+        if img0 is None:
+            return "fail"
+        if not ap.play(img0, choice, hand):
+            return "fail"
+        time.sleep(1.7)
+        img2 = snap()
+        if img2 is None:
+            return "fail"
+        if not my_turn(ap, img2):
+            return "ok"
+    img2 = snap()
+    grey2 = ap.button_row(img2)["grey"] if img2 is not None else None
+    return "pass" if grey2 else "fail"
 
 
 def play_via_hint(ap: "AutoPlay") -> str:
@@ -294,24 +313,29 @@ def main():
             time.sleep(0.6)
             continue
         if grey is None:
-            # 复查宽松灰(按压色#424242/暗灰) — 防瞬态漏检把"可不出"误判为领打
-            loose = ap.grey_loose(img)
-            if loose:
-                grey = loose
-                # 落回跟牌逻辑: 直接跳到跟牌块
-                pass
-            else:
-                # ---- 领打/必出: 提示钮(游戏自选, 必然合法) ----
-                print("[领打/必出] 提示钮出牌")
-                st = play_via_hint(ap)
-                if st == "ok":
-                    print("  ✓ 出牌成功")
-                    hand = []  # 提示自选, 牌未知 → 下回合重建 belief
-                    ap.last_zone_key, ap.zone_acted = None, False
-                else:
-                    print(f"  ✗ 提示出牌失败({st}), 下轮再试")
-                time.sleep(1.0)
+            # ---- 领打/必出: 引擎最小合法牌直选; 失败→提示钮兜底(游戏自选必然合法) ----
+            if not hand:
+                ranks = rec.read_hand_vlm(img)
+                hand = sorted(E.token_to_rank(t) for t in ranks) if ranks else []
+                print(f"[建belief] hand={[E.rank_to_token(r) for r in hand]}")
+                time.sleep(0.6)
                 continue
+            choice = bot.pick_lead(hand)
+            print(f"[领打] 直选 {E.group_to_str(choice)}")
+            st = attempt_play(ap, hand, choice)
+            if st == "ok":
+                remove_all(hand, choice.ranks)
+                print("  ✓ 出牌成功")
+                ap.last_zone_key, ap.zone_acted = None, False
+            else:
+                print(f"  ✗ 直选失败({st}) → 提示钮兜底")
+                if hint_fallback(ap):
+                    print("  ✓ 提示兜底成功(牌面未知, 重建belief)")
+                    hand = []
+                else:
+                    print("  ✗ 兜底未成, 下轮再试")
+            time.sleep(1.0)
+            continue
         # ---- 跟牌(有人出了, 可跟可不跟) ----
         zone = ap.last_played_zone(img)
         zone_key = ap.zone_sig.get(zone) if zone else None
@@ -343,14 +367,14 @@ def main():
             print("  → 不出")
             time.sleep(1.2)
             continue
-        # 提示钮出牌(必然合法; 引擎候选仅用于决策)
-        print(f"[跟牌] 决策=出({E.group_to_str(choice)}), 执行走提示钮")
-        st = play_via_hint(ap)
+        # 引擎直选(命中分界修正后应稳定); 失败→保守不出
+        print(f"[跟牌] 决策=出({E.group_to_str(choice)})")
+        st = attempt_play(ap, hand, choice)
         if st == "ok":
+            remove_all(hand, choice.ranks)
             print("  ✓ 出牌成功")
-            hand = []  # 提示自选 → 下回合重建 belief
         else:
-            print(f"  ✗ 出牌失败({st}) → 保守不出")
+            print(f"  ✗ 直选出牌失败({st}) → 保守不出")
             adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
         ap.zone_acted = True
         time.sleep(1.2)

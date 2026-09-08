@@ -126,10 +126,38 @@ class AutoPlay:
         recent = {z: t for z, t in self.zone_ts.items() if now - t < 15.0}
         return max(recent, key=recent.get) if recent else None
 
-    def read_zone_cards(self, img, zone) -> list[int]:
+    def _zone_card_rect(self, img, zone):
+        """牌堆白卡内容感知定位: 亮白(卡面)像素 bbox; 无卡返回 None。"""
+        import numpy as np
+
         x0, y0, x1, y1 = TABLE_CROP[zone]
-        crop = img[y0:y1, x0:x1]
-        crop = cv2.resize(crop, None, fx=2.2, fy=2.2, interpolation=cv2.INTER_CUBIC)
+        band = img[y0:y1, x0:x1]
+        bgr = band.astype(np.int16)
+        # 白卡面: RGB 全高 & 低饱和(排除红色点色/绿底)
+        r, g, b = bgr[:, :, 2], bgr[:, :, 1], bgr[:, :, 0]
+        white = (r > 200) & (g > 200) & (b > 200)
+        sat = bgr.max(axis=2) - bgr.min(axis=2)
+        mask = white & (sat < 60)
+        ys, xs = np.where(mask)
+        if len(xs) < 600:  # 至少 ~120x120 卡面
+            return None
+        xa, xb = xs.min(), xs.max()
+        ya, yb = ys.min(), ys.max()
+        if (xb - xa) < 70 or (yb - ya) < 80:
+            return None
+        return (x0 + xa, y0 + ya, x0 + xb, y0 + yb)
+
+    def read_zone_cards(self, img, zone) -> list[int]:
+        rect = self._zone_card_rect(img, zone)
+        if rect is None:
+            return []  # 无白卡牌堆, 不发VLM
+        xa, ya, xb, yb = rect
+        # 内容外扩一点(点数在左上角, 防切边)
+        pad_x, pad_y = 6, 8
+        xa, ya = max(0, xa - pad_x), max(0, ya - pad_y)
+        xb, yb = min(img.shape[1] - 1, xb + pad_x), min(img.shape[0] - 1, yb + pad_y)
+        crop = img[ya:yb, xa:xb]
+        crop = cv2.resize(crop, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC)
         text = self.rec.recognize_with_vlm(crop, PROMPT_PLAYED) or ""
         return parse_ranks(text)
 
@@ -206,28 +234,74 @@ def lifted_count(img) -> int:
     return max(1, int(round(width / 95)))
 
 
-def play_smart(ap: "AutoPlay") -> str:
-    """提示钮出牌+抬起确认。'ok'(已出) | 'none'(无牌可出→应pass) | 'fail'(卡住)。"""
+def tap_pass(ap: "AutoPlay") -> bool:
+    """新鲜截图找灰钮点'不出'; 无灰钮返回 False。"""
+    img2 = snap()
+    g2 = ap.button_row(img2)["grey"] if img2 is not None else None
+    if not g2:
+        return False
+    adb("shell", "input", "tap", str(g2[0]), str(g2[1]))
+    return True
+
+
+def play_lead_direct(ap: "AutoPlay", hand: list[int]) -> str:
+    """领打: 直接点最小单张(物理已验证命中几何)+出牌绿钮; 'ok'|'fail'。"""
+    if not hand:
+        return "fail"
+    n = len(hand)
+    sp = min(max((HAND_AVAIL - CARD_W) / max(n - 1, 1), CARD_W * 0.35), CARD_W * 0.90)
+    start_x = (1280.0 - (sp * (n - 1) + CARD_W)) / 2
+    # 最小单张所在位置(升序 belief 第0个rank的所有同rank中第一个)
+    r0 = hand[0]
+    idx = next(i for i, h in enumerate(hand) if h == r0)
+    x = int(start_x + idx * sp + sp * 0.4)
     for _ in range(2):
+        adb("shell", "input", "tap", str(x), str(HAND_Y))
+        time.sleep(0.35)
         img = snap()
         if img is None:
             return "fail"
+        btns = ap.button_row(img)
+        if not btns["green"]:
+            return "fail"
+        adb("shell", "input", "tap", str(btns["green"][0]), str(btns["green"][1]))
+        time.sleep(1.8)
+        img2 = snap()
+        if img2 is None:
+            return "fail"
+        if not my_turn(ap, img2):
+            return "ok"
+    return "fail"
+
+
+def play_smart(ap: "AutoPlay") -> str:
+    """提示钮出牌+抬起确认。'ok'|'none'(无解→pass)|'end'(回合已结束)|'fail'。"""
+    img = snap()
+    if img is None:
+        return "fail"
+    if not my_turn(ap, img):
+        return "end"  # 决策期间回合已结束(结算/轮到别人)
+    for _ in range(2):
         blue = mask_blobs(img, BLUE, 25, 120, 300, 120, 50)
         if not blue:
             return "fail"
         adb("shell", "input", "tap", str(blue[0][0]), str(blue[0][1]))
         time.sleep(1.2)
         img2 = snap()
-        if lifted_count(img2) == 0:
-            return "none"  # 提示无解(没有能出的牌) → 该不出
+        lift = lifted_count(img2)
+        if lift == 0:
+            return "none"
         btns = ap.button_row(img2)
         if not btns["green"]:
             return "fail"
         adb("shell", "input", "tap", str(btns["green"][0]), str(btns["green"][1]))
         time.sleep(1.8)
         img3 = snap()
-        if img3 is not None and not my_turn(ap, img3):
+        if img3 is None:
+            return "fail"
+        if not my_turn(ap, img3):
             return "ok"
+        img = img3  # 重试一次用最新帧
     return "fail"
 
 
@@ -358,12 +432,13 @@ def main():
             continue
         zone = ap.last_played_zone(img)
         zone_key = ap.zone_sig.get(zone) if zone else None
-        do_play = True  # 默认领打/必出
         tag = "领打/必出"
-        if zone:
+        if grey is not None and zone:
+            # 跟牌决策(只有能不出时才需要判断; 无灰=真领打, 直接出)
             if zone_key == ap.last_zone_key and ap.zone_acted:
                 print("  → 重复回合, 保守不出")
-                adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
+                if not tap_pass(ap):
+                    print("    无灰钮, 转出牌")
                 ap.last_zone_key, ap.zone_acted = None, False
                 time.sleep(1.2)
                 continue
@@ -371,31 +446,51 @@ def main():
             ranks = ap.read_zone_cards(img, zone)
             if len(ranks) > 10 or (len(ranks) >= 9 and E.identify(ranks).type == E.T.STRAIGHT and ranks[-1] == 14):
                 print(f"[跟牌] 读数可疑({len(ranks)}张) 弃读 → 不出")
-                adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
+                if not tap_pass(ap):
+                    print("    无灰钮, 转出牌")
                 ap.zone_acted = True
                 time.sleep(1.2)
                 continue
             last = E.identify(ranks) if ranks else E.Group()
             if last.is_invalid or last.type == E.T.ROCKET or not last.ranks:
                 print(f"[跟牌] 上一手({zone}) 读空/火箭 → 不出")
-                adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
+                if not tap_pass(ap):
+                    print("    无灰钮, 转出牌")
                 time.sleep(1.2)
                 continue
             print(f"[跟牌] 上一手({zone}): {[E.rank_to_token(r) for r in ranks]} = {last.type.name}")
             choice = bot.pick_follow(hand, last)
             if choice is None:
                 print("  → 不出")
-                adb("shell", "input", "tap", str(grey[0]), str(grey[1]))
+                if not tap_pass(ap):
+                    print("    无灰钮, 转出牌")
                 time.sleep(1.2)
                 continue
             tag = f"跟牌(压{last.type.name})"
-        # 执行: 提示钮出牌(必然合法), 抬起确认; 无解→不出
+        elif grey is not None:
+            # 可不出但上家牌堆未知/过期: 交给提示钮自决(能压则hint会选中)
+            tag = "跟牌(上家未知→提示自决)"
+        # 执行: 领打=直选最小单张(物理几何已验证); 跟牌=提示钮(必然合法); 抬起确认
+        if tag == "领打/必出":
+            print("[领打/必出] 直选最小单张")
+            st = play_lead_direct(ap, hand)
+            if st == "ok":
+                remove_all(hand, [hand[0]])
+                print("  ✓ 领打出牌成功")
+                ap.last_zone_key, ap.zone_acted = None, False
+                time.sleep(1.2)
+                continue
+            print(f"  ✗ 直选失败({st}) → 提示钮兜底")
         print(f"[{tag}] → play_smart")
         st = play_smart(ap)
         if st == "ok":
             print("  ✓ 出牌成功(提示所选, belief重建)")
             hand = []
             ap.last_zone_key, ap.zone_acted = None, False
+        elif st == "end":
+            print("  → 回合已结束(竞态), 重扫")
+            time.sleep(0.8)
+            continue
         elif st == "none":
             print("  → 提示无解, 不出")
             img2 = snap()

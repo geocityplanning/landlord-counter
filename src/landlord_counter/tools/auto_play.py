@@ -313,6 +313,11 @@ def main():
             time.sleep(0.6)
             continue
         if grey is None:
+            # 取证: 保存判断帧(限频), 供复盘灰钮漏检/真领打
+            import time as _t
+            if _t.time() - getattr(ap, "_dbg_ts", 0) > 8:
+                ap._dbg_ts = _t.time()
+                cv2.imwrite("/tmp/lead_dbg.png", img)
             # ---- 领打/必出: 引擎最小合法牌直选; 失败→提示钮兜底(游戏自选必然合法) ----
             if not hand:
                 ranks = rec.read_hand_vlm(img)

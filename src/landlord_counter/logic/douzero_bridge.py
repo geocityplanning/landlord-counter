@@ -109,6 +109,12 @@ class DouZeroBot:
         import torch
 
         role_short = {"landlord_down": "down", "landlord_up": "up"}.get(role, role)
+        # 手数钳制: 地主≤20 农民≤17 (farmer obs one-hot 定长)
+        counts = {
+            "landlord": min(max(int(counts.get("landlord", 17)), 1), 20),
+            "landlord_up": min(max(int(counts.get("landlord_up", 17)), 0), 17),
+            "landlord_down": min(max(int(counts.get("landlord_down", 17)), 0), 17),
+        }
         hand_ranks = sorted(E.token_to_rank(t) for t in hand_tokens)
         last_group = E.identify_str(last_tokens) if last_tokens else E.Group()
         cands = self._candidates(hand_ranks, last_group)

@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import os
 import re
 import time
 
@@ -64,15 +65,45 @@ class AutoPlay:
         self.n_actions = 0
         self.last_zone_key: bytes | None = None
         self.zone_acted = False
+        self.last_counted_sig: dict = {"L": None, "R": None}
+        # DouZero 回合状态 (round-local)
+        self.landlord_seat: str | None = None  # human/B/A
+        self.seat_played: dict[str, int] = {"B": 0, "A": 0}  # 已出张数(估)
+        self.round_first_actor_checked = False
+
+    def round_reset(self):
+        self.landlord_seat = None
+        self.seat_played = {"B": 0, "A": 0}
+        self.round_first_actor_checked = False
+        self.last_zone_key = None
+        self.zone_acted = False
+        self.last_counted_sig = {"L": None, "R": None}
+
+    def note_new_plays(self, img):
+        """新出现的牌堆: 估张数记入 seat_played; 首个出牌者=地主。"""
+        for zone in ZONES:
+            sig = self.zone_sig.get(zone)
+            if sig is None or sig == self.last_counted_sig.get(zone):
+                continue
+            rect = self._zone_card_rect(img, zone)
+            if rect is None:
+                continue
+            w = rect[2] - rect[0]
+            n = max(1, int(round((w - 119) / 61.2)) + 1)
+            seat = "B" if zone == "L" else "A"
+            if self.landlord_seat is None:
+                self.landlord_seat = seat
+            self.seat_played[seat] = self.seat_played.get(seat, 0) + n
+            self.last_counted_sig[zone] = sig
 
     # ---------- 相位 & 动作检测 ----------
     def button_row(self, img) -> dict:
-        """按钮行内 grey/green。grey 含按压暗色 #424242 兜底(min_w150)防瞬态漏检。
-        出牌绿钮取最右(实测x≈980/786; 机器人头像绿块在x≈260, 最左, 必须排除)。"""
+        """按钮行内 grey/green。grey 含按压暗色 #424242 兜底(min_w150)。
+        出牌绿钮: x∈[700,1050] 中最右(实测786/980; 机器人头像绿在x≈260/1100+排除)。"""
         grey = self.grey_loose(img)
-        green = mask_blobs(img, GREEN, 35, 120, 300, 150, 60)
+        green = [b for b in mask_blobs(img, GREEN, 35, 120, 300, 150, 60) if 700 <= b[0] <= 1050]
         out = {"grey": grey}
-        out["green"] = green[-1] if green else None  # 最右=真出牌
+        out["green"] = green[-1] if green else None
         return out
 
     def result_screen(self, img):
@@ -397,12 +428,46 @@ def hint_fallback(ap: "AutoPlay") -> bool:
     return False
 
 
+def _dz_init():
+    """DouZero 桥接(可选): DOUZERO=1 且权重存在才启用。"""
+    try:
+        from landlord_counter.logic.douzero_bridge import DouZeroBot
+
+        wdir = os.getenv("DOUZERO_WEIGHTS", "/tmp/dz_w")
+        dz = DouZeroBot(wdir, enabled=os.getenv("DOUZERO", "0") == "1")
+        if dz.available():
+            print(f"▶ DouZero 决策启用 (weights={wdir})")
+            return dz
+    except Exception as e:  # noqa: BLE001
+        print(f"  DouZero 不可用({e}), 用规则/提示")
+    return None
+
+
+def _dz_role_counts(ap: "AutoPlay", hand: list[int]) -> tuple[str, dict]:
+    """我方 DouZero 角色 + 各家手数(估)。首动者未定→我方是地主(地主先出)。"""
+    seat = ap.landlord_seat if ap.landlord_seat is not None else "human"
+    cycle = ["human", "B", "A"]
+    li = cycle.index(seat)
+    counts = {}
+    for i, s in enumerate(cycle):
+        if s == seat:
+            counts["landlord"] = len(hand) if s == "human" else 20 - ap.seat_played.get(s, 0)
+        else:
+            role = "down" if (li + 1) % 3 == i else "up"
+            counts[role] = len(hand) if s == "human" else 17 - ap.seat_played.get(s, 0)
+    if "landlord" not in counts:
+        counts["landlord"] = 20 - ap.seat_played.get(seat, 0)
+    role_human = "landlord" if seat == "human" else ("down" if (li + 1) % 3 == cycle.index("human") else "up")
+    return role_human, counts
+
+
 def main():
     cfg = load_config()
     rec = CardRecognizer(cfg.vision)
     ap = AutoPlay(rec)
+    dz = _dz_init()
     hand: list[int] = []  # 当前手牌 belief(升序), 由发牌投票/出牌自减维护
-    last_hand_len = -1
+    pending_relandlord = False  # 叫3分可能成地主 → 需按20张重读(含底牌)
     print("▶ auto_play 启动 (完整托管 v1)")
     while True:
         img = snap()
@@ -420,12 +485,14 @@ def main():
         grey, green = row["grey"], row["green"]
         if not grey and not green:
             ap.update_zones(img)  # 机器人回合: 只跟踪牌堆变化
+            ap.note_new_plays(img)
             time.sleep(0.8)
             continue
         # 1) 叫分轮(无绿=只有叫分按钮)
         if not green:
-            if hand:  # 上一局残念 → 新局重置
+            if hand:  # 上一局残念 → 新局重置(含 DouZero 回合状态)
                 hand = []
+                ap.round_reset()
             if not hand:  # 新局: 发牌已展示, 读一次建立 belief
                 ranks = rec.read_hand_vlm(img)
                 if ranks:
@@ -442,15 +509,28 @@ def main():
             if target:
                 adb("shell", "input", "tap", str(target[0]), str(target[1]))
                 print(f"[叫分] {label}@({target[0]},{target[1]})")
+                if label.startswith("叫"):
+                    pending_relandlord = True  # 可能成地主, 底牌并入后按20张重读
             time.sleep(3.0)  # 等发牌入场动画(逐张滑入 ~3s)落定
             continue
         # 2) 我回合统一处理(稳定双帧判定, 滤机器人头像误报)
         ap.update_zones(img)
+        ap.note_new_plays(img)
         turn_ok, st_row = my_turn_stable(ap)
         if not turn_ok:
             time.sleep(0.5)
             continue
         grey, green = st_row["grey"], st_row["green"]
+        if pending_relandlord and hand:
+            # 等底牌并入手牌后按 20 张重读(现在大概率已是地主回合/立刻会到)
+            ranks = rec.read_hand_vlm(img, expected=20)
+            if len(ranks) >= 18:
+                hand = sorted(E.token_to_rank(t) for t in ranks)
+                pending_relandlord = False
+                print(f"[成地主] 重读20张: {[E.rank_to_token(r) for r in hand]}")
+            else:
+                time.sleep(1.0)
+                continue
         if not hand:
             ranks = rec.read_hand_vlm(img)
             hand = sorted(E.token_to_rank(t) for t in ranks) if ranks else []
@@ -462,9 +542,29 @@ def main():
             tag = "领打/必出"
         else:
             tag = "跟牌(主动:提示自决)"
-        # 执行: 领打=直选最小单张(物理几何已验证); 跟牌=提示钮(必然合法); 抬起确认
+        # 执行: 领打=DouZero决策(启用时)→引擎直选; 跟牌=提示钮; 失败回落
         if tag == "领打/必出":
-            print("[领打/必出] 直选最小单张")
+            dz_ok = False
+            if dz is not None:
+                try:
+                    role, counts = _dz_role_counts(ap, hand)
+                    htok = [E.rank_to_token(r) for r in hand]
+                    out_t = dz.decide(role, htok, counts, {}, None, can_pass=False)
+                    if out_t:
+                        g = E.identify_str(out_t)
+                        if not g.is_invalid and all(hand.count(E.token_to_rank(t)) >= out_t.count(t) for t in set(out_t)):
+                            print(f"[领打·DouZero] 决策出 {E.group_to_str(g)} (role={role})")
+                            st = attempt_play(ap, hand, g)
+                            if st == "ok":
+                                remove_all(hand, [E.token_to_rank(t) for t in out_t])
+                                print("  ✓ DouZero 出牌成功")
+                                ap.last_zone_key, ap.zone_acted = None, False
+                                time.sleep(1.2)
+                                continue
+                            print(f"  ✗ DouZero 直选失败({st}) → 回落")
+                except Exception as e:  # noqa: BLE001
+                    print(f"  DouZero 决策异常({e}) → 回落")
+            print("[领打/必出] 规则直选最小单张")
             st = play_lead_direct(ap, hand)
             if st == "ok":
                 remove_all(hand, [hand[0]])

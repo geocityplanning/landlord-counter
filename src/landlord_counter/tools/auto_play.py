@@ -494,6 +494,7 @@ def main():
     dz = _dz_init()
     hand: list[int] = []  # 当前手牌 belief(升序), 由发牌投票/出牌自减维护
     pending_relandlord = False  # 叫3分可能成地主 → 需按20张重读(含底牌)
+    skip_until = 0.0  # 数牌失真防抖暂停截至时刻
     print("▶ auto_play 启动 (完整托管 v1)")
     while True:
         img = snap()
@@ -562,6 +563,8 @@ def main():
                 print(f"[建belief] hand={[E.rank_to_token(r) for r in hand]}")
             time.sleep(0.6)
             continue
+        # 手牌 belief 长度自检(布局总宽恒定→张数不可由亮宽推出, 仅保留日志)
+        # 直选失败根因另查; 此处信任读牌+出牌自减 belief
         # 主动策略(短跑实验): 不读zone, 一律尝试压(提示钮自决); 领打直选
         if grey is None:
             tag = "领打/必出"

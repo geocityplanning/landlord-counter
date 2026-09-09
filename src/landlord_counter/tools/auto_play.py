@@ -225,8 +225,22 @@ class AutoPlay:
             x = int(start_x + i * sp + sp * 0.4)
             adb("shell", "input", "tap", str(x), str(HAND_Y))
             time.sleep(0.16)
-        # 点"出牌"(绿钮)
+        time.sleep(0.5)  # 等抬起动画落定
+        img = snap()
+        if img is None:
+            return False
+        # 点"出牌"(绿钮) — 必须从抬起校验后的新帧取绿钮坐标
         btns = self.button_row(img)
+        att = os.environ.get("ATT_DIR")
+        if att:
+            os.makedirs(f"{att}/f", exist_ok=True)
+            cv2.imwrite(f"{att}/f/sel_{int(time.time()*100)%1000000}.png", img)
+            with open(f"{att}/sel.csv", "a") as fo:
+                gray = cv2.cvtColor(img[424:484, 20:1260], cv2.COLOR_BGR2GRAY)
+                cols = (gray > 205).any(axis=0)
+                xs = [i for i, v in enumerate(cols) if v]
+                w = xs[-1] - xs[0] if len(xs) > 60 else 0
+                fo.write(f"{time.time():.1f},idx={pos},n={len(hand)},lift_w={w},green_x={btns['green'][0] if btns['green'] else -1}\n")
         if btns["green"]:
             adb("shell", "input", "tap", str(btns["green"][0]), str(btns["green"][1]))
             return True
@@ -363,23 +377,63 @@ def play_smart(ap: "AutoPlay") -> str:
     return "fail"
 
 
+def _att_log(result: str, choice) -> None:
+    att = os.environ.get("ATT_DIR")
+    if not att:
+        return
+    try:
+        with open(f"{att}/result.csv", "a") as fo:
+            fo.write(f"{time.time():.1f},{result},{[c for c in choice.ranks] if choice else []}\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def attempt_play(ap: "AutoPlay", hand: list[int], choice: E.Group) -> str:
-    """引擎直选+出牌(失败重试一次)。'ok'|'pass'(可不出)|'fail'(卡住)。"""
-    for _ in range(2):
-        img0 = snap()
-        if img0 is None:
+    """引擎直选+出牌: 点选→1.2s后校验抬起→点绿; 补救≤2次(有抬起只补绿, 无抬起重选)。
+    'ok'|'pass'(可不出)|'fail'(卡住)。"""
+    img0 = snap()
+    if img0 is None:
+        return "fail"
+    if not ap.play(img0, choice, hand):
+        return "fail"
+    time.sleep(1.2)
+    img2 = snap()
+    if img2 is not None and not my_turn(ap, img2):
+        _att_log("ok", choice)
+        return "ok"
+    for _ in range(2):  # 补救: 有抬起→只补点绿钮; 无抬起→整轮重选
+        time.sleep(0.4)
+        imgv = snap()
+        if imgv is None:
+            continue
+        lift = lifted_count(imgv)
+        if lift > 0:
+            gv = ap.button_row(imgv)
+            if not gv["green"]:
+                _att_log("still_myturn", choice)
+                continue
+            adb("shell", "input", "tap", str(gv["green"][0]), str(gv["green"][1]))
+            time.sleep(1.8)
+            img3 = snap()
+            if img3 is not None and not my_turn(ap, img3):
+                _att_log("ok", choice)
+                return "ok"
+            _att_log("still_myturn", choice)
+            continue
+        # 抬起丢失(被toggle/动画) → 整轮重选+点绿
+        if not ap.play(imgv, choice, hand):
             return "fail"
-        if not ap.play(img0, choice, hand):
-            return "fail"
-        time.sleep(1.7)
-        img2 = snap()
-        if img2 is None:
-            return "fail"
-        if not my_turn(ap, img2):
+        time.sleep(1.2)
+        img4 = snap()
+        if img4 is not None and not my_turn(ap, img4):
+            _att_log("ok", choice)
             return "ok"
+        _att_log("still_myturn", choice)
     img2 = snap()
     grey2 = ap.button_row(img2)["grey"] if img2 is not None else None
-    return "pass" if grey2 else "fail"
+    r = "pass" if grey2 else "fail"
+    _att_log(r, choice)
+    return r
 
 
 def play_via_hint(ap: "AutoPlay") -> str:
@@ -631,16 +685,16 @@ def main():
                             # 无灰钮可不出? 落入 play_smart 提示自决
                         else:
                             g = E.identify_str(out_t)
-                            if not g.is_invalid and all(hand.count(E.token_to_rank(t)) >= out_t.count(t) for t in set(out_t)):
-                                print(f"[跟牌·DouZero] 决策出 {E.group_to_str(g)} 压 {last_toks} (role={role})")
-                                st = attempt_play(ap, hand, g)
-                                if st == "ok":
-                                    remove_all(hand, [E.token_to_rank(t) for t in out_t])
-                                    print("  ✓ DouZero 跟牌出牌成功")
-                                    ap.last_zone_key, ap.zone_acted = None, False
-                                    time.sleep(1.2)
-                                    continue
-                                print(f"  ✗ DouZero 跟牌直选失败({st}) → 回落提示钮")
+                            # 跟牌执行走提示钮(100%可靠); DouZero 只负责'出/不出'决策
+                            print(f"[跟牌·DouZero] 决策出 {E.group_to_str(g)} 压 {last_toks} (role={role}) → 提示钮执行")
+                            st = play_smart(ap)
+                            if st == "ok":
+                                print("  ✓ DouZero 跟牌(提示钮)出牌成功")
+                                hand = []
+                                ap.last_zone_key, ap.zone_acted = None, False
+                                time.sleep(1.2)
+                                continue
+                            print(f"  ✗ 提示钮执行异常({st})")
                     except Exception as e:  # noqa: BLE001
                         print(f"  DouZero 跟牌异常({e}) → 回落提示钮")
         print(f"[{tag}] → play_smart")

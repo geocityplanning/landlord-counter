@@ -226,9 +226,13 @@ class AutoPlay:
             adb("shell", "input", "tap", str(x), str(HAND_Y))
             time.sleep(0.16)
         time.sleep(0.5)  # 等抬起动画落定
-        img = snap()
-        if img is None:
+        aft = snap()
+        if aft is None:
             return False
+        # 抬起增量校验(帧差, 排除中央静态牌堆): 没抬起就不点绿(点了也白点)
+        if lifted_delta(img, aft) < 60:
+            return False
+        img = aft
         # 点"出牌"(绿钮) — 必须从抬起校验后的新帧取绿钮坐标
         btns = self.button_row(img)
         att = os.environ.get("ATT_DIR")
@@ -284,6 +288,26 @@ def my_turn_stable(ap: "AutoPlay") -> tuple[bool, dict | None]:
     if abs(ga[0] - gb[0]) > 25 or abs(ga[1] - gb[1]) > 25:
         return False, None
     return True, rb
+
+
+def lifted_delta(before, after) -> int:
+    """抬起增量检测: 条带y424-484里 after比before 新出现的亮宽。
+    (排除中央牌堆等静态亮区 — 修复'我方上轮所出牌堆污染抬起带'根因)"""
+    if before is None or after is None:
+        return 0
+    ga = cv2.cvtColor(before[424:484, 20:1260], cv2.COLOR_BGR2GRAY)
+    gb = cv2.cvtColor(after[424:484, 20:1260], cv2.COLOR_BGR2GRAY)
+    ba = (ga > 205).any(axis=0)
+    bb = (gb > 205).any(axis=0)
+    new = bb & ~ba
+    run = width = 0
+    for v in new:
+        if v:
+            run += 1
+            width = max(width, run)
+        else:
+            run = 0
+    return width if width >= 60 else 0
 
 
 def lifted_count(img) -> int:
@@ -389,16 +413,14 @@ def _att_log(result: str, choice) -> None:
 
 
 def attempt_play(ap: "AutoPlay", hand: list[int], choice: E.Group) -> str:
-    """引擎直选+出牌: 点选→1.2s后校验抬起→点绿; 补救≤2次(有抬起只补绿, 无抬起重选)。
+    """引擎直选+出牌: 点选→0.5s帧差验抬起→点绿; 失败补救≤2(有抬起只补绿, 无抬起重选)。
     'ok'|'pass'(可不出)|'fail'(卡住)。"""
     img0 = snap()
     if img0 is None:
         return "fail"
-    if not ap.play(img0, choice, hand):
-        return "fail"
-    time.sleep(1.2)
+    played = ap.play(img0, choice, hand)
     img2 = snap()
-    if img2 is not None and not my_turn(ap, img2):
+    if played and img2 is not None and not my_turn(ap, img2):
         _att_log("ok", choice)
         return "ok"
     for _ in range(2):  # 补救: 有抬起→只补点绿钮; 无抬起→整轮重选
@@ -420,9 +442,10 @@ def attempt_play(ap: "AutoPlay", hand: list[int], choice: E.Group) -> str:
                 return "ok"
             _att_log("still_myturn", choice)
             continue
-        # 抬起丢失(被toggle/动画) → 整轮重选+点绿
+        # 抬起丢失/未抬起 → 整轮重选+点绿(内部帧差验抬起)
         if not ap.play(imgv, choice, hand):
-            return "fail"
+            _att_log("still_myturn", choice)
+            continue
         time.sleep(1.2)
         img4 = snap()
         if img4 is not None and not my_turn(ap, img4):

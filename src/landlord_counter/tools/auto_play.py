@@ -544,7 +544,25 @@ def read_hand_sane(rec, img, expected: int = 0) -> list[int]:
     return []
 
 
+PROMPT_RESULT = "这是斗地主结算画面。只回答两个字: 我赢了(输赢) — 输出\"赢\"或\"输\""
+_dz_acts_round = 0  # 本局 DouZero 决策次数(统计用)
+
+
+def _stats_round(ap, img, result: str) -> None:
+    """结算统计: CSV 一行 (ts, 角色, 结果, DouZero决策数)。"""
+    f = os.environ.get("STATS_FILE")
+    if not f:
+        return
+    try:
+        role = "landlord" if ap.landlord_seat is None else "farmer"
+        with open(f, "a") as fo:
+            fo.write(f"{time.time():.0f},{role},{result},{_dz_acts_round}\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def main():
+    global _dz_acts_round
     cfg = load_config()
     rec = CardRecognizer(cfg.vision)
     ap = AutoPlay(rec)
@@ -558,9 +576,14 @@ def main():
         if img is None:
             time.sleep(1)
             continue
-        # 0) 结算: 再来一局
+        # 0) 结算: 判胜负(可选统计) + 再来一局
         btn = ap.result_screen(img)
         if btn:
+            if os.environ.get("STATS_FILE"):
+                txt = rec.recognize_with_vlm(img, PROMPT_RESULT) or ""
+                res = "win" if "赢" in txt else ("lose" if "输" in txt else "?")
+                print(f"[结算] VLM判: {txt.strip()[:20]!r} → {res}")
+                _stats_round(ap, img, res)
             adb("shell", "input", "tap", str(btn[0]), str(btn[1]))
             print("[结算] 点再来一局, 等新发牌…")
             time.sleep(2)
@@ -577,6 +600,7 @@ def main():
             if hand:  # 上一局残念 → 新局重置(含 DouZero 回合状态)
                 hand = []
                 ap.round_reset()
+                _dz_acts_round = 0
             if not hand:  # 新局: 发牌已展示, 读一次建立 belief
                 hand = read_hand_sane(rec, img)
                 if hand:
@@ -644,6 +668,7 @@ def main():
                         g = E.identify_str(out_t)
                         if not g.is_invalid and all(hand.count(E.token_to_rank(t)) >= out_t.count(t) for t in set(out_t)):
                             print(f"[领打·DouZero] 决策出 {E.group_to_str(g)} (role={role})")
+                            _dz_acts_round += 1
                             st = attempt_play(ap, hand, g)
                             if st == "ok":
                                 remove_all(hand, [E.token_to_rank(t) for t in out_t])
@@ -679,6 +704,7 @@ def main():
                         if out_t is None:
                             if tap_pass(ap):
                                 print(f"[跟牌·DouZero] 压不过 {last_toks} → 不出 (role={role})")
+                                _dz_acts_round += 1
                                 ap.zone_acted = True
                                 time.sleep(1.2)
                                 continue
@@ -687,6 +713,7 @@ def main():
                             g = E.identify_str(out_t)
                             # 跟牌执行走提示钮(100%可靠); DouZero 只负责'出/不出'决策
                             print(f"[跟牌·DouZero] 决策出 {E.group_to_str(g)} 压 {last_toks} (role={role}) → 提示钮执行")
+                            _dz_acts_round += 1
                             st = play_smart(ap)
                             if st == "ok":
                                 print("  ✓ DouZero 跟牌(提示钮)出牌成功")

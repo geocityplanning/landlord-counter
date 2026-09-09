@@ -413,17 +413,19 @@ def _att_log(result: str, choice) -> None:
 
 
 def attempt_play(ap: "AutoPlay", hand: list[int], choice: E.Group) -> str:
-    """引擎直选+出牌: 点选→0.5s帧差验抬起→点绿; 失败补救≤2(有抬起只补绿, 无抬起重选)。
+    """直选+出牌。单张: 2次补救(可靠已验); 多张(≥2): 1次补救后放弃→回落提示钮。
     'ok'|'pass'(可不出)|'fail'(卡住)。"""
     img0 = snap()
     if img0 is None:
         return "fail"
+    is_single = len(choice.ranks) == 1
+    n_rescue = 2 if is_single else 1
     played = ap.play(img0, choice, hand)
     img2 = snap()
     if played and img2 is not None and not my_turn(ap, img2):
         _att_log("ok", choice)
         return "ok"
-    for _ in range(2):  # 补救: 有抬起→只补点绿钮; 无抬起→整轮重选
+    for _ in range(n_rescue):
         time.sleep(0.4)
         imgv = snap()
         if imgv is None:

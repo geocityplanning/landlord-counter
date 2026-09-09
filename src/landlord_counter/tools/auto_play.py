@@ -66,6 +66,7 @@ class AutoPlay:
         self.last_zone_key: bytes | None = None
         self.zone_acted = False
         self.last_counted_sig: dict = {"L": None, "R": None}
+        self.round_plays = 0  # 本局已出牌次数(>0 = 出牌阶段, 非叫分)
         # DouZero 回合状态 (round-local)
         self.landlord_seat: str | None = None  # human/B/A
         self.seat_played: dict[str, int] = {"B": 0, "A": 0}  # 已出张数(估)
@@ -78,6 +79,7 @@ class AutoPlay:
         self.last_zone_key = None
         self.zone_acted = False
         self.last_counted_sig = {"L": None, "R": None}
+        self.round_plays = 0
 
     def note_new_plays(self, img):
         """新出现的牌堆: 估张数记入 seat_played; 首个出牌者=地主。"""
@@ -95,6 +97,7 @@ class AutoPlay:
                 self.landlord_seat = seat
             self.seat_played[seat] = self.seat_played.get(seat, 0) + n
             self.last_counted_sig[zone] = sig
+            self.round_plays += 1
 
     # ---------- 相位 & 动作检测 ----------
     def button_row(self, img) -> dict:
@@ -515,8 +518,8 @@ def main():
             ap.note_new_plays(img)
             time.sleep(0.8)
             continue
-        # 1) 叫分轮(无绿=只有叫分按钮)
-        if not green:
+        # 1) 叫分轮(无绿 + 本局尚未有人出牌; 防中局"灰钮瞬态漏检"误判成叫分重置)
+        if not green and ap.round_plays == 0:
             if hand:  # 上一局残念 → 新局重置(含 DouZero 回合状态)
                 hand = []
                 ap.round_reset()
@@ -524,9 +527,14 @@ def main():
                 hand = read_hand_sane(rec, img)
                 if hand:
                     print(f"[新局] 屏读 hand={[E.rank_to_token(r) for r in hand]}")
+                    _vd = os.environ.get("AUTO_VERIFY")
+                    if _vd:
+                        os.makedirs(_vd, exist_ok=True)
+                        _k = len(os.listdir(_vd))
+                        cv2.imwrite(f"{_vd}/v{_k:02d}.png", img)
+                        print(f"  📷 验证帧 → {_vd}/v{_k:02d}.png")
             score = bot.decide_bid(hand)
             # 不叫=灰钮(单色, 恒最左); 3分=红钮(单色, 最右)。禁用多色union(相邻钮会桥接成巨块)
-            score = bot.decide_bid(hand)
             target, label = grey, "不叫"
             if score > 0:
                 reds = ap._color_blocks(img, [(0xD3, 0x2F, 0x2F)], 35, min_w=220, min_h=100)

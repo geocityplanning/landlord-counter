@@ -19,7 +19,7 @@ BTN_PLAY = (359, 1119)
 BTN_PASS = (519, 1119)
 BTN_START = (359, 942)
 HAND_BAND = (805, 945)  # y0,y1
-WHITE_MIN = 20000  # 手牌带白卡像素阈值
+WHITE_MIN = 4000  # 手牌带白卡像素阈值(27张≈66k, 15张≈42k, 8张≈19k → 取4k, 非我回合时≈0)
 
 
 def tap(x, y, wait=1.0):
@@ -43,12 +43,18 @@ def white_count(img) -> int:
     return int(((b > 200) & (g > 200) & (r > 200)).sum())
 
 
-def gold_big(img) -> bool:
-    """大金钮(开始/再来一局)存在? 中心区域金色占比"""
+def gold_button(img):
+    """找大金钮(开始游戏/再接一局): 金色块 w>250 h>50, y∈[600,1100]。返回中心或 None。"""
     b, g, r = img[:, :, 0].astype(int), img[:, :, 1].astype(int), img[:, :, 2].astype(int)
-    gold = (r > 140) & (r < 215) & (g > 110) & (g < 185) & (b < 90)
-    c = gold[850:1050, 60:660]
-    return c.mean() > 0.25
+    gold = ((r > 140) & (r < 215) & (g > 110) & (g < 185) & (b < 90)).astype(np.uint8) * 255
+    n, lab, stats, cent = cv2.connectedComponentsWithStats(gold, 8)
+    best = None
+    for i in range(1, n):
+        x, y, w, h, a = stats[i]
+        if w > 250 and h > 50 and 600 <= y <= 1100:
+            if best is None or a > best[4]:
+                best = (x, y, w, h, a, int(cent[i][0]), int(cent[i][1]))
+    return (best[5], best[6]) if best else None
 
 
 def selection_up(img) -> int:
@@ -68,9 +74,10 @@ def main() -> int:
         if img is None:
             time.sleep(1)
             continue
-        if gold_big(img):  # 开始/再来一局
-            print("[开始] 点大金钮", flush=True)
-            tap(*BTN_START, wait=3.0)
+        gb = gold_button(img)
+        if gb:  # 开始游戏 / 结算页"再接一局"
+            print(f"[按钮] 点大金钮@{gb}", flush=True)
+            tap(gb[0], gb[1], wait=3.0)
             continue
         wc = white_count(img)
         if wc < WHITE_MIN:  # 非我回合

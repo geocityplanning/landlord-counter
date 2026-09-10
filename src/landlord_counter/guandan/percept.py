@@ -230,9 +230,14 @@ def my_turn(img, thresh: int = 4000) -> bool:
 WHITE_TURN_MIN = 4000  # 我方回合白卡阈值
 
 
-def card_tap_x(index: int) -> int:
-    """第 index 张手牌的点击 x(实测: 起点2, 步距24, 取露出区中部)"""
-    return 2 + index * 24 + 20
+def hand_start_x(n: int) -> float:
+    """手牌排起点 x(设备像素): 整排居中 = (720 - ((n-1)*24 + 88)) / 2"""
+    return (720.0 - ((n - 1) * 24 + 88)) / 2
+
+
+def card_tap_x(index: int, n: int) -> int:
+    """第 index 张手牌的点击 x: 起点(随张数居中变化) + index*24 + 露出区中部(20)"""
+    return int(hand_start_x(n) + index * 24 + 20)
 
 
 def hand_columns(img) -> int:

@@ -182,7 +182,7 @@ def ours_decide(img, rec) -> str:
     else:
         _LAST_SIG, _SAME_SIG_N = sig, 0
     for i in idxs:
-        tap(card_tap_x(i), 875, wait=0.18)
+        tap(card_tap_x(i, len(hand)), 875, wait=0.18)
     # 选牌校验: 抬起亮带 ≈ 选中张数 × ~1460px(实测5张=7316)
     time.sleep(0.5)
     iv = snap()
@@ -192,7 +192,7 @@ def ours_decide(img, rec) -> str:
         if est == 0 or abs(est - len(idxs)) > max(1, len(idxs) // 2):
             print(f"  [ours] ✗ 选牌校验失败(抬起≈{est}张/{lift}px vs 决策{len(idxs)}张) → 清选回落", flush=True)
             for i in idxs:  # 再点一遍取消选中
-                tap(card_tap_x(i), 875, wait=0.15)
+                tap(card_tap_x(i, len(hand)), 875, wait=0.15)
             return "fallback"
     tap(*BTN_PLAY, wait=1.6)
     # 执行回执(强): 轮询3秒 — 手牌白卡须明显下降, 或回合已交出(手牌带消失)

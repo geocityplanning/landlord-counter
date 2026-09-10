@@ -55,19 +55,31 @@ def _split_tokens(txt: str) -> list[str]:
 
 
 def read_hand_ordered(rec, img, expected: int = 0) -> list[Card] | None:
-    """切两半读手牌 → 拼接 → 消毒。expected>0 时提示词注入张数。返回左→右顺序 Card 或 None。"""
+    """读手牌: ≤14 张整排直读; 更多则切两半拼接。expected>0 时提示词注入张数。"""
     y0, y1 = HAND_BAND
     prompt = PROMPT_HAND + (f" 这一排共 {expected} 张。" if expected > 0 else "")
+    if expected and expected <= 14:
+        toks = _split_tokens(_read(rec, img[y0:y1, :, :], prompt))
+        return _sanitize(toks)
     parts: list[list[str]] = []
     for (x0, x1) in SPLITS:
         txt = _read(rec, img[y0:y1, x0:x1], prompt)
         parts.append(_split_tokens(txt))
-    if not parts[0] or not parts[1]:
+    if not any(parts):
         return None
-    merged = _merge_halves(parts[0], parts[1])
-    # 消毒: 总≤27, 同点数≤8, 王各≤2
+    if not parts[0]:
+        return _sanitize(parts[1])
+    if not parts[1]:
+        return _sanitize(parts[0])
+    return _sanitize(_merge_halves(parts[0], parts[1]))
+
+
+def _sanitize(toks: list[str]) -> list[Card] | None:
+    """解析+消毒: 总≤27, 同点数≤8, 王各≤2。"""
+    if not toks:
+        return None
     try:
-        cards = cards_from_tokens(merged)
+        cards = cards_from_tokens(toks)
     except Exception:  # noqa: BLE001
         return None
     if not cards or len(cards) > 27:

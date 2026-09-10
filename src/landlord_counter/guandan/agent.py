@@ -144,9 +144,11 @@ def ours_decide(img, rec) -> str:
         f"  [ours] 决策={R.group_to_str(choice)} idx={idxs} (手牌{len(hand)}, 压={R.cards_to_str(last_cards) if last_cards else '领出'})",
         flush=True,
     )
-    # 混合策略: 多张(≥3)改"提示选牌"执行(直选多张实测不可靠) —— 张数一致才出牌
-    if len(idxs) >= 3:
-        print(f"  [ours] 多张({len(idxs)}) → 提示选牌执行", flush=True)
+    # 执行策略: 跟牌(压牌)一律"提示选牌执行"; 领出 ≥3 张也走提示; 仅"领出 1-2 张"直选
+    follow = bool(last_cards)
+    if len(idxs) >= 3 or follow:
+        tag = "跟牌" if follow else f"多张({len(idxs)})"
+        print(f"  [ours] {tag} → 提示选牌执行", flush=True)
         tap(*BTN_HINT, wait=1.6)
         iv2 = snap()
         if iv2 is None:
@@ -156,7 +158,7 @@ def ours_decide(img, rec) -> str:
         if est == 0:
             print("  [ours] 提示无可出 → 不出", flush=True)
             return "pass"
-        if abs(est - len(idxs)) > max(1, len(idxs) // 2):
+        if not follow and abs(est - len(idxs)) > max(1, len(idxs) // 2):
             print(f"  [ours] ✗ 提示选牌张数{est} ≠ 决策{len(idxs)} → 回落", flush=True)
             return "fallback"
         tap(*BTN_PLAY, wait=1.6)

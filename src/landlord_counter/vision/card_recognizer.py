@@ -202,7 +202,7 @@ class CardRecognizer:
                     ],
                 }
             ],
-            "max_tokens": int(os.getenv("VLM_MAX_TOKENS", "8192")),  # 推理型VLM(deepseek-vision)推理段可变且长(实测3.5k±), 预留要足
+            "max_tokens": int(os.getenv("VLM_MAX_TOKENS", "2048")),  # 收敛上限: 失控推理快速失败(<10s) → 重读走缓存秒回, 比等满40s更优
         }
         _effort = os.getenv("VLM_REASONING_EFFORT", "low")  # 低推理档: 实测 1.8s vs 29.5s, 读数一致
         if _effort:

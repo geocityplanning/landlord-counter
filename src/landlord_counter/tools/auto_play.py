@@ -560,8 +560,8 @@ def _sanitize_read(tokens: list[str]) -> list[str] | None:
 
 
 def read_hand_sane(rec, img, expected: int = 0) -> list[int]:
-    """读数+合理性消毒(最多2次)。返回 rank 升序列表; 失败 []。"""
-    for _ in range(2):
+    """读数+合理性消毒(最多3次, 首次失控长尾靠重读缓存秒回)。返回 rank 升序列表; 失败 []。"""
+    for _ in range(3):
         toks = rec.read_hand_vlm(img, expected=expected)
         ok = _sanitize_read(toks)
         if ok is not None:

@@ -72,6 +72,8 @@ def selection_up(img) -> int:
 
 JIPAI = int(os.getenv("GUANDAN_JIPAI", "2"))  # 本局级牌(默认打2)
 OURS = os.getenv("GUANDAN_OURS", "0") == "1"  # 自研决策模式
+_LAST_SIG = ""   # 上次决策签名(防重复空转)
+_SAME_SIG_N = 0
 
 
 def map_indices(hand, cards) -> list[int] | None:
@@ -101,6 +103,7 @@ def map_indices(hand, cards) -> list[int] | None:
 def ours_decide(img, rec) -> str:
     """自研决策: 读手牌+桌面 → rules/ai 决策 → 点选执行。
     返回 'play'|'pass'|'fallback'(回落提示钮)。"""
+    global _LAST_SIG, _SAME_SIG_N
     hand = P.read_hand_ordered(rec, img)
     if not hand:
         print("  [ours] 手牌读取失败 → 回落", flush=True)
@@ -124,17 +127,30 @@ def ours_decide(img, rec) -> str:
         f"  [ours] 决策={R.group_to_str(choice)} idx={idxs} (手牌{len(hand)}, 压={R.cards_to_str(last_cards) if last_cards else '领出'})",
         flush=True,
     )
+    sig = f"{R.group_to_str(choice)}|{len(hand)}|{R.cards_to_str(last_cards) if last_cards else '-'}"
+    if sig == _LAST_SIG:
+        _SAME_SIG_N += 1
+        if _SAME_SIG_N >= 1:  # 同一决策重复出现(上次未生效) → 熔断, 回落提示钮
+            print(f"  [ours] ↻ 决策重复({_SAME_SIG_N}) → 熔断回落提示钮", flush=True)
+            return "fallback"
+    else:
+        _LAST_SIG, _SAME_SIG_N = sig, 0
     for i in idxs:
         tap(card_tap_x(i), 875, wait=0.18)
-    tap(*BTN_PLAY, wait=2.2)
-    # 执行回执: 手牌白卡应下降(或回合结束)
-    img2 = snap()
-    if img2 is not None:
-        w_before, w_after = P.white_count(img), P.white_count(img2)
-        if w_after >= P.WHITE_TURN_MIN and abs(w_after - w_before) < 300:
-            print(f"  [ours] ✗ 出牌未生效(w {w_before}→{w_after}) → 回落提示钮", flush=True)
-            return "fallback"
-    return "play"
+    tap(*BTN_PLAY, wait=1.6)
+    # 执行回执(强): 轮询3秒 — 手牌白卡须明显下降, 或回合已交出(手牌带消失)
+    w_before = P.white_count(img)
+    for _ in range(8):
+        time.sleep(0.4)
+        i2 = snap()
+        if i2 is None:
+            continue
+        if not P.my_turn(i2):
+            return "play"  # 回合已交出 → 成功
+        if P.white_count(i2) < w_before - 1500:
+            return "play"  # 手牌减少 → 成功
+    print(f"  [ours] ✗ 出牌未生效(w_before={w_before}) → 回落提示钮", flush=True)
+    return "fallback"
 
 
 def main() -> int:

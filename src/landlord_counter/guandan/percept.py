@@ -113,25 +113,67 @@ def _region_cards(img, box) -> int:
     return n
 
 
-def read_table_last(rec, img) -> list[Card] | None:
-    """按逆出牌序(东→北→西)找最近一手非"不出"; 有牌则只读该区。
-    返回牌列表; 若三家皆无牌(该我领出) → []; 读失败 → None。"""
-    for name in ("right", "top", "left"):
-        if _region_cards(img, REGIONS[name]) == 0:
+def table_plays(img):
+    """桌面牌块检测: 返回 [(区域名, bbox, 白像素数)] — 按白卡连通块归属玩家区。"""
+    x0, y0, x1, y1 = 0, 150, 720, 820
+    sub = img[y0:y1, x0:x1]
+    b, g, r = sub[:, :, 0].astype(int), sub[:, :, 1].astype(int), sub[:, :, 2].astype(int)
+    m = ((b > 200) & (g > 200) & (r > 200)).astype(np.uint8) * 255
+    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    n, lab, stats, cent = cv2.connectedComponentsWithStats(m, 8)
+    out = []
+    for i in range(1, n):
+        x, y, w, h, a = stats[i]
+        if a < 2500 or w < 80 or h < 60:
             continue
-        x0, y0, x1, y1 = REGIONS[name]
-        for _ in range(2):
-            txt = _read(rec, img[y0:y1, x0:x1], PROMPT_REGION)
-            if not txt:
-                continue
-            if "无" in txt:
-                break
-            try:
-                return cards_from_tokens(_split_tokens(txt))
-            except Exception:  # noqa: BLE001
-                continue
-        return None  # 该区有牌但读不出
-    return []  # 三家都没牌 → 我领出
+        cx, cy = int(cent[i][0]), int(cent[i][1]) + y0
+        # 归属(收紧阈值, 中心混合块忽略): 下/左/右/上
+        if cy > 620:
+            name = "bottom"
+        elif cx < 300:
+            name = "left"
+        elif cx > 420:
+            name = "right"
+        elif cy < 480:
+            name = "top"
+        else:
+            continue  # 中心区域(混合/无法归属) → 忽略
+        out.append((name, (x, y + y0, w, h), int(a)))
+    return out
+
+
+def read_region_cards(rec, img, box) -> list[Card] | None:
+    """读指定出牌区(内容感知外扩) → 牌列表; 读不出 None。"""
+    x, y, w, h = box
+    pad = 8
+    x0, y0 = max(0, x - pad), max(0, y - pad)
+    x1, y1 = min(img.shape[1], x + w + pad), min(img.shape[0], y + h + pad)
+    for _ in range(2):
+        txt = _read(rec, img[y0:y1, x0:x1], PROMPT_REGION)
+        if not txt:
+            continue
+        if "无" in txt:
+            return None
+        try:
+            return cards_from_tokens(_split_tokens(txt))
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def read_table_last(rec, img) -> list[Card] | None:
+    """找到最近一手非"不出": 用桌面牌块聚类按逆出牌序(东→北→西)取最近一块。
+    返回牌列表; 三家皆无牌(我领出) → []; 读失败 → None。"""
+    plays = {name: box for name, box, _ in table_plays(img)}
+    for name in ("right", "top", "left"):
+        box = plays.get(name)
+        if not box:
+            continue
+        cards = read_region_cards(rec, img, box)
+        if cards is not None:
+            return cards
+        return None
+    return []
 
 
 def white_count(img) -> int:

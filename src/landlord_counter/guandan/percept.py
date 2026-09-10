@@ -193,3 +193,25 @@ WHITE_TURN_MIN = 4000  # 我方回合白卡阈值
 def card_tap_x(index: int) -> int:
     """第 index 张手牌的点击 x(实测: 起点2, 步距24, 取露出区中部)"""
     return 2 + index * 24 + 20
+
+
+def hand_columns(img) -> int:
+    """像素数手牌张数: 手牌带亮列分段数(实测27张→27段)"""
+    y0, y1 = HAND_BAND
+    band = img[y0:y1]
+    b, g, r = band[:, :, 0].astype(int), band[:, :, 1].astype(int), band[:, :, 2].astype(int)
+    colsum = ((b > 200) & (g > 200) & (r > 200)).sum(axis=0)
+    runs = 0
+    st = False
+    for v in colsum > 10:
+        if v and not st:
+            runs += 1
+        st = v
+    return runs
+
+
+def lifted_px(img) -> int:
+    """选中牌抬起后的亮带宽度(y770-812: 选中牌上移36px后露出)"""
+    band = img[770:812]
+    b, g, r = band[:, :, 0].astype(int), band[:, :, 1].astype(int), band[:, :, 2].astype(int)
+    return int(((b > 200) & (g > 200) & (r > 200)).sum())

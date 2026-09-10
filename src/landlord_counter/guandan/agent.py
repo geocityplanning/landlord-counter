@@ -108,6 +108,16 @@ def ours_decide(img, rec) -> str:
     if not hand:
         print("  [ours] 手牌读取失败 → 回落", flush=True)
         return "fallback"
+    # 读数一致性: 像素数牌 vs VLM 读数(允许±1, 超出则重读一次)
+    n_vis = P.hand_columns(img)
+    if n_vis and abs(n_vis - len(hand)) > 1:
+        print(f"  [ours] 读数{len(hand)}张 vs 像素{n_vis}张 → 重读", flush=True)
+        hand2 = P.read_hand_ordered(rec, img)
+        if hand2 and abs(len(hand2) - n_vis) <= 1:
+            hand = hand2
+        else:
+            print("  [ours] 重读后仍不一致 → 回落", flush=True)
+            return "fallback"
     last_cards = P.read_table_last(rec, img)
     if last_cards is None:
         print("  [ours] 桌面读取失败 → 回落", flush=True)
@@ -137,6 +147,17 @@ def ours_decide(img, rec) -> str:
         _LAST_SIG, _SAME_SIG_N = sig, 0
     for i in idxs:
         tap(card_tap_x(i), 875, wait=0.18)
+    # 选牌校验: 抬起亮带 ≈ 选中张数 × ~1460px(实测5张=7316)
+    time.sleep(0.5)
+    iv = snap()
+    if iv is not None:
+        lift = P.lifted_px(iv)
+        est = round(lift / 1460) if lift > 500 else 0
+        if est == 0 or abs(est - len(idxs)) > max(1, len(idxs) // 2):
+            print(f"  [ours] ✗ 选牌校验失败(抬起≈{est}张/{lift}px vs 决策{len(idxs)}张) → 清选回落", flush=True)
+            for i in idxs:  # 再点一遍取消选中
+                tap(card_tap_x(i), 875, wait=0.15)
+            return "fallback"
     tap(*BTN_PLAY, wait=1.6)
     # 执行回执(强): 轮询3秒 — 手牌白卡须明显下降, 或回合已交出(手牌带消失)
     w_before = P.white_count(img)

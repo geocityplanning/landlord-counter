@@ -104,15 +104,16 @@ def ours_decide(img, rec) -> str:
     """自研决策: 读手牌+桌面 → rules/ai 决策 → 点选执行。
     返回 'play'|'pass'|'fallback'(回落提示钮)。"""
     global _LAST_SIG, _SAME_SIG_N
-    hand = P.read_hand_ordered(rec, img)
+    # 像素数牌(可信) 作为期望张数喂给识别
+    n_vis = P.hand_columns(img)
+    hand = P.read_hand_ordered(rec, img, expected=n_vis)
     if not hand:
         print("  [ours] 手牌读取失败 → 回落", flush=True)
         return "fallback"
-    # 读数一致性: 像素数牌 vs VLM 读数(允许±1, 超出则重读一次)
-    n_vis = P.hand_columns(img)
+    # 读数一致性: 与像素数牌差 >1 → 用期望值重读一次
     if n_vis and abs(n_vis - len(hand)) > 1:
         print(f"  [ours] 读数{len(hand)}张 vs 像素{n_vis}张 → 重读", flush=True)
-        hand2 = P.read_hand_ordered(rec, img)
+        hand2 = P.read_hand_ordered(rec, img, expected=n_vis)
         if hand2 and abs(len(hand2) - n_vis) <= 1:
             hand = hand2
         else:
@@ -122,6 +123,12 @@ def ours_decide(img, rec) -> str:
     if last_cards is None:
         print("  [ours] 桌面读取失败 → 回落", flush=True)
         return "fallback"
+    # 牌型合法性闸门: 读到的"待压牌"必须能识别成合法牌型, 否则视为误读
+    if last_cards:
+        gl = R.identify(last_cards, JIPAI)
+        if getattr(gl, "is_invalid", False):
+            print(f"  [ours] 待压牌型非法(误读): {R.cards_to_str(last_cards)} → 回落", flush=True)
+            return "fallback"
     st = AI.GameState()
     st.jipai = JIPAI
     last = R.identify(last_cards, JIPAI) if last_cards else None
@@ -137,6 +144,35 @@ def ours_decide(img, rec) -> str:
         f"  [ours] 决策={R.group_to_str(choice)} idx={idxs} (手牌{len(hand)}, 压={R.cards_to_str(last_cards) if last_cards else '领出'})",
         flush=True,
     )
+    # 混合策略: 多张(≥3)改"提示选牌"执行(直选多张实测不可靠) —— 张数一致才出牌
+    if len(idxs) >= 3:
+        print(f"  [ours] 多张({len(idxs)}) → 提示选牌执行", flush=True)
+        tap(*BTN_HINT, wait=1.6)
+        iv2 = snap()
+        if iv2 is None:
+            return "fallback"
+        lift = P.lifted_px(iv2)
+        est = round(lift / 1460) if lift > 500 else 0
+        if est == 0:
+            print("  [ours] 提示无可出 → 不出", flush=True)
+            return "pass"
+        if abs(est - len(idxs)) > max(1, len(idxs) // 2):
+            print(f"  [ours] ✗ 提示选牌张数{est} ≠ 决策{len(idxs)} → 回落", flush=True)
+            return "fallback"
+        tap(*BTN_PLAY, wait=1.6)
+        w_before = P.white_count(img)
+        for _ in range(8):
+            time.sleep(0.4)
+            i2 = snap()
+            if i2 is None:
+                continue
+            if not P.my_turn(i2):
+                return "play"
+            if P.white_count(i2) < w_before - 1500:
+                return "play"
+        print("  [ours] ✗ 提示执行未生效 → 回落", flush=True)
+        return "fallback"
+
     sig = f"{R.group_to_str(choice)}|{len(hand)}|{R.cards_to_str(last_cards) if last_cards else '-'}"
     if sig == _LAST_SIG:
         _SAME_SIG_N += 1

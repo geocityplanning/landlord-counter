@@ -54,12 +54,13 @@ def _split_tokens(txt: str) -> list[str]:
     return [_norm_token(t) for t in txt.replace("，", ",").replace("、", ",").split(",") if t.strip()]
 
 
-def read_hand_ordered(rec, img) -> list[Card] | None:
-    """切两半读手牌 → 拼接 → 消毒。返回按左→右顺序的 Card 列表或 None。"""
+def read_hand_ordered(rec, img, expected: int = 0) -> list[Card] | None:
+    """切两半读手牌 → 拼接 → 消毒。expected>0 时提示词注入张数。返回左→右顺序 Card 或 None。"""
     y0, y1 = HAND_BAND
+    prompt = PROMPT_HAND + (f" 这一排共 {expected} 张。" if expected > 0 else "")
     parts: list[list[str]] = []
     for (x0, x1) in SPLITS:
-        txt = _read(rec, img[y0:y1, x0:x1], PROMPT_HAND)
+        txt = _read(rec, img[y0:y1, x0:x1], prompt)
         parts.append(_split_tokens(txt))
     if not parts[0] or not parts[1]:
         return None
@@ -113,33 +114,72 @@ def _region_cards(img, box) -> int:
     return n
 
 
+def _split_box(mask, box, y0):
+    """把合并的牌块按"无白列的竖直间隙(≥6px)"拆成子块; 返回子块列表。"""
+    x, y, w, h = box
+    sub = mask[y:y + h, x:x + w]
+    cols = sub.any(axis=0)
+    boxes = []
+    st = None
+    gap = 0
+    for i, v in enumerate(cols):
+        if v:
+            if st is None:
+                st = i
+            gap = 0
+        else:
+            if st is not None:
+                gap += 1
+                if gap >= 6:
+                    boxes.append((x + st, y, i - gap - st + 1, h))
+                    st = None
+                    gap = 0
+    if st is not None:
+        boxes.append((x + st, y, len(cols) - st, h))
+    out = []
+    for (bx, by, bw, bh) in boxes:
+        if bw < 60 or bh < 60:
+            continue
+        # 子块内白像素数
+        cnt = int(mask[by:by + bh, bx:bx + bw].sum())
+        if cnt >= 1800:
+            out.append((bx, by, bw, bh, cnt))
+    return out
+
+
 def table_plays(img):
-    """桌面牌块检测: 返回 [(区域名, bbox, 白像素数)] — 按白卡连通块归属玩家区。"""
+    """桌面牌块检测: 返回 [(区域名, bbox, 白像素数)] — 聚类后按竖直间隙拆块再归属玩家区。
+    同一玩家只保留最大块(每轮每人至多一手)。"""
     x0, y0, x1, y1 = 0, 150, 720, 820
     sub = img[y0:y1, x0:x1]
     b, g, r = sub[:, :, 0].astype(int), sub[:, :, 1].astype(int), sub[:, :, 2].astype(int)
     m = ((b > 200) & (g > 200) & (r > 200)).astype(np.uint8) * 255
     m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
     n, lab, stats, cent = cv2.connectedComponentsWithStats(m, 8)
-    out = []
+    cands = []
     for i in range(1, n):
         x, y, w, h, a = stats[i]
         if a < 2500 or w < 80 or h < 60:
             continue
-        cx, cy = int(cent[i][0]), int(cent[i][1]) + y0
-        # 归属(收紧阈值, 中心混合块忽略): 下/左/右/上
-        if cy > 620:
-            name = "bottom"
-        elif cx < 300:
-            name = "left"
-        elif cx > 420:
-            name = "right"
-        elif cy < 480:
-            name = "top"
-        else:
-            continue  # 中心区域(混合/无法归属) → 忽略
-        out.append((name, (x, y + y0, w, h), int(a)))
-    return out
+        for (bx, by, bw, bh, cnt) in _split_box(m > 0, (x, y, w, h), y0):
+            cx, cy = bx + bw // 2, by + bh // 2 + y0
+            if cy > 620:
+                name = "bottom"
+            elif cx < 300:
+                name = "left"
+            elif cx > 420:
+                name = "right"
+            elif cy < 480:
+                name = "top"
+            else:
+                continue  # 中心混合块忽略
+            cands.append((name, (bx, by + y0, bw, bh), cnt))
+    # 每区域保留最大块
+    best = {}
+    for name, box, cnt in cands:
+        if name not in best or cnt > best[name][1]:
+            best[name] = (box, cnt)
+    return [(name, box, cnt) for name, (box, cnt) in best.items()]
 
 
 def read_region_cards(rec, img, box) -> list[Card] | None:

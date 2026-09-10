@@ -74,6 +74,25 @@ def read_hand_ordered(rec, img, expected: int = 0) -> list[Card] | None:
     return _sanitize(_merge_halves(parts[0], parts[1]))
 
 
+PROMPT_ONE = "这是叠在一起的一小段扑克牌(从左到右1-2张),只输出最左边那张的\"花色+点数\",如 ♠K;点数10写10,大王写大王,小王写小王。不要解释。"
+
+
+def read_hand_by_columns(rec, img, n: int) -> list[Card] | None:
+    """逐列单读(小牌量用): 按 pitch 24 逐张裁露出带 → VLM 单张读 → 汇总。"""
+    y0, y1 = HAND_BAND
+    sx = hand_start_x(n)
+    toks: list[str] = []
+    for i in range(n):
+        x = int(sx + i * 24)
+        x0, x1 = max(0, x - 4), min(img.shape[1], x + 40)
+        txt = _read(rec, img[y0:y1, x0:x1], PROMPT_ONE)
+        t = _split_tokens(txt)
+        if not t:
+            return None
+        toks.append(t[0])
+    return _sanitize(toks)
+
+
 def _sanitize(toks: list[str]) -> list[Card] | None:
     """解析+消毒: 总≤27, 同点数≤8, 王各≤2。"""
     if not toks:
@@ -253,17 +272,23 @@ def card_tap_x(index: int, n: int) -> int:
 
 
 def hand_columns(img) -> int:
-    """像素数手牌张数: 手牌带亮列分段数(实测27张→27段)"""
+    """像素数手牌张数: 手牌带亮列分段数(仅计宽度≥8px 的段, 滤噪声)"""
     y0, y1 = HAND_BAND
     band = img[y0:y1]
     b, g, r = band[:, :, 0].astype(int), band[:, :, 1].astype(int), band[:, :, 2].astype(int)
     colsum = ((b > 200) & (g > 200) & (r > 200)).sum(axis=0)
     runs = 0
-    st = False
-    for v in colsum > 10:
-        if v and not st:
-            runs += 1
-        st = v
+    st = None
+    for x in range(len(colsum)):
+        v = colsum[x] > 10
+        if v and st is None:
+            st = x
+        elif not v and st is not None:
+            if x - st >= 8:  # 宽度≥8 才算一张牌(滤 1-2px 噪声/阴影)
+                runs += 1
+            st = None
+    if st is not None and len(colsum) - st >= 8:
+        runs += 1
     return runs
 
 

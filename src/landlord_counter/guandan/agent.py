@@ -104,7 +104,7 @@ def ours_decide(img, rec) -> str:
     """自研决策: 读手牌+桌面 → rules/ai 决策 → 点选执行。
     返回 'play'|'pass'|'fallback'(回落提示钮)。"""
     global _LAST_SIG, _SAME_SIG_N
-    # 像素数牌(可信) 作为期望张数喂给识别
+    # 像素数牌(已滤噪) 作为期望张数喂给识别
     n_vis = P.hand_columns(img)
     hand = P.read_hand_ordered(rec, img, expected=n_vis)
     if not hand:

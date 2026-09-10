@@ -49,6 +49,32 @@ def white_count(img) -> int:
     return int(((b > 200) & (g > 200) & (r > 200)).sum())
 
 
+PROMPT_SETTLE = (
+    "这是掼蛋结算弹窗。只回答两行: 头游=<谁(我方是南/北, 对手是西/东)>; 我方是否升级=<是/否>。不要解释。"
+)
+
+
+def read_settle(rec, img):
+    """读结算弹窗 → (raw_text, win_bool_or_None)"""
+    roi = img[300:900, 30:690]
+    txt = rec.recognize_with_vlm(roi, PROMPT_SETTLE) or ""
+    win = None
+    if "头游" in txt:
+        if any(k in txt for k in ("南", "北", "你", "队友")):
+            win = True
+        elif any(k in txt for k in ("西", "东")):
+            win = False
+    return txt, win
+
+
+def _stats_append(path: str, row: str) -> None:
+    try:
+        with open(path, "a") as fo:
+            fo.write(row + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def gold_button(img):
     """找大金钮(开始游戏/再接一局): 金色块 w>250 h>50, y∈[600,1100]。返回中心或 None。"""
     b, g, r = img[:, :, 0].astype(int), img[:, :, 1].astype(int), img[:, :, 2].astype(int)
@@ -212,16 +238,29 @@ def ours_decide(img, rec) -> str:
     return "fallback"
 
 
+def _lazy_rec():
+    """按需创建识别器(统计模式需要, 非 OURS 模式也适用)"""
+    try:
+        from ..config import load_config
+        from ..vision.card_recognizer import CardRecognizer
+
+        return CardRecognizer(load_config().vision)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def main() -> int:
     dur = float(sys.argv[1]) if len(sys.argv) > 1 else 600
     t_end = time.time() + dur
     plays = passes = 0
+    deals = 0
     rec = None
-    if OURS:
+    if OURS or os.getenv("STATS_FILE"):
         from ..config import load_config
         from ..vision.card_recognizer import CardRecognizer
 
         rec = CardRecognizer(load_config().vision)
+    if OURS:
         print("▶ 自研决策模式(OURS=1): rules+ai 接管, 失败回落提示钮", flush=True)
     print("▶ 掼蛋托管MVP启动(v2: 无解自动不出)", flush=True)
     while time.time() < t_end:
@@ -231,6 +270,14 @@ def main() -> int:
             continue
         gb = gold_button(img)
         if gb:  # 开始游戏 / 结算页"再接一局"
+            sf = os.getenv("STATS_FILE")
+            if sf:
+                r = rec if rec is not None else _lazy_rec()
+                if r is not None:
+                    raw, win = read_settle(r, img)
+                    deals += 1
+                    _stats_append(sf, f"{int(time.time())},{deals},{'win' if win else ('lose' if win is False else '?')},{raw.strip()[:60]}")
+                    print(f"[统计] 第{deals}局: {'我方升级' if win else ('对手升级' if win is False else '未判定')} | {raw.strip()[:40]!r}", flush=True)
             print(f"[按钮] 点大金钮@{gb}", flush=True)
             tap(gb[0], gb[1], wait=3.0)
             continue

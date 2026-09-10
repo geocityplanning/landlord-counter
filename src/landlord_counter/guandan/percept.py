@@ -81,21 +81,57 @@ def read_hand_ordered(rec, img) -> list[Card] | None:
     return cards[:27]
 
 
+PROMPT_REGION = (
+    "这是掼蛋某位玩家的出牌区截图。逐张输出这手牌的\"花色+点数\",逗号分隔(如 ♠K,♥K);"
+    "如果这里没有牌(空白或只有\"不出\"字样),只输出: 无。不要解释。"
+)
+
+# 四家出牌区(设备像素, 实测桌面区 y≈160..800): 右=东(我上家) 上=北(队友) 左=西 下=我
+REGIONS = {
+    "right": (380, 360, 700, 720),
+    "top": (80, 180, 640, 460),
+    "left": (20, 360, 340, 720),
+    "bottom": (80, 600, 640, 800),
+}
+
+
+def _region_cards(img, box) -> int:
+    x0, y0, x1, y1 = box
+    sub = img[y0:y1, x0:x1]
+    b, g, r = sub[:, :, 0].astype(int), sub[:, :, 1].astype(int), sub[:, :, 2].astype(int)
+    white = ((b > 200) & (g > 200) & (r > 200)).astype(np.uint8)
+    n = int(white.sum())
+    if n < 2500:
+        return 0
+    ys, xs = np.where(white > 0)
+    if len(xs) == 0:
+        return 0
+    w = xs.max() - xs.min()
+    h = ys.max() - ys.min()
+    if w < 80 or h < 60:  # 太小的白块(文字"不出")不算牌
+        return 0
+    return n
+
+
 def read_table_last(rec, img) -> list[Card] | None:
-    """读桌面"待压的那一手"; 无牌/均不出 → []。失败 None(重试2次)。"""
-    roi = img[180:800, :, :]
-    for _ in range(2):
-        txt = _read(rec, roi, PROMPT_TABLE)
-        if not txt:
+    """按逆出牌序(东→北→西)找最近一手非"不出"; 有牌则只读该区。
+    返回牌列表; 若三家皆无牌(该我领出) → []; 读失败 → None。"""
+    for name in ("right", "top", "left"):
+        if _region_cards(img, REGIONS[name]) == 0:
             continue
-        if "无" in txt:
-            return []
-        toks = _split_tokens(txt)
-        try:
-            return cards_from_tokens(toks)
-        except Exception:  # noqa: BLE001
-            continue
-    return None
+        x0, y0, x1, y1 = REGIONS[name]
+        for _ in range(2):
+            txt = _read(rec, img[y0:y1, x0:x1], PROMPT_REGION)
+            if not txt:
+                continue
+            if "无" in txt:
+                break
+            try:
+                return cards_from_tokens(_split_tokens(txt))
+            except Exception:  # noqa: BLE001
+                continue
+        return None  # 该区有牌但读不出
+    return []  # 三家都没牌 → 我领出
 
 
 def white_count(img) -> int:

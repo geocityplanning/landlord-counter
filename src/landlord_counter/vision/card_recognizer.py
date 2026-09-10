@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import base64
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -201,15 +202,26 @@ class CardRecognizer:
                     ],
                 }
             ],
-            "max_tokens": 2048,  # 推理型VLM(如deepseek-vision)需预留 reasoning+答案 空间
+            "max_tokens": int(os.getenv("VLM_MAX_TOKENS", "8192")),  # 推理型VLM(deepseek-vision)推理段可变且长(实测3.5k±), 预留要足
         }
+        _effort = os.getenv("VLM_REASONING_EFFORT", "low")  # 低推理档: 实测 1.8s vs 29.5s, 读数一致
+        if _effort:
+            payload["reasoning_effort"] = _effort
         try:
             resp = httpx.post(
                 f"{self.cfg.vlm_api_base}/chat/completions",
                 json=payload,
                 headers={"Authorization": f"Bearer {self.cfg.vlm_api_key}"},
-                timeout=30,
+                timeout=120,  # 推理型VLM单次可达30-60s
             )
+            if resp.status_code == 400 and _effort:  # 不支持该参数的家: 去掉重试
+                payload.pop("reasoning_effort", None)
+                resp = httpx.post(
+                    f"{self.cfg.vlm_api_base}/chat/completions",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {self.cfg.vlm_api_key}"},
+                    timeout=120,
+                )
             resp.raise_for_status()
             data = resp.json()
             return data["choices"][0]["message"]["content"]

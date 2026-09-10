@@ -571,6 +571,8 @@ def read_hand_sane(rec, img, expected: int = 0) -> list[int]:
 
 PROMPT_RESULT = "这是斗地主结算画面。只回答两个字: 我赢了(输赢) — 输出\"赢\"或\"输\""
 _dz_acts_round = 0  # 本局 DouZero 决策次数(统计用)
+_last_hb = 0.0  # 心跳计时
+_read_fails = 0  # 连续读牌失败计数
 
 
 def _stats_round(ap, img, result: str) -> None:
@@ -587,7 +589,7 @@ def _stats_round(ap, img, result: str) -> None:
 
 
 def main():
-    global _dz_acts_round
+    global _dz_acts_round, _last_hb, _read_fails
     cfg = load_config()
     rec = CardRecognizer(cfg.vision)
     ap = AutoPlay(rec)
@@ -615,17 +617,20 @@ def main():
             continue
         row = ap.button_row(img)
         grey, green = row["grey"], row["green"]
+        if time.time() - _last_hb > 60:  # 心跳: 卡死时也能从日志看出卡在哪个相位
+            _last_hb = time.time()
+            print(f"[HB] grey={grey[0] if grey else None} green={green[0] if green else None} hand={len(hand)} plays={ap.round_plays}")
         if not grey and not green:
             ap.update_zones(img)  # 机器人回合: 只跟踪牌堆变化
             ap.note_new_plays(img)
             time.sleep(0.8)
             continue
-        # 1) 叫分轮(无绿 + 本局尚未有人出牌; 防中局"灰钮瞬态漏检"误判成叫分重置)
-        if not green and ap.round_plays == 0:
-            if hand:  # 上一局残念 → 新局重置(含 DouZero 回合状态)
-                hand = []
-                ap.round_reset()
-                _dz_acts_round = 0
+        # 1) 叫分轮(无绿 + 有红3分钮=铁证): 无条件重置上局残留(防 hand 已空时 round_reset 漏执行)
+        reds_bid = ap._color_blocks(img, [(0xD3, 0x2F, 0x2F)], 35, min_w=220, min_h=100)
+        if not green and reds_bid:
+            hand = []
+            ap.round_reset()
+            _dz_acts_round = 0
             if not hand:  # 新局: 发牌已展示, 读一次建立 belief
                 hand = read_hand_sane(rec, img)
                 if hand:
@@ -671,8 +676,22 @@ def main():
         if not hand:
             hand = read_hand_sane(rec, img)
             if hand:
+                _read_fails = 0
                 print(f"[建belief] hand={[E.rank_to_token(r) for r in hand]}")
-            time.sleep(0.6)
+            else:
+                _read_fails = _read_fails + 1
+                print(f"[建belief失败 x{_read_fails}] 读牌为空/未过消毒")
+                if _read_fails >= 3:  # 连续失败不再死等: 提示钮保流程
+                    print("  → 连续读牌失败, 用提示钮保流程(可无belief运行)")
+                    st = play_smart(ap)
+                    print(f"  play_smart={st}")
+                    if st == "none":
+                        f3 = snap()
+                        gg = ap.button_row(f3)["grey"] if f3 is not None else None
+                        if gg:
+                            adb("shell", "input", "tap", str(gg[0]), str(gg[1]))
+                            print("  → 不出")
+                    _read_fails = 0
             continue
         # 手牌 belief 长度自检(布局总宽恒定→张数不可由亮宽推出, 仅保留日志)
         # 直选失败根因另查; 此处信任读牌+出牌自减 belief

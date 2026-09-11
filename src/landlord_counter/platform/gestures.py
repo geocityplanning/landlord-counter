@@ -27,13 +27,14 @@ class GestureLayout:
     btn_play: tuple[int, int] | None = None
     btn_pass: tuple[int, int] | None = None
     btn_resolver: Callable[[np.ndarray], dict] | None = None   # → {'hint','play','pass'} 坐标
+    lift_eps: float = 300.0     # "新抬起一张"的最小增量(像素口径≈300, 张数口径≈0.5)
+    lift_one: float = 1460.0    # 单张抬起量(像素口径≈1460, 张数口径=1)
+    lift_min: float = 500.0     # 判定"有选中"的最小抬起量
 
 
 class Executor:
     """通用出牌执行器。所有动作自带验证与重试, 绝不"静默失败"。"""
 
-    LIFT_EPS = 300          # 单张抬起的最小增量(像素)
-    LIFT_ONE = 1460         # 单张抬起约值(用于估算选中张数)
 
     def __init__(self, device, layout: GestureLayout, log: Callable[[str], None] = print) -> None:
         self.dev = device
@@ -63,7 +64,7 @@ class Executor:
         for dx in (0, 8, -8, 16, -16):
             self.dev.tap(base + dx, self.L.hand_y, wait=0.30)
             after = self._lift(self._snap())
-            if after > before + self.LIFT_EPS or (before == 0 and after > self.LIFT_EPS):
+            if after > before + self.L.lift_eps:
                 return True
         return False
 
@@ -81,7 +82,7 @@ class Executor:
 
     def selected_count(self, img) -> int:
         lift = self._lift(img)
-        return round(lift / self.LIFT_ONE) if lift > 500 else 0
+        return round(lift / self.L.lift_one) if lift > self.L.lift_min else 0
 
     def pass_turn(self, frame=None) -> bool:
         p = self.btn("pass", frame)

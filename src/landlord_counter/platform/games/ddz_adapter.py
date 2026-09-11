@@ -44,7 +44,8 @@ class DoudizhuAdapter(GameAdapter):
             my_turn=lambda img: AP.my_turn(self.ap, img),
             white_count=_ddz_white,
             btn_resolver=self._buttons,
-            lift_eps=0.5,        # lifted_count 返回"张数"口径
+            lift_diff=AP.lifted_delta,   # 帧差度量(已验证更稳)
+            lift_eps=60.0,
             lift_one=1.0,
             lift_min=0.5,
         )

@@ -27,6 +27,7 @@ class GestureLayout:
     btn_play: tuple[int, int] | None = None
     btn_pass: tuple[int, int] | None = None
     btn_resolver: Callable[[np.ndarray], dict] | None = None   # → {'hint','play','pass'} 坐标
+    lift_diff: Callable[[np.ndarray, np.ndarray], float] | None = None  # 帧差抬起量(可选, 更稳)
     lift_eps: float = 300.0     # "新抬起一张"的最小增量(像素口径≈300, 张数口径≈0.5)
     lift_one: float = 1460.0    # 单张抬起量(像素口径≈1460, 张数口径=1)
     lift_min: float = 500.0     # 判定"有选中"的最小抬起量
@@ -58,14 +59,26 @@ class Executor:
         return getattr(self.L, f"btn_{name}", None)
 
     def tap_card(self, idx: int, n: int) -> bool:
-        """点选第 idx 张并验证抬起; 失败则左右扫点(小牌量牌位漂移)。"""
+        """点选第 idx 张并验证抬起; 失败则左右扫点(小牌量牌位漂移)。
+
+        验证方式: 有 lift_diff(帧差) 用它(更稳); 否则用绝对抬起量增量。
+        """
         base = self.L.card_tap_x(idx, n)
-        before = self._lift(self._snap())
         for dx in (0, 8, -8, 16, -16):
-            self.dev.tap(base + dx, self.L.hand_y, wait=0.30)
-            after = self._lift(self._snap())
-            if after > before + self.L.lift_eps:
-                return True
+            if self.L.lift_diff is not None:
+                before_img = self._snap()
+                self.dev.tap(base + dx, self.L.hand_y, wait=0.35)
+                after_img = self._snap()
+                if after_img is None:
+                    continue
+                if self.L.lift_diff(before_img, after_img) >= self.L.lift_eps:
+                    return True
+            else:
+                before = self._lift(self._snap())
+                self.dev.tap(base + dx, self.L.hand_y, wait=0.30)
+                after = self._lift(self._snap())
+                if after > before + self.L.lift_eps:
+                    return True
         return False
 
     def select(self, idxs: list[int], n: int) -> bool:

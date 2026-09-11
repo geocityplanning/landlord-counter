@@ -24,6 +24,26 @@ class GuandanAdapter(GameAdapter):
     def __init__(self, ours: bool | None = None) -> None:
         self.ours = (os.getenv("GUANDAN_OURS", "0") == "1") if ours is None else ours
         self._last_seat = {"who": None, "blocks": {}}
+        self._ex = None
+
+    def attach(self, device, vision=None) -> None:
+        super().attach(device, vision)
+        self._build_executor()
+
+    def _build_executor(self) -> None:
+        from ..gestures import Executor, GestureLayout
+
+        layout = GestureLayout(
+            card_tap_x=P.card_tap_x,
+            hand_y=875,
+            btn_hint=BTN_HINT,
+            btn_play=BTN_PLAY,
+            btn_pass=BTN_PASS,
+            lift_px=P.lifted_px,
+            my_turn=P.my_turn,
+            white_count=P.white_count,
+        )
+        self._ex = Executor(self.device, layout, log=print)
 
     # ---------- 感知 ----------
     def start_button(self, frame):
@@ -84,49 +104,40 @@ class GuandanAdapter(GameAdapter):
 
     # ---------- 执行 ----------
     def execute(self, action: Action, obs: Observation) -> ExecResult:
-        dev = self.device
-        frame = obs.frame
+        if self._ex is None:
+            self._build_executor()
+        ex = self._ex
+        assert ex is not None
         if action.kind == "pass":
-            self.device.tap(*BTN_PASS, wait=1.4)
+            ex.pass_turn()
             return ExecResult(True, 0, "不出")
-        # 出牌: 提示选牌 → 张数校验 → 出牌 → 回执; 失败重试一轮
-        w_before = P.white_count(frame)
-        for attempt in range(2):
-            dev.tap(*BTN_HINT, wait=1.6)
-            iv = dev.snap()
-            if iv is None:
-                continue
-            lift = P.lifted_px(iv)
-            est = round(lift / 1460) if lift > 500 else 0
-            if est == 0:
-                if obs.table:                     # 跟牌: 提示都没有 → 真不出
-                    dev.tap(*BTN_PASS, wait=1.6)
-                    return ExecResult(True, attempt, "提示无可出→不出")
-                if obs.hand:                      # 领出却提示为空 → 盲出最小单张(保流程)
-                    dev.tap(P.card_tap_x(0, len(obs.hand)), 875, wait=0.4)
-                    dev.tap(*BTN_PLAY, wait=1.6)
-                    return ExecResult(True, attempt, "提示空→盲出最小单张")
-                return ExecResult(False, attempt, "提示空且无手牌")
-            if action.combo is not None:
-                want = len(action.combo.cards)
-                if abs(est - want) > max(1, want // 2):
-                    for _ in range(2):
-                        dev.tap(*BTN_PASS, wait=1.2)   # 清掉提示选中的牌
-                    continue
-            dev.tap(*BTN_PLAY, wait=1.6)
-            for _ in range(8):
-                time.sleep(0.4)
-                i2 = dev.snap()
-                if i2 is None:
-                    continue
-                if not P.my_turn(i2) or P.white_count(i2) < w_before - 1500:
-                    return ExecResult(True, attempt, "出牌成功")
-            dev.tap(*BTN_PLAY, wait=1.6)
-            for _ in range(6):
-                time.sleep(0.4)
-                i2 = dev.snap()
-                if i2 is None:
-                    continue
-                if not P.my_turn(i2) or P.white_count(i2) < w_before - 1500:
-                    return ExecResult(True, attempt, "补点后成功")
-        return ExecResult(False, 2, "两轮均未生效")
+        want = len(action.combo.cards) if action.combo is not None else None
+        follow = bool(obs.table)
+        r = ex.play_by_hint(want=want, follow=follow)
+        if r == "ok":
+            return ExecResult(True, 0, "出牌成功")
+        if r == "none":
+            if follow:
+                ex.pass_turn()
+                return ExecResult(True, 0, "提示无可出→不出")
+            if obs.hand:      # 领出却提示为空 → 盲出最小单张(保流程)
+                ex.dev.tap(ex.L.card_tap_x(0, len(obs.hand)), ex.L.hand_y, wait=0.4)
+                ex.dev.tap(*ex.L.btn_play, wait=1.6)
+                return ExecResult(True, 0, "提示空→盲出最小单张")
+            return ExecResult(False, 0, "提示空且无手牌")
+        # mismatch / fail → 直选我们的决策(有组合时), 否则回落失败
+        if action.combo is not None and obs.hand:
+            idxs = _map_indices(obs.hand, action.combo.cards)
+            if idxs and ex.direct_play(idxs, len(obs.hand)):
+                return ExecResult(True, 1, "直选成功")
+        return ExecResult(False, 1, f"提示执行={r} 且直选未成")
+
+
+def _map_indices(hand, cards):
+    """把组合中的牌映射回手牌索引(用于直选)。"""
+    from ...guandan.agent import map_indices
+
+    try:
+        return map_indices(hand, cards)
+    except Exception:  # noqa: BLE001
+        return None

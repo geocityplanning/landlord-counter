@@ -27,11 +27,15 @@ def main() -> int:
         print(f"[warn] 识别器未就绪: {e}")
 
     if name == "guandan":
-        from landlord_counter.platform.games.guandan_adapter import GuandanAdapter
+        from landlord_counter.platform.registry import create
 
-        ad = GuandanAdapter()
+        ad = create("guandan")
+    elif name == "doudizhu":
+        from landlord_counter.platform.registry import create
+
+        ad = create("doudizhu")
     else:
-        raise SystemExit(f"未知适配器: {name}")
+        raise SystemExit(f"未知适配器: {name} (可选: guandan, doudizhu)")
 
     from landlord_counter.platform.runtime import Runtime
 

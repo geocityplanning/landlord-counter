@@ -23,9 +23,11 @@ def names() -> list[str]:
 def _load_builtin() -> None:
     from .games.ddz_adapter import DoudizhuAdapter
     from .games.guandan_adapter import GuandanAdapter
+    from .games.mahjong_adapter import MahjongAdapter
 
     register("guandan", GuandanAdapter)
     register("doudizhu", DoudizhuAdapter)
+    register("mahjong", MahjongAdapter)   # 进行中, 未通过真机验收
 
 
 _load_builtin()

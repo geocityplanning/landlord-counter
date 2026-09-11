@@ -54,14 +54,18 @@ class DoudizhuAdapter(GameAdapter):
         return int(start_x + i * sp + sp * 0.4)
 
     def _buttons(self, img) -> dict:
-        """动态按钮: grey=不出, green=出牌, blue=提示/叫分。"""
+        """动态按钮: grey=不出, green=出牌, blue=提示/叫分。统一取 (x,y)。"""
         AP = self.AP
         row = self.ap.button_row(img)
         blue = AP.mask_blobs(img, AP.BLUE, 25, 120, 300, 150, 60)
+
+        def xy(b):
+            return (b[0], b[1]) if b else None
+
         return {
-            "pass": row.get("grey"),
-            "play": row.get("green"),
-            "hint": blue[-1] if blue else None,
+            "pass": xy(row.get("grey")),
+            "play": xy(row.get("green")),
+            "hint": xy(blue[-1]) if blue else None,
         }
 
     # ---------- 感知 ----------

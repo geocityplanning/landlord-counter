@@ -221,7 +221,11 @@ def ours_decide(img, rec) -> str:
     else:
         _LAST_SIG, _SAME_SIG_N = sig, 0
     for i in idxs:
-        tap(card_tap_x(i, len(hand)), 875, wait=0.18)
+        if not _tap_card_verified(i, len(hand)):
+            print("  [ours] ✗ 点选不中(扫点仍无抬起) → 清选回落", flush=True)
+            for j in idxs:  # 清掉可能已选中的牌
+                tap(card_tap_x(j, len(hand)), 875, wait=0.15)
+            return "fallback"
     # 选牌校验: 抬起亮带 ≈ 选中张数 × ~1460px(实测5张=7316)
     time.sleep(0.5)
     iv = snap()
@@ -245,8 +249,31 @@ def ours_decide(img, rec) -> str:
             return "play"  # 回合已交出 → 成功
         if P.white_count(i2) < w_before - 1500:
             return "play"  # 手牌减少 → 成功
+    # 未生效 → 补点一次出牌(可能按钮点击丢失/动画未落定), 再判
+    print("  [ours] ↻ 出牌未生效 → 补点一次", flush=True)
+    tap(*BTN_PLAY, wait=1.6)
+    for _ in range(6):
+        time.sleep(0.4)
+        i2 = snap()
+        if i2 is None:
+            continue
+        if not P.my_turn(i2):
+            return "play"
+        if P.white_count(i2) < w_before - 1500:
+            return "play"
     print(f"  [ours] ✗ 出牌未生效(w_before={w_before}) → 回落提示钮", flush=True)
     return "fallback"
+
+
+def _tap_card_verified(i: int, n: int) -> bool:
+    """点选第 i 张并验证抬起; 抬起≈0 时左右扫点(小牌量牌位会漂移)。"""
+    base = card_tap_x(i, n)
+    for dx in (0, 8, -8, 16, -16):
+        tap(base + dx, 875, wait=0.30)
+        iv = snap()
+        if iv is not None and P.lifted_px(iv) > 900:
+            return True
+    return False
 
 
 def _lazy_rec():

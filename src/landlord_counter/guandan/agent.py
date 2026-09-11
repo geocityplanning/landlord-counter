@@ -390,7 +390,7 @@ def main() -> int:
             tap(gb[0], gb[1], wait=3.0)
             continue
         wc = white_count(img)
-        if wc < WHITE_MIN:  # 非我回合
+        if wc < WHITE_MIN or not P.play_button_active(img):  # 非我回合(残局手牌仍显示但按钮禁用)
             time.sleep(0.8)
             continue
         # 我回合

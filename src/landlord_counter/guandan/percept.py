@@ -268,7 +268,21 @@ def white_count(img) -> int:
 
 
 def my_turn(img, thresh: int = 4000) -> bool:
-    return white_count(img) >= thresh
+    """我方回合: 手牌白卡够多 **且** 出牌按钮可用。
+
+    仅凭白卡数会在残局误判(手牌仍显示但按钮禁用/非我方回合)。
+    """
+    return white_count(img) >= thresh and play_button_active(img)
+
+
+def play_button_active(img) -> bool:
+    """出牌按钮是否可用(亮金=可用, 暗金=禁用)。区间实测: x[300,420] y[1090,1150]。
+
+    用途: 残局时手牌仍显示但按钮可能禁用 → 单凭白卡数会把"非我方回合"误判为"我回合"。
+    """
+    seg = img[1090:1150, 300:420]
+    return float(seg[:, :, 1].mean()) > 120.0
+
 
 
 WHITE_TURN_MIN = 4000  # 我方回合白卡阈值

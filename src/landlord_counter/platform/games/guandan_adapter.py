@@ -51,11 +51,6 @@ class GuandanAdapter(GameAdapter):
         layout = GestureLayout(
             card_tap_x=P.card_tap_x,
             hand_y=875,
-            btn_resolver=lambda img: {
-                "hint": _btn("hint", BTN_HINT),
-                "play": _btn("play", BTN_PLAY),
-                "pass": _btn("pass", BTN_PASS),
-            },
             btn_hint=BTN_HINT,
             btn_play=BTN_PLAY,
             btn_pass=BTN_PASS,

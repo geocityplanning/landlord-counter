@@ -215,53 +215,65 @@ def ours_decide(img, rec) -> str:
     sig = f"{R.group_to_str(choice)}|{len(hand)}|{R.cards_to_str(last_cards) if last_cards else '-'}"
     if sig == _LAST_SIG:
         _SAME_SIG_N += 1
-        if _SAME_SIG_N >= 1:  # 同一决策重复出现(上次未生效) → 熔断, 回落提示钮
+        if _SAME_SIG_N >= 2:  # 同一决策重复出现(上次未生效) → 熔断, 回落提示钮
             print(f"  [ours] ↻ 决策重复({_SAME_SIG_N}) → 熔断回落提示钮", flush=True)
             return "fallback"
     else:
         _LAST_SIG, _SAME_SIG_N = sig, 0
-    for i in idxs:
-        if not _tap_card_verified(i, len(hand)):
-            print("  [ours] ✗ 点选不中(扫点仍无抬起) → 清选回落", flush=True)
+    for attempt in range(2):   # 直选最多两轮: 第二轮重新取帧重选重出
+        if attempt:
+            print("  [ours] ↻ 直选重试(重新取帧)", flush=True)
+            time.sleep(1.0)
+        miss = False
+        for i in idxs:
+            if not _tap_card_verified(i, len(hand)):
+                miss = True
+                break
+        if miss:
+            print("  [ours] ✗ 点选不中(扫点仍无抬起) → 清选", flush=True)
             for j in idxs:  # 清掉可能已选中的牌
                 tap(card_tap_x(j, len(hand)), 875, wait=0.15)
-            return "fallback"
-    # 选牌校验: 抬起亮带 ≈ 选中张数 × ~1460px(实测5张=7316)
-    time.sleep(0.5)
-    iv = snap()
-    if iv is not None:
-        lift = P.lifted_px(iv)
-        est = round(lift / 1460) if lift > 500 else 0
-        if est == 0 or (not follow and abs(est - len(idxs)) > max(1, len(idxs) // 2)):
-            print(f"  [ours] ✗ 选牌校验失败(抬起≈{est}张/{lift}px vs 决策{len(idxs)}张) → 清选回落", flush=True)
-            for i in idxs:  # 再点一遍取消选中
-                tap(card_tap_x(i, len(hand)), 875, wait=0.15)
-            return "fallback"
-    tap(*BTN_PLAY, wait=1.6)
-    # 执行回执(强): 轮询3秒 — 手牌白卡须明显下降, 或回合已交出(手牌带消失)
-    w_before = P.white_count(img)
-    for _ in range(8):
-        time.sleep(0.4)
-        i2 = snap()
-        if i2 is None:
             continue
-        if not P.my_turn(i2):
-            return "play"  # 回合已交出 → 成功
-        if P.white_count(i2) < w_before - 1500:
-            return "play"  # 手牌减少 → 成功
-    # 未生效 → 补点一次出牌(可能按钮点击丢失/动画未落定), 再判
-    print("  [ours] ↻ 出牌未生效 → 补点一次", flush=True)
-    tap(*BTN_PLAY, wait=1.6)
-    for _ in range(6):
-        time.sleep(0.4)
-        i2 = snap()
-        if i2 is None:
-            continue
-        if not P.my_turn(i2):
-            return "play"
-        if P.white_count(i2) < w_before - 1500:
-            return "play"
-    print(f"  [ours] ✗ 出牌未生效(w_before={w_before}) → 回落提示钮", flush=True)
+        # 选牌校验: 抬起亮带 ≈ 选中张数 × ~1460px(实测5张=7316)
+        time.sleep(0.5)
+        iv = snap()
+        if iv is not None:
+            lift = P.lifted_px(iv)
+            est = round(lift / 1460) if lift > 500 else 0
+            if est == 0 or (not follow and abs(est - len(idxs)) > max(1, len(idxs) // 2)):
+                print(f"  [ours] ✗ 选牌校验失败(抬起≈{est}张/{lift}px vs 决策{len(idxs)}张) → 清选", flush=True)
+                for i in idxs:  # 再点一遍取消选中
+                    tap(card_tap_x(i, len(hand)), 875, wait=0.15)
+                continue
+        w_before = P.white_count(img)
+        tap(*BTN_PLAY, wait=1.6)
+        # 执行回执(强): 轮询3秒 — 手牌白卡须明显下降, 或回合已交出(手牌带消失)
+        for _ in range(8):
+            time.sleep(0.4)
+            i2 = snap()
+            if i2 is None:
+                continue
+            if not P.my_turn(i2):
+                return "play"  # 回合已交出 → 成功
+            if P.white_count(i2) < w_before - 1500:
+                return "play"  # 手牌减少 → 成功
+        # 未生效 → 补点一次出牌(可能按钮点击丢失/动画未落定), 再判
+        print("  [ours] ↻ 出牌未生效 → 补点一次", flush=True)
+        tap(*BTN_PLAY, wait=1.6)
+        for _ in range(6):
+            time.sleep(0.4)
+            i2 = snap()
+            if i2 is None:
+                continue
+            if not P.my_turn(i2):
+                return "play"
+            if P.white_count(i2) < w_before - 1500:
+                return "play"
+        # 清选, 进入下一轮重试
+        for i in idxs:
+            tap(card_tap_x(i, len(hand)), 875, wait=0.15)
+        print(f"  [ours] ↻ 出牌仍未生效(w_before={w_before})", flush=True)
+    print("  [ours] ✗ 直选两轮均未生效 → 回落提示钮", flush=True)
     return "fallback"
 
 

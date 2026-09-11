@@ -81,9 +81,11 @@ class MahjongAdapter(GameAdapter):
         time.sleep(1.0)
         after_nodes = self._hand_nodes()
         after = len(after_nodes)
-        if after < before or after >= HAND_MAX:
+        if after < before:      # 手牌减少 = 真的出手了
             return ExecResult(True, 0, f"打出 {target.text}({before}→{after})")
-        return ExecResult(False, 1, f"点击未出手({before}→{after})")
+        if after == before and before == HAND_MAX:
+            return ExecResult(False, 1, f"点击未出手({before}→{after}, 手牌未减)")
+        return ExecResult(False, 1, f"状态未知({before}→{after})")
 
     def settle(self, frame):
         return None

@@ -27,7 +27,23 @@ class DoudizhuAdapter(GameAdapter):
         self.use_douzero = (os.getenv("DOUZERO", "0") == "1") if use_douzero is None else use_douzero
         self.ap = None
         self._ex = None
-        self._dz = None
+        self._dz_bot = None
+        self._role: str | None = None       # 本局我方角色: landlord / up / down
+        self._my_played = 0                 # 本局我方已出张数(估)
+
+    # ---------- DouZero ----------
+    def _dz(self):
+        if self._dz_bot is None and self.use_douzero:
+            try:
+                from ...logic.douzero_bridge import DouZeroBot
+
+                wdir = os.getenv("DOUZERO_WEIGHTS", "/tmp/dz_w")
+                b = DouZeroBot(wdir, enabled=True)
+                self._dz_bot = b if b.available() else None
+                print(f"▶ 适配器 DouZero {'启用' if self._dz_bot else '不可用'} (weights={wdir})")
+            except Exception as e:  # noqa: BLE001
+                print(f"  DouZero 初始化失败({e})")
+        return self._dz_bot
 
     # ---------- 装配 ----------
     def attach(self, device, vision=None) -> None:
@@ -115,6 +131,31 @@ class DoudizhuAdapter(GameAdapter):
             score = bot.decide_bid(hand)
             return Action("bid", meta={"score": score})
         table = obs.table or []
+        # 角色判定(本局首次读到手牌): 20 张=地主, 17 张=农民
+        if self._role is None and hand:
+            self._role = "landlord" if len(hand) >= 20 else "up"
+        # DouZero 决策(启用时)
+        dz = self._dz()
+        if dz is not None:
+            try:
+                from ...logic import ddz_engine as E
+
+                role = self._role or "up"
+                htok = [E.rank_to_token(r) for r in hand]
+                counts = {
+                    "landlord": max(20 - (self._my_played if role == "landlord" else 0), 1),
+                    "landlord_up": max(17 - (self._my_played if role == "up" else 0), 0),
+                    "landlord_down": max(17 - (self._my_played if role == "down" else 0), 0),
+                }
+                last_toks = [E.rank_to_token(r) for r in table] or None
+                out = dz.decide(role, htok, counts, {}, last_toks, can_pass=bool(table))
+                if out is None:
+                    return Action("pass", meta={"why": "DouZero 不出"})
+                g = E.identify_str(out)
+                if not getattr(g, "is_invalid", True):
+                    return Action("play", combo=g, meta={"why": "DouZero", "hint": bool(table)})
+            except Exception as e:  # noqa: BLE001
+                print(f"  DouZero 决策异常({e}) → 规则兜底")
         if table:
             from ...logic import ddz_engine as E
 
@@ -138,11 +179,20 @@ class DoudizhuAdapter(GameAdapter):
             ok = ex.pass_turn(obs.frame)
             return ExecResult(ok, 0, "不出")
         hand = obs.hand or []
+        follow = bool(obs.table)
+        # DouZero/规则 跟牌决策 → 优先"提示选牌执行"(已验证可靠)
+        if action.meta.get("hint"):
+            want = len(getattr(action.combo, "ranks", []) or []) or None
+            r = ex.play_by_hint(want=want, follow=follow)
+            if r == "ok":
+                self._my_played += want or 0
+                return ExecResult(True, 0, "提示执行成功")
         idxs = self._map(action, hand)
         if not idxs:
-            r = ex.play_by_hint(follow=bool(obs.table))
+            r = ex.play_by_hint(follow=follow)
             return ExecResult(r == "ok", 0, f"提示执行={r}")
         if ex.direct_play(idxs, len(hand)):
+            self._my_played += len(getattr(action.combo, "ranks", []) or [])
             return ExecResult(True, 0, "直选成功")
         r = ex.play_by_hint(follow=bool(obs.table))
         return ExecResult(r == "ok", 1, f"直选失败→提示={r}")
@@ -200,4 +250,6 @@ class DoudizhuAdapter(GameAdapter):
         except Exception:  # noqa: BLE001
             pass
         win = True if "赢" in txt else (False if "输" in txt else None)
+        self._role = None          # 新局重置角色/计数
+        self._my_played = 0
         return SettleInfo(raw=txt.strip()[:40], win=win)

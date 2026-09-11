@@ -312,7 +312,7 @@ def main() -> int:
                 if r is not None:
                     raw, win = read_settle(r, img)
                     deals += 1
-                    _stats_append(sf, f"{int(time.time())},{deals},{'win' if win else ('lose' if win is False else '?')},{raw.strip()[:60]}")
+                    _stats_append(sf, f"{int(time.time())},{deals},{'win' if win else ('lose' if win is False else '?')},{os.getenv('STATS_TAG','-')},{raw.strip()[:60]}")
                     print(f"[统计] 第{deals}局: {'我方升级' if win else ('对手升级' if win is False else '未判定')} | {raw.strip()[:40]!r}", flush=True)
             print(f"[按钮] 点大金钮@{gb}", flush=True)
             tap(gb[0], gb[1], wait=3.0)

@@ -232,6 +232,19 @@ def read_region_cards(rec, img, box) -> list[Card] | None:
     return None
 
 
+def blocks_by_seat(img) -> dict:
+    """桌面各座位当前牌块: {座位名: (x, y, w, 白像素数)}（无牌则不含该键）。
+    用途: 对比相邻两帧 → 哪一家的牌块变了 = 谁刚出牌(用于判定上家是不是队友)。"""
+    out = {}
+    for name, box, cnt in table_plays(img):
+        if name == "bottom":      # bottom 是我方最近出的牌, 不算"别人"
+            continue
+        pb = out.get(name)
+        if pb is None or cnt > pb[3]:
+            out[name] = (box[0], box[1], box[2], cnt)
+    return out
+
+
 def read_table_last(rec, img) -> list[Card] | None:
     """找到最近一手非"不出": 用桌面牌块聚类按逆出牌序(东→北→西)取最近一块。
     返回牌列表; 三家皆无牌(我领出) → []; 读失败 → None。"""

@@ -87,10 +87,25 @@ def zhao_ke_chu_de_pai(hand: list, last_play: "R.Group | None" = None,
 # 出牌策略
 # --------------------------------------------------------------------------- #
 
+def _pai_dai_jia(g) -> tuple:
+    """候选"代价"键(越小越优先): (王张数, 万能消耗) — 避免早早拆王/动主牌。"""
+    wang = sum(1 for c in g.cards if getattr(c, "zhi", 0) >= 15)
+    return (wang, getattr(g, "wild_used", 0))
+
+
+def _ke_yi_bo_wang(hand: list, cands: list):
+    """存在"一手走完"的候选 → 直接返回它(不管张数类型)。"""
+    n = len(hand)
+    for g in cands:
+        if len(g.cards) >= n:
+            return g
+    return None
+
+
 def _jian_dan_ce_lue(cands: list) -> "R.Group":
     """简单策略: 挑主值最小者, 尽量避免天王炸。"""
     norm = [g for g in cands if g.xing != R.PAI_XING["TIAN_WANG_ZHA"]] or cands
-    return min(norm, key=lambda g: (g.zhu_zhi, g.chang_du))
+    return sorted(norm, key=lambda g: (_pai_dai_jia(g), g.zhu_zhi, g.chang_du))[0]
 
 
 def _zhong_deng_ce_lue(cands: list, hand: list):
@@ -112,8 +127,13 @@ def _shou_ci_chu_pai(hand: list, jipai: int | None = None) -> "R.Group":
         # 兜底: 出一张最小的牌
         return R.identify([R.pai_xu(hand, jipai)[-1]], jipai)
 
+    # 一手走完(残局) → 直接出
+    fin = _ke_yi_bo_wang(hand, cands)
+    if fin is not None:
+        return fin
+
     def smallest(xing_list):
-        return min(xing_list, key=lambda g: (g.zhu_zhi, g.chang_du))
+        return sorted(xing_list, key=lambda g: (_pai_dai_jia(g), g.zhu_zhi, g.chang_du))[0]
 
     priority = [
         R.PAI_XING["TONG_HUA_SHUN"],
@@ -145,13 +165,7 @@ def choose_play(hand: list, last_play: "R.Group | None" = None,
     """
     st = state or GameState()
     jipai = st.jipai
-    rng = st.get_rng()
     jp = R.huo_qu_ji_pai() if jipai is None else jipai
-
-    # 队友出牌: 让队友走(与 JS 同概率)
-    if st.shi_dui_you and last_play is not None and not last_play.is_invalid:
-        if st.get_nan_du() >= NAN_DU["ZHONG_DENG"] and rng.random() > 0.3:
-            return None
 
     # 首出
     if last_play is None or last_play.is_invalid:
@@ -159,6 +173,16 @@ def choose_play(hand: list, last_play: "R.Group | None" = None,
 
     cands = R.find_all_plays(hand, last_play, jp)
     if not cands:
+        return None
+
+    # 残局: 能一手走完 → 出(不分队友/难度)
+    fin = _ke_yi_bo_wang(hand, cands)
+    if fin is not None:
+        return fin
+
+    # 队友出牌: 确定性让牌 — 队友牌型有效且我们不是"必须走"时让队友领出
+    # (旧版是 70% 随机; 现在: 手里还有牌(>3)就让, 除非上面已判定能走完)
+    if st.shi_dui_you and not last_play.is_invalid and len(hand) > 3:
         return None
 
     if st.get_nan_du() == NAN_DU["JIAN_DAN"]:

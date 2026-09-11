@@ -164,7 +164,11 @@ def ours_decide(img, rec) -> str:
             return "fallback"
     st = AI.GameState()
     st.jipai = JIPAI
+    # 队友判定: 主循环跟踪"刚出牌的那一家"(座位块变化) → top=北=我方队友
+    st.shi_dui_you = _LAST_SEAT.get("who") == "top"
     last = R.identify(last_cards, JIPAI) if last_cards else None
+    if last_cards:
+        print(f"  [ours] 上家={'队友(北)' if st.shi_dui_you else _LAST_SEAT.get('who') or '未知'}", flush=True)
     choice = AI.choose_play(hand, last, st)
     if choice is None or getattr(choice, "is_invalid", False):
         print(f"  [ours] 决策=不出 (手牌{len(hand)}张, 待压={R.cards_to_str(last_cards) if last_cards else '无'})", flush=True)
@@ -256,6 +260,25 @@ def _lazy_rec():
         return None
 
 
+_LAST_SEAT = {"who": None, "blocks": {}}
+
+
+def _track_last_seat(img) -> None:
+    """跟踪"刚出牌的那一家": 对比相邻帧各座位牌块(纯CV, 无VLM)。
+    块变了/新出现 → 该座位刚出牌; 全部消失(新一轮) → 归为未知。"""
+    cur = P.blocks_by_seat(img)
+    changed = None
+    for name, box in cur.items():
+        pb = _LAST_SEAT["blocks"].get(name)
+        if pb is None or abs(box[0] - pb[0]) + abs(box[1] - pb[1]) > 10:
+            changed = name
+    if changed:
+        _LAST_SEAT["who"] = changed
+    elif not cur and _LAST_SEAT["blocks"]:
+        _LAST_SEAT["who"] = None      # 桌面清空 = 新一轮开始, 谁领出未知
+    _LAST_SEAT["blocks"] = cur
+
+
 def _recover_page(tag: str = "") -> None:
     """看门狗自愈: 强制重开浏览器页面并回到对局/开始页"""
     print(f"[看门狗] 页面疑似卡死({tag}) → 重开浏览器", flush=True)
@@ -300,6 +323,7 @@ def main() -> int:
         if img is None:
             time.sleep(1)
             continue
+        _track_last_seat(img)   # 跟踪"刚出牌的那一家"(供队友判定)
         # 看门狗: 3 分钟无任何进展(无大金钮/无我方回合动作/手牌无变化) → 重开页面自愈
         wc_now = white_count(img)
         if wc_now != last_wc:
@@ -313,6 +337,8 @@ def main() -> int:
         gb = gold_button(img)
         if gb:  # 开始游戏 / 结算页"再接一局"
             last_prog = time.time()
+            _LAST_SEAT["who"] = None      # 新一局: 清空上家跟踪
+            _LAST_SEAT["blocks"] = {}
             sf = os.getenv("STATS_FILE")
             if sf:
                 r = rec if rec is not None else _lazy_rec()

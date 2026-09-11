@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 import time
 
-from ..types import Action, ExecResult, GameAdapter, Observation
+from ..types import Action, ExecResult, GameAdapter, Observation, SettleInfo
 
 # 复用已标定常量(见 docs/M4_掼蛋几何参考.md)
 from ...guandan import ai as AI
@@ -141,3 +141,13 @@ def _map_indices(hand, cards):
         return map_indices(hand, cards)
     except Exception:  # noqa: BLE001
         return None
+
+    # ---------- 结算 ----------
+    def settle(self, frame) -> SettleInfo | None:
+        """结算弹窗解读(仅当读到'头游/升级'才认, 避免把开始页误当结算)。"""
+        if self.vision is None:
+            return None
+        txt, win = P.read_settle(self.vision, frame)
+        if "头游" not in txt and "升级" not in txt:
+            return None
+        return SettleInfo(raw=txt.strip()[:60], win=win)

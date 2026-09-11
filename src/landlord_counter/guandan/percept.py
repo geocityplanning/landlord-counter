@@ -324,3 +324,21 @@ def lifted_px(img) -> int:
     band = img[770:812]
     b, g, r = band[:, :, 0].astype(int), band[:, :, 1].astype(int), band[:, :, 2].astype(int)
     return int(((b > 200) & (g > 200) & (r > 200)).sum())
+
+
+PROMPT_SETTLE = (
+    "这是掼蛋结算弹窗。只回答两行: 头游=<谁(我方是南/北, 对手是西/东)>; 我方是否升级=<是/否>。不要解释。"
+)
+
+
+def read_settle(rec, img) -> tuple[str, bool | None]:
+    """读结算弹窗 → (原文, 我方是否升级)。无法判定返回 (原文, None)。"""
+    roi = img[300:900, 30:690]
+    txt = rec.recognize_with_vlm(roi, PROMPT_SETTLE) or ""
+    win = None
+    if "头游" in txt:
+        if any(k in txt for k in ("南", "北", "你", "队友")):
+            win = True
+        elif any(k in txt for k in ("西", "东")):
+            win = False
+    return txt, win

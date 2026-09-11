@@ -49,22 +49,12 @@ def white_count(img) -> int:
     return int(((b > 200) & (g > 200) & (r > 200)).sum())
 
 
-PROMPT_SETTLE = (
-    "这是掼蛋结算弹窗。只回答两行: 头游=<谁(我方是南/北, 对手是西/东)>; 我方是否升级=<是/否>。不要解释。"
-)
+PROMPT_SETTLE = P.PROMPT_SETTLE
 
 
 def read_settle(rec, img):
-    """读结算弹窗 → (raw_text, win_bool_or_None)"""
-    roi = img[300:900, 30:690]
-    txt = rec.recognize_with_vlm(roi, PROMPT_SETTLE) or ""
-    win = None
-    if "头游" in txt:
-        if any(k in txt for k in ("南", "北", "你", "队友")):
-            win = True
-        elif any(k in txt for k in ("西", "东")):
-            win = False
-    return txt, win
+    """读结算弹窗(实现已下沉到 percept, 这里保留兼容入口)。"""
+    return P.read_settle(rec, img)
 
 
 def _stats_append(path: str, row: str) -> None:
@@ -341,7 +331,8 @@ def _recover_page(tag: str = "") -> None:
     print("[看门狗] 重开完成", flush=True)
 
 
-def main() -> int:
+def legacy_main() -> int:
+    """旧自研主循环(保留兜底): GUANDAN_LEGACY=1 时使用。"""
     dur = float(sys.argv[1]) if len(sys.argv) > 1 else 600
     t_end = time.time() + dur
     plays = passes = 0
@@ -433,5 +424,33 @@ def main() -> int:
     return 0
 
 
+
+def main() -> int:
+    """薄壳入口: 走 platform 通用层(Runtime + GuandanAdapter)。
+
+    环境变量与旧入口一致: STATS_FILE / STATS_TAG / GUANDAN_OURS / GUANDAN_JIPAI。
+    GUANDAN_LEGACY=1 → 回退旧自研主循环。
+    """
+    if os.getenv("GUANDAN_LEGACY", "0") == "1":
+        print("▶ 使用旧主循环(GUANDAN_LEGACY=1)", flush=True)
+        return legacy_main()
+    dur = float(sys.argv[1]) if len(sys.argv) > 1 else 600
+    from ..config import load_config
+    from ..platform.device import AdbDevice
+    from ..platform.games.guandan_adapter import GuandanAdapter
+    from ..platform.runtime import Runtime
+    from ..vision.card_recognizer import CardRecognizer
+
+    dev = AdbDevice(serial="127.0.0.1:5555", url="http://172.18.0.1:8123/index.html")
+    rec = CardRecognizer(load_config().vision)
+    ad = GuandanAdapter()
+    rt = Runtime(ad, dev, vision=rec,
+                 stats_path=os.getenv("STATS_FILE"), tag=os.getenv("STATS_TAG", "-"))
+    print(f"▶ 掼蛋托管(platform 薄壳) 时长={dur}s ours={ad.ours}", flush=True)
+    out = rt.run(seconds=dur)
+    print(f"▶ 结束: {out}", flush=True)
+    return 0
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

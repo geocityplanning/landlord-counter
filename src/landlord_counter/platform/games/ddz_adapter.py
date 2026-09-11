@@ -80,7 +80,19 @@ class DoudizhuAdapter(GameAdapter):
 
     def sense(self, frame) -> Observation:
         AP = self.AP
-        if not AP.my_turn(self.ap, frame):
+        # 叫分轮: 无出牌绿钮 + 有"3分"红钮(铁证)
+        reds = self.ap._color_blocks(frame, [(0xD3, 0x2F, 0x2F)], 35, min_w=220, min_h=100)
+        row0 = self.ap.button_row(frame)
+        if not row0.get("green") and reds:
+            hand_b = AP.read_hand_sane(self.vision, frame)
+            return Observation(frame=frame, my_turn=True, hand=hand_b, extra={"phase": "bid"})
+        # 出牌轮: 稳定双帧(绿钮两帧一致)才认
+        ok_stable = False
+        try:
+            ok_stable = AP.my_turn_stable(self.ap)[0]
+        except Exception:  # noqa: BLE001
+            ok_stable = AP.my_turn(self.ap, frame)
+        if not ok_stable:
             return Observation(frame=frame, my_turn=False)
         hand = AP.read_hand_sane(self.vision, frame)
         table = []
@@ -88,7 +100,8 @@ class DoudizhuAdapter(GameAdapter):
         if zone:
             table = self.ap.read_zone_cards(frame, zone) or []
         return Observation(frame=frame, my_turn=True, hand=hand, table=table,
-                           buttons={k: v for k, v in self._buttons(frame).items() if v})
+                           buttons={k: v for k, v in self._buttons(frame).items() if v},
+                           extra={"phase": "play"})
 
     # ---------- 决策 ----------
     def decide(self, obs: Observation) -> Action:
@@ -97,6 +110,9 @@ class DoudizhuAdapter(GameAdapter):
         hand = obs.hand or []
         if not hand:
             return Action("none", meta={"why": "未读到手牌"})
+        if obs.extra.get("phase") == "bid":
+            score = bot.decide_bid(hand)
+            return Action("bid", meta={"score": score})
         table = obs.table or []
         if table:
             from ...logic import ddz_engine as E
@@ -115,6 +131,8 @@ class DoudizhuAdapter(GameAdapter):
             self.attach(self.device, self.vision)
         ex = self._ex
         assert ex is not None
+        if action.kind == "bid":
+            return self._do_bid(action, obs)
         if action.kind == "pass":
             ok = ex.pass_turn(obs.frame)
             return ExecResult(ok, 0, "不出")
@@ -127,6 +145,22 @@ class DoudizhuAdapter(GameAdapter):
             return ExecResult(True, 0, "直选成功")
         r = ex.play_by_hint(follow=bool(obs.table))
         return ExecResult(r == "ok", 1, f"直选失败→提示={r}")
+
+    def _do_bid(self, action: Action, obs: Observation) -> ExecResult:
+        """叫分: score>0 → 红钮(最右); 否则灰钮(不叫)。"""
+        img = obs.frame
+        target = None
+        if action.meta.get("score", 0) > 0:
+            reds = self.ap._color_blocks(img, [(0xD3, 0x2F, 0x2F)], 35, min_w=220, min_h=100)
+            if reds:
+                target = (reds[-1][0], reds[-1][1])
+        if target is None:
+            g = self.ap.button_row(img).get("grey")
+            target = (g[0], g[1]) if g else None
+        if target is None:
+            return ExecResult(False, 0, "无叫分按钮")
+        self.device.tap(*target, wait=3.0)
+        return ExecResult(True, 0, f"叫分{action.meta.get('score', 0)}({'不叫' if action.meta.get('score', 0) == 0 else '叫'})")
 
     def _map(self, action: Action, hand: list[int]):
         """组合 → 手牌索引(逐张从低取)。"""

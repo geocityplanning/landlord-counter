@@ -26,16 +26,11 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         print(f"[warn] 识别器未就绪: {e}")
 
-    if name == "guandan":
-        from landlord_counter.platform.registry import create
+    from landlord_counter.platform import registry
 
-        ad = create("guandan")
-    elif name == "doudizhu":
-        from landlord_counter.platform.registry import create
-
-        ad = create("doudizhu")
-    else:
-        raise SystemExit(f"未知适配器: {name} (可选: guandan, doudizhu)")
+    if name not in registry.names():
+        raise SystemExit(f"未知适配器: {name} (可选: {', '.join(registry.names())})")
+    ad = registry.create(name)
 
     from landlord_counter.platform.runtime import Runtime
 

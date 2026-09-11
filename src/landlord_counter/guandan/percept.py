@@ -332,7 +332,25 @@ PROMPT_SETTLE = (
 
 
 def read_settle(rec, img) -> tuple[str, bool | None]:
-    """读结算弹窗 → (原文, 我方是否升级)。无法判定返回 (原文, None)。"""
+    """读结算弹窗 → (原文, 我方是否升级)。
+
+    优先**无障碍文字**(免 VLM, 快且准); 取不到再落 VLM 读图。
+    """
+    try:
+        from ..platform.a11y import A11y
+
+        blob = A11y().text_blob(force=True)
+        if "头游" in blob:
+            import re as _re
+
+            m = _re.search(r"头游[:：]\s*(\S+)", blob)
+            head = m.group(1) if m else ""
+            win = True if head in ("南", "北", "我方") else (False if head in ("西", "东") else None)
+            m2 = _re.search(r"升级[:：]?\s*([+\-]?\d+\s*级)", blob)
+            up = m2.group(1) if m2 else ""
+            return f"头游={head}; 升级={up}", win
+    except Exception:  # noqa: BLE001
+        pass
     roi = img[300:900, 30:690]
     txt = rec.recognize_with_vlm(roi, PROMPT_SETTLE) or ""
     win = None

@@ -24,6 +24,7 @@ class MahjongAdapter(GameAdapter):
 
     def __init__(self) -> None:
         self.a11y = None
+        self._fails = 0        # 连续"点击未出手"次数(用于退避)
 
     # ---------- 装配 ----------
     def attach(self, device, vision=None) -> None:
@@ -63,11 +64,12 @@ class MahjongAdapter(GameAdapter):
 
     # ---------- 决策 ----------
     def decide(self, obs: Observation) -> Action:
-        """占位策略: 打出最后一张(即刚摸到的牌 = ツモ切り)。后续接规则/模型。"""
+        """占位策略: 打出最后一张(刚摸的牌=ツモ切り); 连续失败时轮换目标牌。"""
         hand = obs.hand or []
         if not hand:
             return Action("none")
-        return Action("play", combo=len(hand) - 1, meta={"why": "ツモ切り(占位策略)"})
+        idx = len(hand) - 1 - (self._fails % max(1, len(hand)))
+        return Action("play", combo=idx, meta={"why": f"ツモ切り/轮换(占位策略, fails={self._fails})"})
 
     # ---------- 执行 ----------
     def execute(self, action: Action, obs: Observation) -> ExecResult:
@@ -76,16 +78,21 @@ class MahjongAdapter(GameAdapter):
             return ExecResult(False, 0, "读不到手牌")
         idx = min(int(action.combo or 0), len(nodes) - 1)
         target = nodes[idx]
-        before = len(nodes)
-        self.device.tap(*target.center, wait=1.2)
-        time.sleep(1.0)
-        after_nodes = self._hand_nodes()
-        after = len(after_nodes)
-        if after < before:      # 手牌减少 = 真的出手了
-            return ExecResult(True, 0, f"打出 {target.text}({before}→{after})")
-        if after == before and before == HAND_MAX:
-            return ExecResult(False, 1, f"点击未出手({before}→{after}, 手牌未减)")
-        return ExecResult(False, 1, f"状态未知({before}→{after})")
+        before_names = [n.text for n in nodes]
+        self.device.tap(*target.center, wait=1.0)
+        # 回执: 轮询手牌**列表**是否变化(打出/摸牌都会变), 最多 ~3 次
+        for _ in range(3):
+            time.sleep(1.0)
+            after = self._hand_nodes()
+            names = [n.text for n in after]
+            if len(names) != len(before_names) or names != before_names:
+                self._fails = 0
+                return ExecResult(True, 0, f"打出 {target.text}({len(before_names)}→{len(names)})")
+        # 未变化: 多半不是我的回合 → 记失败并退避(避免狂点)
+        self._fails += 1
+        if self._fails >= 2:
+            time.sleep(min(6.0, 1.5 * self._fails))
+        return ExecResult(False, 1, f"点击未出手(手牌未变{fails if False else ''})")
 
     def settle(self, frame):
         return None

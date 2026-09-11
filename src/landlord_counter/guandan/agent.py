@@ -133,6 +133,13 @@ def ours_decide(img, rec) -> str:
     # 像素数牌(已滤噪) 作为期望张数喂给识别
     n_vis = P.hand_columns(img)
     hand = P.read_hand_ordered(rec, img, expected=n_vis)
+    if not hand:  # 读失败 → 重新取帧再读一次(VLM 偶发空返回)
+        img2 = snap()
+        if img2 is not None:
+            n_vis = P.hand_columns(img2) or n_vis
+            hand = P.read_hand_ordered(rec, img2, expected=n_vis)
+            if hand:
+                img = img2
     if not hand:
         print("  [ours] 手牌读取失败 → 回落", flush=True)
         return "fallback"
@@ -217,7 +224,7 @@ def ours_decide(img, rec) -> str:
     if iv is not None:
         lift = P.lifted_px(iv)
         est = round(lift / 1460) if lift > 500 else 0
-        if est == 0 or abs(est - len(idxs)) > max(1, len(idxs) // 2):
+        if est == 0 or (not follow and abs(est - len(idxs)) > max(1, len(idxs) // 2)):
             print(f"  [ours] ✗ 选牌校验失败(抬起≈{est}张/{lift}px vs 决策{len(idxs)}张) → 清选回落", flush=True)
             for i in idxs:  # 再点一遍取消选中
                 tap(card_tap_x(i, len(hand)), 875, wait=0.15)

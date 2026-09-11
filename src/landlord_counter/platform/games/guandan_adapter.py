@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 
 from ..types import Action, ExecResult, GameAdapter, Observation, SettleInfo
@@ -31,11 +32,30 @@ class GuandanAdapter(GameAdapter):
         self._build_executor()
 
     def _build_executor(self) -> None:
+        from ..a11y import A11y
         from ..gestures import Executor, GestureLayout
+
+        self.a11y = A11y(getattr(self.device, "serial", "127.0.0.1:5555"))
+
+        def _btn(name: str, fallback):
+            """无障碍树按文字取按钮中心(精确), 取不到用固定坐标。"""
+            pat = {"hint": "提示", "play": "出牌", "pass": "不出"}[name]
+            try:
+                n = self.a11y.button(pat)
+                if n:
+                    return n.center
+            except Exception:  # noqa: BLE001
+                pass
+            return fallback
 
         layout = GestureLayout(
             card_tap_x=P.card_tap_x,
             hand_y=875,
+            btn_resolver=lambda img: {
+                "hint": _btn("hint", BTN_HINT),
+                "play": _btn("play", BTN_PLAY),
+                "pass": _btn("pass", BTN_PASS),
+            },
             btn_hint=BTN_HINT,
             btn_play=BTN_PLAY,
             btn_pass=BTN_PASS,
@@ -47,6 +67,14 @@ class GuandanAdapter(GameAdapter):
 
     # ---------- 感知 ----------
     def start_button(self, frame):
+        # 优先无障碍文字按钮(再来一局/开始游戏), 失败回落金块检测
+        try:
+            for pat in ("再来一局", "开始游戏", "继续游戏"):
+                n = self.a11y.button(pat)
+                if n:
+                    return n.center
+        except Exception:  # noqa: BLE001
+            pass
         return gold_button(frame)
 
     def progress_signal(self, frame):
@@ -144,7 +172,23 @@ def _map_indices(hand, cards):
 
     # ---------- 结算 ----------
     def settle(self, frame) -> SettleInfo | None:
-        """结算弹窗解读(仅当读到'头游/升级'才认, 避免把开始页误当结算)。"""
+        """结算解读: 优先无障碍文字(免 VLM), 否则回落 VLM 读弹窗。"""
+        try:
+            blob = self.a11y.text_blob(force=True)
+        except Exception:  # noqa: BLE001
+            blob = ""
+        if "头游" in blob:
+            head = ""
+            m = re.search(r"头游[:：]\s*(\S+)", blob)
+            if m:
+                head = m.group(1)
+            win = True if head in ("南", "北", "我方") else (False if head in ("西", "东") else None)
+            up = ""
+            m2 = re.search(r"升级[:：]?\s*([+\-]?\d+\s*级)", blob)
+            if m2:
+                up = m2.group(1)
+            raw = f"头游={head};升级={up}"
+            return SettleInfo(raw=raw, win=win)
         if self.vision is None:
             return None
         txt, win = P.read_settle(self.vision, frame)

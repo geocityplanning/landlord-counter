@@ -249,11 +249,36 @@ def _lazy_rec():
         return None
 
 
+def _recover_page(tag: str = "") -> None:
+    """看门狗自愈: 强制重开浏览器页面并回到对局/开始页"""
+    print(f"[看门狗] 页面疑似卡死({tag}) → 重开浏览器", flush=True)
+    subprocess.run(ADB + ["shell", "am", "force-stop", "org.mozilla.focus"], capture_output=True)
+    time.sleep(2)
+    subprocess.run(
+        ADB + ["shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", "http://172.18.0.1:8123/index.html"],
+        capture_output=True,
+    )
+    time.sleep(12)
+    for _ in range(6):
+        img = snap()
+        if img is None:
+            time.sleep(1)
+            continue
+        gb = gold_button(img)
+        if gb:
+            tap(gb[0], gb[1], wait=3.0)
+            continue
+        break
+    print("[看门狗] 重开完成", flush=True)
+
+
 def main() -> int:
     dur = float(sys.argv[1]) if len(sys.argv) > 1 else 600
     t_end = time.time() + dur
     plays = passes = 0
     deals = 0
+    last_prog = time.time()  # 看门狗: 最近进展时刻
+    last_wc = -1
     rec = None
     if OURS or os.getenv("STATS_FILE"):
         from ..config import load_config
@@ -268,8 +293,19 @@ def main() -> int:
         if img is None:
             time.sleep(1)
             continue
+        # 看门狗: 3 分钟无任何进展(无大金钮/无我方回合动作/手牌无变化) → 重开页面自愈
+        wc_now = white_count(img)
+        if wc_now != last_wc:
+            last_wc = wc_now
+            last_prog = time.time()
+        if time.time() - last_prog > 240:
+            _recover_page(f"{int(time.time() - last_prog)}s 无进展")
+            last_prog = time.time()
+            last_wc = -1
+            continue
         gb = gold_button(img)
         if gb:  # 开始游戏 / 结算页"再接一局"
+            last_prog = time.time()
             sf = os.getenv("STATS_FILE")
             if sf:
                 r = rec if rec is not None else _lazy_rec()
@@ -286,6 +322,7 @@ def main() -> int:
             time.sleep(0.8)
             continue
         # 我回合
+        last_prog = time.time()
         if OURS:
             r = ours_decide(img, rec)
             if r == "pass":

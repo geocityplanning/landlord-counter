@@ -116,18 +116,25 @@ def map_indices(hand, cards) -> list[int] | None:
     return sorted(out)
 
 
+def _read_hand(img, rec, n_vis: int):
+    """读手牌: 默认旧路(切两半); GUANDAN_READ_STRIPS=1 走按牌位分段读(更准, 上机 A/B 用)。"""
+    if os.getenv("GUANDAN_READ_STRIPS", "0") == "1" and n_vis:
+        return P.read_hand_strips(rec, img, n_vis)
+    return P.read_hand_ordered(rec, img, expected=n_vis)
+
+
 def ours_decide(img, rec) -> str:
     """自研决策: 读手牌+桌面 → rules/ai 决策 → 点选执行。
     返回 'play'|'pass'|'fallback'(回落提示钮)。"""
     global _LAST_SIG, _SAME_SIG_N
     # 像素数牌(已滤噪) 作为期望张数喂给识别
     n_vis = P.hand_columns(img)
-    hand = P.read_hand_ordered(rec, img, expected=n_vis)
+    hand = _read_hand(img, rec, n_vis)
     if not hand:  # 读失败 → 重新取帧再读一次(VLM 偶发空返回)
         img2 = snap()
         if img2 is not None:
             n_vis = P.hand_columns(img2) or n_vis
-            hand = P.read_hand_ordered(rec, img2, expected=n_vis)
+            hand = _read_hand(img2, rec, n_vis)
             if hand:
                 img = img2
     if not hand:
@@ -136,7 +143,7 @@ def ours_decide(img, rec) -> str:
     # 读数一致性: 与像素数牌差 >1 → 用期望值重读一次
     if n_vis and abs(n_vis - len(hand)) > 1:
         print(f"  [ours] 读数{len(hand)}张 vs 像素{n_vis}张 → 重读", flush=True)
-        hand2 = P.read_hand_ordered(rec, img, expected=n_vis)
+        hand2 = _read_hand(img, rec, n_vis)
         if hand2 and abs(len(hand2) - n_vis) <= 1:
             hand = hand2
         else:

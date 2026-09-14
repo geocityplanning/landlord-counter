@@ -75,6 +75,36 @@ def read_hand_ordered(rec, img, expected: int = 0) -> list[Card] | None:
     return _sanitize(merged, expected)
 
 
+def read_hand_strips(rec, img, n: int, batch: int = 9) -> list[Card] | None:
+    """按**牌位几何**分段读手牌(每段恰好覆盖 batch 张, 无需重叠去重)。
+
+    原理: 每张牌只露出左侧 24px, 最后一张露出完整 88px;
+    从第 i 张的左缘裁到第 j-1 张的右缘, 画面里**恰好只有** i..j-1 这几张
+    (前一张的露出区在左边界之外) → 段间并集无损、无需重叠拼接, 比"固定切两半"稳。
+    """
+    y0, y1 = HAND_BAND
+    if n <= 0:
+        return None
+    xs = [int(hand_start_x(n) + i * 24) for i in range(n)]
+    toks: list[str] = []
+    i = 0
+    while i < n:
+        j = min(n, i + batch)
+        x0 = max(0, xs[i] - 2)
+        x1 = min(img.shape[1], xs[j - 1] + 88)
+        prompt = PROMPT_HAND + f" 这一段共 {j - i} 张。"
+        t = _split_tokens(_read(rec, img[y0:y1, x0:x1], prompt))
+        if not t or len(t) > (j - i) + 3 or _looks_cyclic(t):
+            return None                      # 单段不可信 → 整次读作废(宁可回落)
+        toks.extend(t)
+        if len(toks) > n + 3:
+            return None
+        i = j
+    if len(toks) != n:
+        return None
+    return _sanitize(toks, n)
+
+
 PROMPT_ONE = "这是叠在一起的一小段扑克牌(从左到右1-2张),只输出最左边那张的\"花色+点数\",如 ♠K;点数10写10,大王写大王,小王写小王。不要解释。"
 
 

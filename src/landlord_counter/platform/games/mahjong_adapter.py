@@ -87,6 +87,11 @@ class MahjongAdapter(GameAdapter):
             acts = [n.text.strip() for n in self._action_nodes()]
         except Exception:  # noqa: BLE001
             acts = []
+        # 有操作提示(チー/ポン/カン/リーチ/キャンセル...) ⇒ 一定在等我应答
+        #   (实测: 提示阶段手牌节点会从无障碍树里消失, 只看手牌数会永久卡住)
+        if acts:
+            return Observation(frame=frame, my_turn=True, hand=names,
+                               extra={"phase": "prompt", "actions": acts})
         # 该我出手: 张数 ≡ 2 (mod 3)（副露后手牌会少, 旧判据 ">=14" 会永久卡住）
         my_turn = len(names) >= 2 and len(names) % 3 == 2
         return Observation(frame=frame, my_turn=my_turn, hand=names,

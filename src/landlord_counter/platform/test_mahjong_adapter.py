@@ -54,13 +54,12 @@ class FakeDevice:
 
     def tap(self, x, y, wait=0.0):  # noqa: ARG002
         self.taps.append((x, y))
-        # 模拟"点手牌=出手": 去掉最后一张并补一张(张数 14→13)
-        if self.a11y.hand:
-            if y < 900 and len(self.a11y.hand) % 3 == 2:
-                self.a11y.hand = self.a11y.hand[:-1] + ["ツモ"]
-                return
-            if y >= 900 and self.a11y.actions:   # 点操作按钮 → 按钮消失
-                self.a11y.actions = []
+        if y >= 900 and self.a11y.actions:       # 点操作按钮(吃/碰/取消) → 按钮消失
+            self.a11y.actions = []
+            return
+        # 模拟"点手牌=出手": 去掉最后一张并补一张(张数不变, 牌面变)
+        if self.a11y.hand and y < 900 and len(self.a11y.hand) % 3 == 2:
+            self.a11y.hand = self.a11y.hand[:-1] + ["ツモ"]
 
     def shell(self, *args):
         if args[:2] == ("input", "keyevent"):
@@ -86,6 +85,17 @@ def test_turn_rule() -> None:
         obs = ad.sense(None)
         assert obs.my_turn is expect, f"{n} 张应 my_turn={expect}, 实际 {obs.my_turn}"
     print("✓ 轮次判据(mod 3): 8 组用例全过")
+
+
+def test_prompt_without_hand() -> None:
+    """提示阶段(手牌节点消失)也必须判为"该我应答", 否则永久卡住。"""
+    ad, a, d = build([], ["チー", "キャンセル"])
+    obs = ad.sense(None)
+    assert obs.my_turn is True, obs
+    assert obs.extra["phase"] == "prompt" and "チー" in obs.extra["actions"]
+    r = ad.execute(ad.decide(obs), obs)
+    assert r.ok, r
+    print("✓ 提示阶段(无手牌): 判为待应答并成功应答")
 
 
 def test_decide() -> None:
@@ -148,6 +158,7 @@ def test_no_hand() -> None:
 
 if __name__ == "__main__":
     test_turn_rule()
+    test_prompt_without_hand()
     test_decide()
     test_execute_actions()
     test_execute_play()

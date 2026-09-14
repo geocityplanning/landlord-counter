@@ -60,7 +60,7 @@ def read_hand_ordered(rec, img, expected: int = 0) -> list[Card] | None:
     prompt = PROMPT_HAND + (f" 这一排共 {expected} 张。" if expected > 0 else "")
     if expected and expected <= 14:
         toks = _split_tokens(_read(rec, img[y0:y1, :, :], prompt))
-        return _sanitize(toks)
+        return _sanitize(toks, expected)
     parts: list[list[str]] = []
     for (x0, x1) in SPLITS:
         txt = _read(rec, img[y0:y1, x0:x1], prompt)
@@ -68,10 +68,11 @@ def read_hand_ordered(rec, img, expected: int = 0) -> list[Card] | None:
     if not any(parts):
         return None
     if not parts[0]:
-        return _sanitize(parts[1])
+        return _sanitize(parts[1], expected)
     if not parts[1]:
-        return _sanitize(parts[0])
-    return _sanitize(_merge_halves(parts[0], parts[1]))
+        return _sanitize(parts[0], expected)
+    merged = _merge_halves(parts[0], parts[1])
+    return _sanitize(merged, expected)
 
 
 PROMPT_ONE = "这是叠在一起的一小段扑克牌(从左到右1-2张),只输出最左边那张的\"花色+点数\",如 ♠K;点数10写10,大王写大王,小王写小王。不要解释。"
@@ -93,9 +94,25 @@ def read_hand_by_columns(rec, img, n: int) -> list[Card] | None:
     return _sanitize(toks)
 
 
-def _sanitize(toks: list[str]) -> list[Card] | None:
-    """解析+消毒: 总≤27, 同点数≤8, 王各≤2。"""
+def _looks_cyclic(toks: list[str], max_period: int = 14, min_repeats: int = 3) -> bool:
+    """幻觉特征: 输出整段是短周期重复(实测 VLM 在"空区域"会吐 517 个 token 循环整副牌)。"""
+    n = len(toks)
+    for p in range(1, max_period + 1):
+        if n >= p * min_repeats and all(toks[i] == toks[i - p] for i in range(p, n)):
+            return True
+    return False
+
+
+def _sanitize(toks: list[str], expected: int = 0) -> list[Card] | None:
+    """解析+消毒: 总≤27, 同点数≤8, 王各≤2; 并拦截幻觉(超量/循环重复)。"""
     if not toks:
+        return None
+    # —— 幻觉闸门1: 输出远多于应有张数(实测空区域会吐上百个 token) ——
+    cap = (expected + 5) if expected else 30
+    if len(toks) > max(cap, 30):
+        return None
+    # —— 幻觉闸门2: 短周期重复(整副牌循环) ——
+    if _looks_cyclic(toks):
         return None
     try:
         cards = cards_from_tokens(toks)

@@ -20,7 +20,8 @@ a = A11y(d.serial if hasattr(d, "serial") else "127.0.0.1:5555", ttl=0)
 
 def snap():
     nodes = a.dump(force=True)
-    hand = [n for n in nodes if n.cls.endswith("Button") and HAND_Y0 <= n.center[1] <= HAND_Y1 and n.text.strip()]
+    hand = [n for n in nodes if n.cls.endswith("Button") and HAND_Y0 <= n.center[1] <= HAND_Y1
+            and n.text.strip() and n.text.strip() not in ACTION_TEXTS]
     acts = [n for n in nodes if n.cls.endswith("Button") and (n.text or "").strip() in ACTION_TEXTS
             and not (HAND_Y0 <= n.center[1] <= HAND_Y1)]
     others = [n.text.strip() for n in nodes if n.text.strip() not in ACTION_TEXTS][:6]

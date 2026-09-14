@@ -46,8 +46,18 @@ class MahjongAdapter(GameAdapter):
             return None
 
     def _hand_nodes(self):
-        return [n for n in self.a11y.dump(force=True)
-                if n.cls.endswith("Button") and HAND_Y0 <= n.center[1] <= HAND_Y1 and n.text.strip()]
+        """手牌节点: y 在带内、且**不是**操作按钮(实测 ポン/キャンセル 会出现在同一 y 带内,
+        混进来会让"手牌数"虚增并误判轮次)。"""
+        out = []
+        for n in self.a11y.dump(force=True):
+            t = (n.text or "").strip()
+            if not n.cls.endswith("Button") or not t:
+                continue
+            if t in ACTION_TEXTS:
+                continue
+            if HAND_Y0 <= n.center[1] <= HAND_Y1:
+                out.append(n)
+        return out
 
     def _action_nodes(self):
         """吃/碰/杠/立直/自摸/和了/取消 等操作按钮(不在手牌带内的按钮节点)。"""

@@ -109,15 +109,15 @@ class MahjongAdapter(GameAdapter):
             acts = [n.text.strip() for n in self._action_nodes()]
         except Exception:  # noqa: BLE001
             acts = []
-        # 有"必须应答"的提示(吃/碰/杠/和) ⇒ 一定在等我应答
-        #   (实测: 应答阶段手牌节点会从无障碍树里消失, 只看手牌数会永久卡住)
+        # 只要出现操作提示 ⇒ 一定是我的回合:
+        #   - 吃/碰/杠/和(别人打出的牌) ⇒ 等我应答(应答阶段手牌节点会从树里消失, 只看张数会永久卡死)
+        #   - リーチ ⇒ 只在我自己的出牌决策时才会出现(可选, 不理会照常出牌)
+        # 手牌张数在动画/漏读时会异常(实测 12 张, mod3=0 不在规律里) → 靠提示兜住。
         calls = [a for a in acts if a in CALL_TEXTS]
-        if calls and not names:
+        if acts:
+            phase = "prompt" if (calls and not names) else "discard"
             return Observation(frame=frame, my_turn=True, hand=names,
-                               extra={"phase": "prompt", "actions": acts})
-        if calls:
-            return Observation(frame=frame, my_turn=True, hand=names,
-                               extra={"phase": "discard", "actions": acts})
+                               extra={"phase": phase, "actions": acts})
         # 该我出手: 张数 ≡ 2 (mod 3)（副露后手牌会少, 旧判据 ">=14" 会永久卡住）
         my_turn = len(names) >= 2 and len(names) % 3 == 2
         return Observation(frame=frame, my_turn=my_turn, hand=names,

@@ -133,9 +133,11 @@ class MahjongAdapter(GameAdapter):
         if action.kind == "act":
             want = (action.meta or {}).get("text")
             acts = self._action_nodes()
-            tgt = next((n for n in acts if n.text.strip() == want), None) or (acts[0] if acts else None)
+            # 只按我们要的那颗(通常是 キャンセル); 找不到就失败 → 交给看门狗重开,
+            # 不要退而求其次乱按(实测乱按 リーチ 既无效也可能改变手牌状态)
+            tgt = next((n for n in acts if n.text.strip() == want), None)
             if not tgt:
-                return ExecResult(False, 0, "按钮已消失")
+                return ExecResult(False, 0, f"未找到按钮 {want}(现有 {[n.text.strip() for n in acts]})")
             wall0 = self._wall()
             before = [n.text for n in acts]
             # 应答 = 点按钮(触发 touchstart→focus) + Enter(keyup→click)。

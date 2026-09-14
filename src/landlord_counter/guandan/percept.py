@@ -386,16 +386,21 @@ def read_settle(rec, img) -> tuple[str, bool | None]:
     try:
         from ..platform.a11y import A11y
 
-        blob = A11y().text_blob(force=True)
+        blob = A11y().text_blob(force=True).replace("&#10;", "\n").replace("<br>", "\n")
         if "头游" in blob:
             import re as _re
 
-            m = _re.search(r"头游[:：]\s*(\S+)", blob)
+            # 分隔符实测有 ':' '：' '=' 三种(踩坑: 只认冒号 → 62 局判成"未判定", A/B 数据白丢)
+            m = _re.search(r"头游\s*[:：=]\s*([东南西北])", blob)
             head = m.group(1) if m else ""
-            win = True if head in ("南", "北", "我方") else (False if head in ("西", "东") else None)
-            m2 = _re.search(r"升级[:：]?\s*([+\-]?\d+\s*级)", blob)
+            win = True if head in ("南", "北") else (False if head in ("东", "西") else None)
+            if win is None:      # 另一种文案: "我方是否升级=是/否"
+                mm = _re.search(r"我方是否升级\s*[:：=]\s*(是|否)", blob)
+                if mm:
+                    win = mm.group(1) == "是"
+            m2 = _re.search(r"升级\s*[:：=]?\s*([+\-]?\d+\s*级)", blob)
             up = m2.group(1) if m2 else ""
-            return f"头游={head}; 升级={up}", win
+            return (f"头游={head}; 升级={up}; 我方升级={'是' if win else '否' if win is False else '?'}", win)
     except Exception:  # noqa: BLE001
         pass
     roi = img[300:900, 30:690]

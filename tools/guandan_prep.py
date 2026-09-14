@@ -6,6 +6,7 @@
 """
 import os
 import subprocess
+import time
 import sys
 import time
 
@@ -23,6 +24,12 @@ def sh(*args):
 
 
 def main() -> int:
+    # 掼蛋是竖屏游戏: 强制竖屏(手机/容器可能被上一位使用者转成横屏, 会导致几何全错)
+    subprocess.run(["adb", "-s", SER, "shell", "settings", "put", "system", "accelerometer_rotation", "0"],
+                   capture_output=True)
+    subprocess.run(["adb", "-s", SER, "shell", "settings", "put", "system", "user_rotation", "0"],
+                   capture_output=True)
+    time.sleep(1)
     from landlord_counter.guandan import percept as P
     from landlord_counter.guandan.agent import gold_button, snap, tap
 

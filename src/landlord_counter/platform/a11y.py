@@ -22,6 +22,7 @@ class Node:
     cls: str
     box: tuple[int, int, int, int]      # x0,y0,x1,y1
     clickable: bool = False
+    focused: bool = False               # 键盘焦点(Tab 导航用: 焦点 + Enter 可激活任意控件)
 
     @property
     def center(self) -> tuple[int, int]:
@@ -38,6 +39,24 @@ class A11y:
         self._nodes: list[Node] = []
         self._ts = 0.0
 
+    # ---------- 焦点(键盘驱动) ----------
+    def focused(self) -> list[Node]:
+        """当前获得键盘焦点的节点(可配合 Tab/Enter 做无触控驱动)。"""
+        try:
+            return [n for n in self.dump(force=True) if n.focused]
+        except Exception:  # noqa: BLE001
+            return []
+
+    def any_node(self, text: str) -> Node | None:
+        """按文字找节点(不限控件类 —— 实测同一元素在不同承载/时刻类会变)。"""
+        try:
+            for n in self.dump(force=True):
+                if (n.text or "").strip() == text:
+                    return n
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+
     # ---------- 读取 ----------
     def dump(self, force: bool = False) -> list[Node]:
         if not force and (time.time() - self._ts) < self.ttl and self._nodes:
@@ -53,11 +72,12 @@ class A11y:
             c = re.search(r'class="([^"]*)"', tag)
             b = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', tag)
             clk = 'clickable="true"' in tag
+            foc = 'focused="true"' in tag
             if not b:
                 continue
             x0, y0, x1, y1 = (int(v) for v in b.groups())
             nodes.append(Node(text=(t.group(1) if t else ""), cls=(c.group(1) if c else ""),
-                              box=(x0, y0, x1, y1), clickable=clk))
+                              box=(x0, y0, x1, y1), clickable=clk, focused=foc))
         self._nodes, self._ts = nodes, time.time()
         return nodes
 

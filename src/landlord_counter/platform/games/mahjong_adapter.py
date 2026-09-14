@@ -136,14 +136,22 @@ class MahjongAdapter(GameAdapter):
             tgt = next((n for n in acts if n.text.strip() == want), None) or (acts[0] if acts else None)
             if not tgt:
                 return ExecResult(False, 0, "按钮已消失")
-            before = [n.text for n in self._action_nodes()]
-            self.device.tap(*tgt.center, wait=1.2)
-            for _ in range(3):
-                time.sleep(0.8)
-                after = [n.text for n in self._action_nodes()]
-                if after != before:
-                    return ExecResult(True, 0, f"点击 {tgt.text}")
-            return ExecResult(False, 1, f"按钮点击无效 {tgt.text}")
+            wall0 = self._wall()
+            before = [n.text for n in acts]
+            # 应答 = 点按钮(触发 touchstart→focus) + Enter(keyup→click)。
+            #   源码: setSelector(..., {touch:false}) 的按钮靠 'focus 后 keyup Enter' 触发;
+            #   实测重载后的新鲜页面用"点+Enter"可应答(牌数下降 ✓), 页面用久了输入会失效 → 交给看门狗重开。
+            for attempt in range(2):
+                self.device.tap(*tgt.center, wait=0.5)
+                self.device.shell("input", "keyevent", "66")
+                for _ in range(3):
+                    time.sleep(0.8)
+                    after = [n.text.strip() for n in self._action_nodes()]
+                    w = self._wall()
+                    if after != before or (wall0 is not None and w is not None and w < wall0):
+                        self._fails = 0
+                        return ExecResult(True, 0, f"应答 {tgt.text}(点+Enter#{attempt + 1})")
+            return ExecResult(False, 1, f"按钮应答无效 {tgt.text}")
 
         nodes = self._hand_nodes()
         if not nodes:

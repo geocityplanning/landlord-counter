@@ -10,7 +10,7 @@ import types
 
 sys.path.insert(0, "src")
 
-from landlord_counter.platform.games.mahjong_adapter import MahjongAdapter  # noqa: E402
+from landlord_counter.platform.games.mahjong_adapter import ACTION_TEXTS, MahjongAdapter  # noqa: E402
 from landlord_counter.platform.types import Action  # noqa: E402
 
 
@@ -33,9 +33,10 @@ class FakeA11y:
     def dump(self, force=False):  # noqa: ARG002
         nodes = []
         for i, t in enumerate(self.hand):
-            nodes.append(FakeNode(t, 126 + i * 36, 760))
+            # 承载相关: Bromite(Chromium) 下手牌是 Image 类, Focus 下是 Button → 必须都不依赖类
+            nodes.append(FakeNode(t, 126 + i * 36, 760, cls="android.widget.Image"))
         for i, t in enumerate(self.actions):
-            nodes.append(FakeNode(t, 200 + i * 150, 1120))
+            nodes.append(FakeNode(t, 200 + i * 150, 709))
         return nodes
 
     def button(self, text):
@@ -54,12 +55,16 @@ class FakeDevice:
 
     def tap(self, x, y, wait=0.0):  # noqa: ARG002
         self.taps.append((x, y))
-        if y >= 900 and self.a11y.actions:       # 点操作按钮(吃/碰/取消) → 按钮消失
-            self.a11y.actions = []
-            return
-        # 模拟"点手牌=出手": 去掉最后一张并补一张(张数不变, 牌面变)
-        if self.a11y.hand and y < 900 and len(self.a11y.hand) % 3 == 2:
-            self.a11y.hand = self.a11y.hand[:-1] + ["ツモ"]
+        # 点中操作按钮 → 该按钮消失
+        for n in self.a11y.dump():
+            t = (n.text or "").strip()
+            if t in ACTION_TEXTS and abs(n.center[0] - x) < 60 and abs(n.center[1] - y) < 60:
+                self.a11y.actions = [a for a in self.a11y.actions if a != t]
+                return
+        # 点手牌 → 出手(张数不变, 牌面变: 弃一张摸一张)
+        if self.a11y.hand and len(self.a11y.hand) % 3 == 2:
+            h = list(self.a11y.hand)
+            self.a11y.hand = h[:-1] + [h[0]]
 
     def shell(self, *args):
         if args[:2] == ("input", "keyevent"):
@@ -78,10 +83,19 @@ def build(hand, actions=()):
     return ad, a, d  # type: ignore[return-value]
 
 
+TILES = ["イーワン", "リャンワン", "サンワン", "スーワン", "ウーワン", "ローワン",
+         "チーワン", "パーワン", "キューワン", "イーピン", "リャンピン", "サンピン",
+         "スーピン", "トン"]
+
+
+def tile(i: int) -> str:
+    return TILES[i % len(TILES)]
+
+
 def test_turn_rule() -> None:
     """该我出手: 张数 ≡ 2 (mod 3)；等待中 ≡ 1 (mod 3)。副露后手牌变少也要正确。"""
     for n, expect in ((14, True), (13, False), (11, True), (10, False), (8, True), (7, False), (2, True), (1, False)):
-        ad, a, _ = build(["牌"] * n)
+        ad, a, _ = build([tile(i) for i in range(n)])
         obs = ad.sense(None)
         assert obs.my_turn is expect, f"{n} 张应 my_turn={expect}, 实际 {obs.my_turn}"
     print("✓ 轮次判据(mod 3): 8 组用例全过")
@@ -100,11 +114,11 @@ def test_prompt_without_hand() -> None:
 
 def test_decide() -> None:
     """有和了 → 和; 有其它提示 → 取消; 无提示 → 打最后一张。"""
-    ad, _, _ = build(["牌"] * 14, ["ツモ"])
+    ad, _, _ = build([tile(i) for i in range(14)], ["ツモ"])
     assert ad.decide(ad.sense(None)).meta["text"] == "ツモ"
-    ad, _, _ = build(["牌"] * 14, ["チー"])
+    ad, _, _ = build([tile(i) for i in range(14)], ["チー"])
     assert ad.decide(ad.sense(None)).meta["text"] == "キャンセル"
-    ad, _, _ = build(["牌"] * 14)
+    ad, _, _ = build([tile(i) for i in range(14)])
     act = ad.decide(ad.sense(None))
     assert act.kind == "play" and act.combo == 13, act
     print("✓ 决策: 和了优先 / 否则跳过提示 / 否则ツモ切り")
@@ -112,12 +126,12 @@ def test_decide() -> None:
 
 def test_execute_actions() -> None:
     """点操作按钮: 按钮消失=成功; 不消失=失败。"""
-    ad, a, d = build(["牌"] * 14, ["キャンセル"])
+    ad, a, d = build([tile(i) for i in range(14)], ["キャンセル"])
     r = ad.execute(Action("act", meta={"text": "キャンセル"}), ad.sense(None))
     assert r.ok and "キャンセル" in r.detail, r
     assert d.taps and not a.actions
     # 点不掉的按钮 → 失败
-    ad, a, d = build(["牌"] * 14, ["キャンセル"])
+    ad, a, d = build([tile(i) for i in range(14)], ["キャンセル"])
     a.actions = ["キャンセル"]
     d.tap = lambda x, y, wait=0.0: None       # 点了没反应
     r = ad.execute(Action("act", meta={"text": "キャンセル"}), ad.sense(None))
@@ -128,12 +142,12 @@ def test_execute_actions() -> None:
 def test_execute_play() -> None:
     """出手: **点击为主路径**; 点不动时 ENTER 兜底。"""
     # 主路径: 点击生效(假设备点手牌区=出手)
-    ad, a, d = build(["牌"] * 14)
+    ad, a, d = build([tile(i) for i in range(14)])
     r = ad.execute(Action("play", combo=13), ad.sense(None))
     assert r.ok and "打出" in r.detail, r
     assert d.enters == 0, "主路径不该用 ENTER"
     # 点击无效 → ENTER 兜底
-    ad, a, d = build(["牌"] * 14)
+    ad, a, d = build([tile(i) for i in range(14)])
     d.tap = lambda x, y, wait=0.0: None          # 点不动
     orig_shell = d.shell
 

@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import re
 import time
 
 from ..types import Action, ExecResult, GameAdapter, Observation
@@ -18,6 +19,13 @@ HAND_MAX = 14                    # 摸牌后 14 张 = 该我出手
 # 副露(吃/碰/杠)后手牌变少, 但规律不变: 该我出手时张数 ≡ 2 (mod 3), 等待中 ≡ 1 (mod 3)
 #   无副露 13→14, 一副露 10→11, 两副露 7→8 ...
 ACTION_TEXTS = {"チー", "ポン", "カン", "リーチ", "ツモ", "ロン", "キャンセル", "パス"}
+# 手牌牌名(日本語読み): イーワン/リャンピン/サンソー... + 字牌(トン/ナン/シャー/ペー/ハツ/チュン)
+# 注意: 不同承载暴露的控件类不同 —— Focus=Button, Bromite(Chromium)=**Image**;
+#       所以按"文字+位置"识别, 不要依赖控件类(踩过: 只认 Button → 手牌恒为空 → 0 动作)。
+TILE_RE = re.compile(
+    r"^(赤)?(イー|リャン|サン|スー|ウー|ロー|チー|パー|キュー)(ワン|ピン|ソー)$"
+    r"|^(トン|ナン|シャー|ペー|ハツ|チュン)$"
+)
 
 
 class MahjongAdapter(GameAdapter):
@@ -46,30 +54,18 @@ class MahjongAdapter(GameAdapter):
             return None
 
     def _hand_nodes(self):
-        """手牌节点: y 在带内、且**不是**操作按钮(实测 ポン/キャンセル 会出现在同一 y 带内,
-        混进来会让"手牌数"虚增并误判轮次)。"""
+        """手牌节点: 位置在手牌带内 + 牌名文本(不依赖控件类)。"""
         out = []
         for n in self.a11y.dump(force=True):
             t = (n.text or "").strip()
-            if not n.cls.endswith("Button") or not t:
-                continue
-            if t in ACTION_TEXTS:
-                continue
-            if HAND_Y0 <= n.center[1] <= HAND_Y1:
+            if t and TILE_RE.match(t) and HAND_Y0 <= n.center[1] <= HAND_Y1:
                 out.append(n)
         return out
 
     def _action_nodes(self):
-        """吃/碰/杠/立直/自摸/和了/取消 等操作按钮(不在手牌带内的按钮节点)。"""
-        out = []
-        for n in self.a11y.dump(force=True):
-            t = (n.text or "").strip()
-            if not n.cls.endswith("Button") or t not in ACTION_TEXTS:
-                continue
-            if HAND_Y0 <= n.center[1] <= HAND_Y1:
-                continue
-            out.append(n)
-        return out
+        """吃/碰/杠/立直/自摸/和了/取消 等操作按钮(按文字匹配, 不限控件类/位置)。"""
+        return [n for n in self.a11y.dump(force=True)
+                if (n.text or "").strip() in ACTION_TEXTS]
 
     def progress_signal(self, frame):
         try:

@@ -39,13 +39,17 @@ class FakeA11y:
         self.hand: list[str] = []
         self.actions: list[str] = []
         self.wall = 70
+        self.round = "東一局"
+        self.score = 25000
 
     def dump(self, force=False):  # noqa: ARG002
         nodes = [FakeNode(t, 126 + i * 36, 763) for i, t in enumerate(self.hand)]
         nodes += [FakeNode(t, 200 + i * 150, 709, cls="android.widget.Button")
                   for i, t in enumerate(self.actions)]
         nodes += [FakeNode("牌数:", 450, 466, cls="android.widget.View"),
-                  FakeNode(str(self.wall), 474, 466, cls="android.widget.View")]
+                  FakeNode(str(self.wall), 474, 466, cls="android.widget.View"),
+                  FakeNode(self.round, 282, 433, cls="android.widget.View"),
+                  FakeNode(f"東: {self.score:,}", 360, 539, cls="android.widget.View")]
         return nodes
 
     def button(self, text):
@@ -133,12 +137,33 @@ def test_decide() -> None:
     """有和了 → 和; 有其它提示 → 取消; 无提示 → 打最后一张(ツモ切り)。"""
     ad, _, _ = build([tile(i) for i in range(14)], ["ツモ"])
     assert ad.decide(ad.sense(None)).meta["text"] == "ツモ"
-    ad, _, _ = build([tile(i) for i in range(14)], ["チー"])
+    ad, _, _ = build([], ["チー"])          # 吃碰提示阶段手牌节点会消失(实测)
     assert ad.decide(ad.sense(None)).meta["text"] == "キャンセル"
     ad, _, _ = build([tile(i) for i in range(14)])
     act = ad.decide(ad.sense(None))
     assert act.kind == "play" and act.combo == 13, act
-    print("✓ 决策: 和了优先 / 否则跳过提示 / 否则ツモ切り")
+    # リーチ 是**可选**提示: 仍应正常出牌(旧逻辑把它当必答 → 卡死)
+    ad, _, _ = build([tile(i) for i in range(14)], ["リーチ"])
+    act = ad.decide(ad.sense(None))
+    assert act.kind == "play", f"リーチ 可选时仍应出牌, 实际 {act}"
+    # 必答提示(ポン) + 无手牌 → 取消
+    ad, _, _ = build([], ["ポン"])
+    assert ad.decide(ad.sense(None)).meta["text"] == "キャンセル"
+    print("✓ 决策: 和了优先 / 跳过吃碰 / リーチ可选仍出牌 / 否则ツモ切り")
+
+
+def test_settle() -> None:
+    """结算: 局名推进(東一局→東二局) 判一局; 我方点数未降 = win; 重复调用不重复计。"""
+    ad, a, d = build([tile(i) for i in range(14)])
+    assert ad.settle(None) is None, "第一次只做基线, 不应判结算"
+    a.round, a.score = "東二局", 26000          # 我方+1000
+    info = ad.settle(None)
+    assert info is not None and info.win is True, info
+    assert ad.settle(None) is None, "同一局名重复调用不应再计"
+    a.round, a.score = "東三局", 24000          # 我方-2000
+    info2 = ad.settle(None)
+    assert info2 is not None and info2.win is False, info2
+    print(f"✓ 结算: {info.raw} / {info2.raw}")
 
 
 def test_execute_play_keyboard() -> None:
@@ -174,7 +199,8 @@ if __name__ == "__main__":
     test_turn_rule()
     test_prompt_without_hand()
     test_decide()
+    test_settle()
     test_execute_play_keyboard()
     test_execute_play_tap_fallback()
     test_no_hand()
-    print("\n麻将适配器单测: 6 组全绿")
+    print("\n麻将适配器单测: 7 组全绿")

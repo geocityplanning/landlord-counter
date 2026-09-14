@@ -45,6 +45,7 @@ class Runtime:
         last_prog = time.time()
         last_signal = None
         last_hb = time.time()
+        last_settle = 0.0
         while time.time() < t_end:
             frame = self.dev.snap()
             if frame is None:
@@ -68,6 +69,19 @@ class Runtime:
                 last_prog = time.time()
                 last_signal = None
                 continue
+
+            # 结算: 周期性调用(局数推进类游戏没有"再来一局"按钮, 只在进桌时判会漏计)
+            if time.time() - last_settle > 5.0:
+                last_settle = time.time()
+                info = self.ad.settle(frame)
+                if info is not None:
+                    self.deals += 1
+                    w = info.win
+                    self._stats_append(
+                        f"{int(time.time())},{self.deals},{'win' if w else ('lose' if w is False else '?')},"
+                        f"{self.tag or '-'},{info.raw.strip()[:60]}"
+                    )
+                    self._log(f"[结算] 第{self.deals}局: {'我方得分' if w else ('我方失分' if w is False else '未判定')} ({info.raw})")
 
             # 开始/续局按钮
             sb = self.ad.start_button(frame)

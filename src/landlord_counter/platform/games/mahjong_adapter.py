@@ -12,13 +12,17 @@ from __future__ import annotations
 import re
 import time
 
-from ..types import Action, ExecResult, GameAdapter, Observation
+from ..types import Action, ExecResult, GameAdapter, Observation, SettleInfo
 
 HAND_Y0, HAND_Y1 = 700, 820      # 手牌按钮的 y 区间
 HAND_MAX = 14                    # 摸牌后 14 张 = 该我出手
 # 副露(吃/碰/杠)后手牌变少, 但规律不变: 该我出手时张数 ≡ 2 (mod 3), 等待中 ≡ 1 (mod 3)
 #   无副露 13→14, 一副露 10→11, 两副露 7→8 ...
 ACTION_TEXTS = {"チー", "ポン", "カン", "リーチ", "ツモ", "ロン", "キャンセル", "パス"}
+# "可选"提示(不理会也能正常出牌) —— 实测 リーチ 是可选: 只看提示区会以为卡住, 实际该出牌
+OPTIONAL_TEXTS = {"リーチ"}
+# "必须应答"的提示(别人打出的牌可吃/碰/杠/和) —— 不理会会永久卡住
+CALL_TEXTS = {"チー", "ポン", "カン", "ロン"}
 # 手牌牌名(日本語読み): イーワン/リャンピン/サンソー... + 字牌(トン/ナン/シャー/ペー/ハツ/チュン)
 # 注意: 不同承载暴露的控件类不同 —— Focus=Button, Bromite(Chromium)=**Image**;
 #       所以按"文字+位置"识别, 不要依赖控件类(踩过: 只认 Button → 手牌恒为空 → 0 动作)。
@@ -38,7 +42,9 @@ class MahjongAdapter(GameAdapter):
 
     def __init__(self) -> None:
         self.a11y = None
-        self._fails = 0        # 连续"点击未出手"次数(用于退避)
+        self._fails = 0        # 连续动作失败次数(用于退避)
+        self._last_round = None   # 结算去重: 上一次看到的局名(東一局/東二局...)
+        self._last_score = None   # 我方(東)点数
 
     # ---------- 装配 ----------
     def attach(self, device, vision=None) -> None:
@@ -103,11 +109,15 @@ class MahjongAdapter(GameAdapter):
             acts = [n.text.strip() for n in self._action_nodes()]
         except Exception:  # noqa: BLE001
             acts = []
-        # 有操作提示(チー/ポン/カン/リーチ/キャンセル...) ⇒ 一定在等我应答
-        #   (实测: 提示阶段手牌节点会从无障碍树里消失, 只看手牌数会永久卡住)
-        if acts:
+        # 有"必须应答"的提示(吃/碰/杠/和) ⇒ 一定在等我应答
+        #   (实测: 应答阶段手牌节点会从无障碍树里消失, 只看手牌数会永久卡住)
+        calls = [a for a in acts if a in CALL_TEXTS]
+        if calls and not names:
             return Observation(frame=frame, my_turn=True, hand=names,
                                extra={"phase": "prompt", "actions": acts})
+        if calls:
+            return Observation(frame=frame, my_turn=True, hand=names,
+                               extra={"phase": "discard", "actions": acts})
         # 该我出手: 张数 ≡ 2 (mod 3)（副露后手牌会少, 旧判据 ">=14" 会永久卡住）
         my_turn = len(names) >= 2 and len(names) % 3 == 2
         return Observation(frame=frame, my_turn=my_turn, hand=names,
@@ -118,9 +128,11 @@ class MahjongAdapter(GameAdapter):
         """策略: ① 有和了/自摸 → 直接按; ② 有其它提示(吃碰立直) → 取消(演示阶段不打乱); ③ 否则打最后一张(ツモ切り)。"""
         acts = (obs.extra or {}).get("actions") or []
         if any(a in ("ツモ", "ロン") for a in acts):
-            return Action("act", meta={"text": "ツモ", "why": "和了"})
-        if acts:
-            return Action("act", meta={"text": "キャンセル", "why": f"跳过提示 {acts}"})
+            return Action("act", meta={"text": "ツモ" if "ツモ" in acts else "ロン", "why": "和了"})
+        calls = [a for a in acts if a in CALL_TEXTS]
+        if calls and (obs.extra or {}).get("phase") == "prompt":
+            return Action("act", meta={"text": "キャンセル", "why": f"跳过吃碰 {calls}"})
+        # 只剩可选提示(リーチ 等)或无障碍: 正常出牌(低门槛: 弃最后一张=ツモ切り)
         hand = obs.hand or []
         if not hand:
             return Action("none")
@@ -201,5 +213,30 @@ class MahjongAdapter(GameAdapter):
             time.sleep(min(6.0, 1.5 * self._fails))
         return ExecResult(False, 1, f"点击未出手(手牌未变{fails if False else ''})")
 
+    # ---------- 结算 ----------
     def settle(self, frame):
+        """按"局数推进"判定一局结束: 東一局→東二局(或南X局) 变化即一局。
+
+        我方 = 東(实测: 我方手牌在最下方, 牌桌信息里 東 的点位最低) → win = 我方点数未下降。
+        用 self._last_round/_last_score 去重, 重复调用返回 None(由 Runtime 周期调用)。
+        """
+        try:
+            txt = [n.text.strip() for n in self.a11y.dump()]
+        except Exception:  # noqa: BLE001
+            return None
+        rd, score = None, None
+        for i, t in enumerate(txt):
+            if re.match(r"^(東|南|西|北)[一二三四]局$", t):
+                rd = t
+            if t.startswith("東:"):
+                try:
+                    score = int(t.split(":")[1].strip().replace(",", ""))
+                except ValueError:
+                    pass
+        if rd and self._last_round and rd != self._last_round and score is not None and self._last_score is not None:
+            info = SettleInfo(raw=f"{self._last_round}→{rd} 我方点数 {self._last_score}→{score}",
+                              win=score >= self._last_score)
+            self._last_round, self._last_score = rd, score
+            return info
+        self._last_round, self._last_score = rd, score
         return None

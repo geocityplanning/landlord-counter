@@ -20,6 +20,16 @@ fi
 START_LINE=$(wc -l < "$LOG" 2>/dev/null || echo 0)
 ROWS_BEFORE=$( [ -f "$CSV" ] && wc -l < "$CSV" || echo 0 )
 
+# 保底1: 8123 游戏页服务没起就自动拉起(手工进程掉了会导致整夜白跑)
+if ! curl -s -o /dev/null --max-time 5 http://127.0.0.1:8123/index.html; then
+  echo "[guard] 8123 无响应 → 自动拉起静态服务 $(date '+%F %T')" >> "$LOG"
+  nohup $PY -m http.server 8123 --bind 0.0.0.0 --directory reference/guandan/www >> "$LOG" 2>&1 &
+  sleep 3
+  curl -s -o /dev/null --max-time 5 http://127.0.0.1:8123/index.html && echo "[guard] 8123 已就绪" >> "$LOG"
+fi
+# 保底2: 设备连接(容器重启后 adb 会掉)
+adb connect 127.0.0.1:5555 >/dev/null 2>&1
+
 echo "=== 掼蛋夜跑窗口开始 $(date '+%F %T') 模式=$STATS_TAG ===" >> "$LOG"
 $PY tools/guandan_prep.py >> "$LOG" 2>&1
 WIN=${GUANDAN_WIN:-3240}          # 窗口时长(秒), 可用 GUANDAN_WIN 覆盖便于测试

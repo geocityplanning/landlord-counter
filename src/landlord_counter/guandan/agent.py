@@ -343,6 +343,7 @@ def legacy_main() -> int:
     last_prog = time.time()  # 看门狗: 最近进展时刻
     last_wc = -1
     stall = 0                # 连续"动作无效"次数(触发页面重开)
+    bad_frames = 0           # 连续"页面异常"帧数(配合无进展时长判定)
     rec = None
     if OURS or os.getenv("STATS_FILE"):
         from ..config import load_config
@@ -360,15 +361,18 @@ def legacy_main() -> int:
         _track_last_seat(img)   # 跟踪"刚出牌的那一家"(供队友判定)
         # 页面健康度: 白屏/异常(手牌白卡超上限 或 中部整片白) → 恢复(25s 冷却防抖)
         if os.getenv("GUANDAN_NO_HEALTH", "0") != "1" and not P.page_looks_ok(img):
-            if time.time() - last_prog > 25:
-                print("[健康检查] 页面异常(白屏/超限) → 重开页面", flush=True)
+            bad_frames += 1
+            # 必须"连续 2 帧异常" 且 "60s 无任何进展" 才重开(避免动画帧误判导致自杀式重开)
+            if bad_frames >= 2 and time.time() - last_prog > 60:
+                print(f"[健康检查] 连续{bad_frames}帧异常且{int(time.time()-last_prog)}s无进展 → 重开页面", flush=True)
                 _recover_page("页面异常白屏")
                 last_prog = time.time()
                 last_wc = -1
                 stall = 0
-            else:
-                time.sleep(2)
+                bad_frames = 0
+            time.sleep(1.2)
             continue
+        bad_frames = 0
         # 看门狗: 3 分钟无任何进展(无大金钮/无我方回合动作/手牌无变化) → 重开页面自愈
         wc_now = white_count(img)
         if wc_now != last_wc:

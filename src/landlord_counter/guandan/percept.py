@@ -369,13 +369,13 @@ def page_looks_ok(img) -> bool:
           ② 牌桌中部不是整片白(正常为深绿台面)
     """
     try:
-        if white_count(img) > 80000:
+        if white_count(img) > 110000:   # 27 张≈66k; 放宽以容忍发牌/动画帧
             return False
         seg = img[300:700, 60:660]
         if seg is None or seg.size == 0:
             return False
         b, g, r = (float(seg[:, :, i].mean()) for i in range(3))
-        if r > 150 and g > 150 and b > 150:   # 中部整片白 → 白屏
+        if r > 200 and g > 200 and b > 200:   # 中部"整片纯白"才算白屏(更严)
             return False
     except Exception:  # noqa: BLE001
         return True

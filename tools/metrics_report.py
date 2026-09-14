@@ -107,9 +107,11 @@ def main() -> int:
         add("L2-7", "子目标通过率SGA(执行有效+读牌正确均值)", round(100 * sum(parts) / len(parts), 1), "%", n)
 
     # ---- L2-6 长程完成率(局/小时) ----
-    if deals:
+    if len(deals) >= 2:
         span = max(1e-6, (deals[-1]["ts"] - deals[0]["ts"]) / 3600)
         add("L2-6", "长程完成率", f"{len(deals) / span:.1f} 局/小时 (共{len(deals)}局)", "局/h", len(deals))
+    elif deals:
+        add("L2-6", "长程完成率", f"样本不足(仅{len(deals)}局, 需≥2局)", "局/h", len(deals))
 
     # ---- L3-10 故障恢复 / L4-1 异常率 / L4-2 中断率 ----
     if recs:

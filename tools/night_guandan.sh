@@ -32,6 +32,14 @@ fi
 # 保底2: 设备连接(容器重启后 adb 会掉)
 adb connect 127.0.0.1:5555 >/dev/null 2>&1
 
+# ---- 论文指标采集(ECS 口径): 打点 + 宿主采样 + 窗末汇总 ----
+export METRICS_FILE=/tmp/guandan_metrics.jsonl
+HOST_CSV=/tmp/guandan_host.csv
+METRICS_OUT=/tmp/metrics_night.csv
+WIN_START=$(date +%s)
+$PY tools/metrics_host.py --secs $(( ${GUANDAN_WIN:-3240} + 120 )) --interval 15 --out "$HOST_CSV" >/dev/null 2>&1 &
+HOST_PID=$!
+
 echo "=== 掼蛋夜跑窗口开始 $(date '+%F %T') 模式=$STATS_TAG ===" >> "$LOG"
 $PY tools/guandan_prep.py >> "$LOG" 2>&1
 WIN=${GUANDAN_WIN:-3240}          # 窗口时长(秒), 可用 GUANDAN_WIN 覆盖便于测试
@@ -39,6 +47,11 @@ STATS_FILE=$CSV PYTHONPATH=src timeout $((WIN + 60)) \
   $PY -u -m landlord_counter.guandan.agent "$WIN" >> "$LOG" 2>&1
 rc=$?
 echo "--- 窗口结束 rc=$rc ($STATS_TAG) $(date '+%F %T')" >> "$LOG"
+
+# 指标汇总(本窗): 追加到 metrics_night.csv
+$PY tools/metrics_report.py --jsonl "$METRICS_FILE" --log "$LOG" --csv "$CSV" \
+   --host "$HOST_CSV" --out "$METRICS_OUT" --since-ts "$WIN_START" >> "$LOG" 2>&1
+kill $HOST_PID 2>/dev/null
 
 ROWS_AFTER=$( [ -f "$CSV" ] && wc -l < "$CSV" || echo 0 )
 DELTA=$((ROWS_AFTER - ROWS_BEFORE))

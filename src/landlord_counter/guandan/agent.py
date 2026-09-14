@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -61,6 +62,21 @@ def _stats_append(path: str, row: str) -> None:
     try:
         with open(path, "a") as fo:
             fo.write(row + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+# ---- 夜跑指标打点(仅在 METRICS_FILE 设置时写, 默认零成本) ----
+_SG = {"last_read_ok": None, "last_decide": None}   # 子目标(SGA)临时状态
+
+
+def _metric(ev: str, **kv) -> None:
+    path = os.getenv("METRICS_FILE")
+    if not path:
+        return
+    try:
+        with open(path, "a") as fo:
+            fo.write(json.dumps({"ev": ev, "ts": round(time.time(), 3), **kv}, ensure_ascii=False) + "\n")
     except Exception:  # noqa: BLE001
         pass
 
@@ -139,9 +155,11 @@ def ours_decide(img, rec) -> str:
                 img = img2
     if not hand:
         print("  [ours] 手牌读取失败 → 回落", flush=True)
+        _SG["last_read_ok"] = False
         return "fallback"
     # 读数一致性: 与像素数牌差 >1 → 用期望值重读一次
     if n_vis and abs(n_vis - len(hand)) > 1:
+        _SG["last_read_ok"] = False
         print(f"  [ours] 读数{len(hand)}张 vs 像素{n_vis}张 → 重读", flush=True)
         hand2 = _read_hand(img, rec, n_vis)
         if hand2 and abs(len(hand2) - n_vis) <= 1:
@@ -149,6 +167,7 @@ def ours_decide(img, rec) -> str:
         else:
             print("  [ours] 重读后仍不一致 → 回落", flush=True)
             return "fallback"
+    _SG["last_read_ok"] = True            # 读牌通过(含一致性校验)
     last_cards = P.read_table_last(rec, img)
     if last_cards is None:
         print("  [ours] 桌面读取失败 → 回落", flush=True)
@@ -317,6 +336,7 @@ def _track_last_seat(img) -> None:
 
 
 def _recover_page(tag: str = "") -> None:
+    _t0 = time.time()
     """看门狗自愈: 强制重开浏览器页面并回到对局/开始页"""
     print(f"[看门狗] 页面疑似卡死({tag}) → 重开浏览器", flush=True)
     br = os.getenv("BROWSER_PKG", "org.bromite.bromite")
@@ -340,6 +360,7 @@ def _recover_page(tag: str = "") -> None:
             continue
         break
     print("[看门狗] 重开完成", flush=True)
+    _metric("recover", tag=tag, secs=round(time.time() - _t0, 2))
 
 
 def legacy_main() -> int:
@@ -361,8 +382,11 @@ def legacy_main() -> int:
     if OURS:
         print("▶ 自研决策模式(OURS=1): rules+ai 接管, 失败回落提示钮", flush=True)
     print("▶ 掼蛋托管MVP启动(v2: 无解自动不出)", flush=True)
+    _deal_t0 = time.time()      # 本局起点(用于端到端耗时)
     while time.time() < t_end:
+        _t0 = time.time()
         img = snap()
+        _t_snap = time.time() - _t0
         if img is None:
             time.sleep(1)
             continue
@@ -403,6 +427,8 @@ def legacy_main() -> int:
                     raw, win = read_settle(r, img)
                     deals += 1
                     _stats_append(sf, f"{int(time.time())},{deals},{'win' if win else ('lose' if win is False else '?')},{os.getenv('STATS_TAG','-')},{raw.strip()[:60]}")
+                    _metric("deal_end", deal=deals, win=win, dur=round(time.time() - _deal_t0, 2), raw=raw.strip()[:60])
+                    _deal_t0 = time.time()      # 新一局起点
                     print(f"[统计] 第{deals}局: {'我方升级' if win else ('对手升级' if win is False else '未判定')} | {raw.strip()[:40]!r}", flush=True)
             print(f"[按钮] 点大金钮@{gb}", flush=True)
             tap(gb[0], gb[1], wait=3.0)
@@ -413,14 +439,20 @@ def legacy_main() -> int:
             continue
         # 我回合(注意: 不在此处刷新 last_prog — 空转时同样会进这里, 会把看门狗"喂活")
         if OURS:
+            _SG["last_read_ok"] = None
+            _t1 = time.time()
             r = ours_decide(img, rec)
+            _t_decide = time.time() - _t1
             if r == "pass":
                 tap(*BTN_PASS, wait=2.0)
                 passes += 1
+                _metric("step", mode="ours", act="pass", ok=True, read_ok=_SG["last_read_ok"],
+                        t_snap=round(_t_snap, 3), t_decide=round(_t_decide, 3))
                 print(f"  → 不出(ours) (出牌{plays} 不出{passes})", flush=True)
                 continue
             if r == "play":
                 plays += 1
+                _t2 = time.time()
                 print(f"  ✓ 出牌(ours) (出牌{plays} 不出{passes})", flush=True)
                 _eff = False
                 for _k in range(2):
@@ -432,6 +464,9 @@ def legacy_main() -> int:
                     if _wcx < wc - 1500 or _wcx < WHITE_MIN:
                         _eff = True
                         break
+                _metric("step", mode="ours", act="play", ok=bool(_eff), read_ok=_SG["last_read_ok"],
+                        t_snap=round(_t_snap, 3), t_decide=round(_t_decide, 3),
+                        t_exec=round(time.time() - _t2, 3))
                 if _eff:
                     stall = 0
                 else:
@@ -447,6 +482,7 @@ def legacy_main() -> int:
                 time.sleep(1.0)
                 continue
             # fallback → 走提示钮
+        _t2 = time.time()
         tap(*BTN_HINT, wait=1.5)
         img2 = snap()
         if img2 is None:
@@ -471,6 +507,8 @@ def legacy_main() -> int:
             if wcx < wc - 1500 or wcx < WHITE_MIN:
                 effective = True
                 break
+        _metric("step", mode="hint", act="play" if effective else "fail", ok=bool(effective),
+                t_snap=round(_t_snap, 3), t_decide=0.0, t_exec=round(time.time() - _t2, 3))
         if effective:
             stall = 0
         else:

@@ -8,13 +8,15 @@ CSV=/tmp/guandan_stats.csv
 
 # 注: 旧主循环(legacy)已补看门狗(连续3次动作无效 → 重开页面)与240s无进展重开
 export GUANDAN_LEGACY=1
-H=$(date +%H)
-H=$((10#$H))
-if [ $((H % 2)) -eq 1 ]; then
-  export GUANDAN_OURS=1
-  export STATS_TAG=ours
-else
-  export STATS_TAG=mvp
+if [ -z "${STATS_TAG:-}" ]; then          # 手动指定时尊重调用方(白天定向采样用)
+  H=$(date +%H)
+  H=$((10#$H))
+  if [ $((H % 2)) -eq 1 ]; then
+    export GUANDAN_OURS=1
+    export STATS_TAG=ours
+  else
+    export STATS_TAG=mvp
+  fi
 fi
 
 START_LINE=$(wc -l < "$LOG" 2>/dev/null || echo 0)

@@ -122,13 +122,16 @@ class Executor:
 
         返回 'ok' | 'none'(无可出) | 'mismatch'(张数不符, 已清选) | 'fail'
         """
-        before = self.L.white_count(self._snap())
+        img0 = self._snap()
+        before = self.L.white_count(img0)
+        baseline = self._lift(img0)          # 抬起量基线(不同承载/版式下有偏移)
         ph = self.btn("hint")
         if not ph:
             return "fail"
         self.dev.tap(*ph, wait=1.6)
         iv = self._snap()
-        est = self.selected_count(iv)
+        delta = self._lift(iv) - baseline    # 只用增量估算选中张数
+        est = round(delta / self.L.lift_one) if delta > self.L.lift_min else 0
         if est == 0:
             return "none"
         if want and not follow and abs(est - want) > max(1, want // 2):

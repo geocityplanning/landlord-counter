@@ -176,12 +176,13 @@ def ours_decide(img, rec) -> str:
     if len(idxs) >= 3 or follow:
         tag = "跟牌" if follow else f"多张({len(idxs)})"
         print(f"  [ours] {tag} → 提示选牌执行", flush=True)
+        base_lift = P.lifted_px(img)          # 抬起量基线(Bromite 等承载下存在偏移)
         tap(*BTN_HINT, wait=1.6)
         iv2 = snap()
         if iv2 is None:
             return "fallback"
-        lift = P.lifted_px(iv2)
-        est = round(lift / 1460) if lift > 500 else 0
+        delta = P.lifted_px(iv2) - base_lift
+        est = round(delta / 1460) if delta > 500 else 0
         if est == 0:
             print("  [ours] 提示无可出 → 不出", flush=True)
             return "pass"

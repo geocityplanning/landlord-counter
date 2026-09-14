@@ -15,6 +15,9 @@ from ..types import Action, ExecResult, GameAdapter, Observation
 
 HAND_Y0, HAND_Y1 = 700, 820      # 手牌按钮的 y 区间
 HAND_MAX = 14                    # 摸牌后 14 张 = 该我出手
+# 副露(吃/碰/杠)后手牌变少, 但规律不变: 该我出手时张数 ≡ 2 (mod 3), 等待中 ≡ 1 (mod 3)
+#   无副露 13→14, 一副露 10→11, 两副露 7→8 ...
+ACTION_TEXTS = {"チー", "ポン", "カン", "リーチ", "ツモ", "ロン", "キャンセル", "パス"}
 
 
 class MahjongAdapter(GameAdapter):
@@ -46,6 +49,18 @@ class MahjongAdapter(GameAdapter):
         return [n for n in self.a11y.dump(force=True)
                 if n.cls.endswith("Button") and HAND_Y0 <= n.center[1] <= HAND_Y1 and n.text.strip()]
 
+    def _action_nodes(self):
+        """吃/碰/杠/立直/自摸/和了/取消 等操作按钮(不在手牌带内的按钮节点)。"""
+        out = []
+        for n in self.a11y.dump(force=True):
+            t = (n.text or "").strip()
+            if not n.cls.endswith("Button") or t not in ACTION_TEXTS:
+                continue
+            if HAND_Y0 <= n.center[1] <= HAND_Y1:
+                continue
+            out.append(n)
+        return out
+
     def progress_signal(self, frame):
         try:
             return len(self._hand_nodes())
@@ -58,13 +73,23 @@ class MahjongAdapter(GameAdapter):
         except Exception:  # noqa: BLE001
             hand = []
         names = [n.text for n in hand]
-        my_turn = len(names) >= HAND_MAX            # 摸牌后 14 张 ⇒ 轮到我出手
+        try:
+            acts = [n.text.strip() for n in self._action_nodes()]
+        except Exception:  # noqa: BLE001
+            acts = []
+        # 该我出手: 张数 ≡ 2 (mod 3)（副露后手牌会少, 旧判据 ">=14" 会永久卡住）
+        my_turn = len(names) >= 2 and len(names) % 3 == 2
         return Observation(frame=frame, my_turn=my_turn, hand=names,
-                           extra={"phase": "discard" if my_turn else "wait"})
+                           extra={"phase": "discard" if my_turn else "wait", "actions": acts})
 
     # ---------- 决策 ----------
     def decide(self, obs: Observation) -> Action:
-        """占位策略: 打出最后一张(刚摸的牌=ツモ切り); 连续失败时轮换目标牌。"""
+        """策略: ① 有和了/自摸 → 直接按; ② 有其它提示(吃碰立直) → 取消(演示阶段不打乱); ③ 否则打最后一张(ツモ切り)。"""
+        acts = (obs.extra or {}).get("actions") or []
+        if any(a in ("ツモ", "ロン") for a in acts):
+            return Action("act", meta={"text": "ツモ", "why": "和了"})
+        if acts:
+            return Action("act", meta={"text": "キャンセル", "why": f"跳过提示 {acts}"})
         hand = obs.hand or []
         if not hand:
             return Action("none")
@@ -73,6 +98,22 @@ class MahjongAdapter(GameAdapter):
 
     # ---------- 执行 ----------
     def execute(self, action: Action, obs: Observation) -> ExecResult:
+        # —— 操作按钮(取消/和了): 直接点该按钮, 回执=按钮消失/手牌变化 ——
+        if action.kind == "act":
+            want = (action.meta or {}).get("text")
+            acts = self._action_nodes()
+            tgt = next((n for n in acts if n.text.strip() == want), None) or (acts[0] if acts else None)
+            if not tgt:
+                return ExecResult(False, 0, "按钮已消失")
+            before = [n.text for n in self._action_nodes()]
+            self.device.tap(*tgt.center, wait=1.2)
+            for _ in range(3):
+                time.sleep(0.8)
+                after = [n.text for n in self._action_nodes()]
+                if after != before:
+                    return ExecResult(True, 0, f"点击 {tgt.text}")
+            return ExecResult(False, 1, f"按钮点击无效 {tgt.text}")
+
         nodes = self._hand_nodes()
         if not nodes:
             return ExecResult(False, 0, "读不到手牌")

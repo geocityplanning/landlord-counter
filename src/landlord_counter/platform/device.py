@@ -1,6 +1,7 @@
 """设备层: adb 截屏/点击/按键(与游戏无关)。"""
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 
@@ -12,10 +13,10 @@ class AdbDevice:
     """一台安卓设备(云手机/模拟器)。"""
 
     def __init__(self, serial: str = "127.0.0.1:5555", url: str | None = None,
-                 browser_pkg: str = "org.mozilla.focus") -> None:
+                 browser_pkg: str | None = None) -> None:
         self.serial = serial
         self.url = url
-        self.browser_pkg = browser_pkg
+        self.browser_pkg = browser_pkg or os.getenv("BROWSER_PKG", "org.bromite.bromite")
 
     # ---- 基础 ----
     def shell(self, *args: str) -> subprocess.CompletedProcess:
@@ -39,8 +40,11 @@ class AdbDevice:
     def force_stop(self, pkg: str) -> None:
         self.shell("am", "force-stop", pkg)
 
-    def open_url(self, url: str) -> None:
-        self.shell("am", "start", "-a", "android.intent.action.VIEW", "-d", url)
+    def open_url(self, url: str, component: str | None = None) -> None:
+        args = ["am", "start", "-a", "android.intent.action.VIEW", "-d", url]
+        if component:
+            args += ["-n", component]
+        self.shell(*args)
 
     def recover(self, package: str | None = None, url: str | None = None) -> None:
         """通用恢复: 有网页入口→重开浏览器; 否则重启 App。"""
@@ -48,7 +52,7 @@ class AdbDevice:
         if url:
             self.force_stop(self.browser_pkg)
             time.sleep(2)
-            self.open_url(url)
+            self.open_url(url, os.getenv("BROWSER_COMPONENT") or None)
         elif package:
             self.shell("am", "force-stop", package)
             time.sleep(1)

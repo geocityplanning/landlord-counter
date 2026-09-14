@@ -311,10 +311,13 @@ def _track_last_seat(img) -> None:
 def _recover_page(tag: str = "") -> None:
     """看门狗自愈: 强制重开浏览器页面并回到对局/开始页"""
     print(f"[看门狗] 页面疑似卡死({tag}) → 重开浏览器", flush=True)
-    subprocess.run(ADB + ["shell", "am", "force-stop", "org.mozilla.focus"], capture_output=True)
+    br = os.getenv("BROWSER_PKG", "org.bromite.bromite")
+    act = os.getenv("BROWSER_ACT", "com.google.android.apps.chrome.Main")
+    subprocess.run(ADB + ["shell", "am", "force-stop", br], capture_output=True)
     time.sleep(2)
     subprocess.run(
-        ADB + ["shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", "http://172.18.0.1:8123/index.html"],
+        ADB + ["shell", "am", "start", "-a", "android.intent.action.VIEW", "-d",
+               "http://172.18.0.1:8123/index.html", "-n", f"{br}/{act}"],
         capture_output=True,
     )
     time.sleep(12)

@@ -4,6 +4,7 @@
 页面"可用"判据(任一): ①大金钮(开始/再接一局) ②对局内按钮行(提示/出牌/不出)或我方手牌白卡
 若连续不可用 → force-stop 重开(最多 3 轮)。返回 0=可用, 2=不可用(仍继续交给托管自愈)。
 """
+import os
 import subprocess
 import sys
 import time
@@ -12,6 +13,9 @@ sys.path.insert(0, "/project1/landlord-counter/src")
 
 ADB = ["adb", "-s", "127.0.0.1:5555"]
 URL = "http://172.18.0.1:8123/index.html"
+# 浏览器承载: Bromite(自带 Chromium 引擎, 绕开容器里坏掉的系统 WebView 与崩溃频繁的 Gecko)
+BROWSER = os.getenv("BROWSER_PKG", "org.bromite.bromite")
+BROWSER_ACT = os.getenv("BROWSER_ACT", "com.google.android.apps.chrome.Main")
 
 
 def sh(*args):
@@ -25,9 +29,10 @@ def main() -> int:
     subprocess.run(["bash", "/project1/landlord-counter/tools/serve_guandan.sh"], capture_output=True)
 
     for rnd in range(3):
-        sh("shell", "am", "force-stop", "org.mozilla.focus")
+        sh("shell", "am", "force-stop", BROWSER)
         time.sleep(2)
-        sh("shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", URL)
+        sh("shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", URL,
+           "-n", f"{BROWSER}/{BROWSER_ACT}")
         time.sleep(12)
         for i in range(10):
             img = snap()

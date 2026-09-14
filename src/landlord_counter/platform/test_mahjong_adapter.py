@@ -116,11 +116,12 @@ def build(hand, actions=()):
 
 def test_turn_rule() -> None:
     """该我出手: 张数 ≡ 2 (mod 3)；等待中 ≡ 1 (mod 3)。副露后手牌变少也要正确。"""
-    for n, expect in ((14, True), (13, False), (11, True), (10, False), (8, True), (7, False), (2, True), (1, False)):
+    # ≥12 一律尝试(回执验证) ; 副露后按 mod3 ; 明显不足则等待
+    for n, expect in ((14, True), (13, True), (12, True), (11, True), (10, False), (8, True), (7, False), (2, True), (1, False)):
         ad, _, _ = build([tile(i) for i in range(n)])
         obs = ad.sense(None)
         assert obs.my_turn is expect, f"{n} 张应 my_turn={expect}, 实际 {obs.my_turn}"
-    print("✓ 轮次判据(mod 3): 8 组用例全过")
+    print("✓ 轮次判据(≥12 尝试 + mod3): 9 组用例全过")
 
 
 def test_prompt_without_hand() -> None:

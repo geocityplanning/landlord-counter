@@ -120,8 +120,12 @@ class MahjongAdapter(GameAdapter):
             phase = "prompt" if (calls and not names) else "discard"
             return Observation(frame=frame, my_turn=True, hand=names,
                                extra={"phase": phase, "actions": acts})
-        # 该我出手: 张数 ≡ 2 (mod 3)（副露后手牌会少, 旧判据 ">=14" 会永久卡住）
-        my_turn = len(names) >= 2 and len(names) % 3 == 2
+        # 该我出手: ① 张数 ≥12(覆盖"我方回合读成 13/12 张"的漏读) 或 ② 张数 ≡ 2 (mod 3)
+        #   (副露后手牌少: 11/8 是我方回合, 10/7 是等待 → mod3 仍成立)。
+        #   为什么允许"张数够多就尝试": 实测我方回合手牌可能读成 13 张(刚摸的牌没进无障碍树),
+        #   只靠 mod3 会整轮漏掉我方回合(表现: 牌数在动但"动作=0")。
+        #   风险控制: 执行层用"牌数下降/牌面变化"做回执; 非我方回合按键基本无害(未聚焦时 Enter 不触发动作)。
+        my_turn = len(names) >= 12 or (len(names) >= 2 and len(names) % 3 == 2)
         return Observation(frame=frame, my_turn=my_turn, hand=names,
                            extra={"phase": "discard" if my_turn else "wait", "actions": acts})
 

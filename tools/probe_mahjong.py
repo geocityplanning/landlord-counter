@@ -43,15 +43,20 @@ time.sleep(20)
 n, names, acts, others = describe()
 print(f"[载入] 手牌{n} 提示{acts} 其他{others}", flush=True)
 
-# 2) 标题页 → START
-try:
-    st = a.button("START")
+# 2) 标题页 → START(页面加载有延迟: 最多等 60s)
+for _i in range(20):
+    try:
+        st = a.button("START")
+    except Exception:  # noqa: BLE001
+        st = None
     if st:
         print(f"[START] 点击 {st.center}", flush=True)
         d.tap(*st.center, wait=2.0)
         time.sleep(8)
-except Exception as e:  # noqa: BLE001
-    print("[START] 异常", e, flush=True)
+        break
+    time.sleep(3)
+else:
+    print("[START] 60s 内未出现 START(页面可能没加载)", flush=True)
 
 # 3) 主循环: 轮到我(张数 % 3 == 2)时测两种输入通道
 t_end = time.time() + DUR

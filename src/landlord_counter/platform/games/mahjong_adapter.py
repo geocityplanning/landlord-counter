@@ -32,6 +32,9 @@ class MahjongAdapter(GameAdapter):
     name = "mahjong"
     package = None
     start_url = "http://172.18.0.1:8124/index.html"
+    # 提示(チー/ポン)应答通道尚未打通: 实测 touch 与键盘都无响应 → 卡住就快速重开续玩,
+    # 而不是等默认 240s(重开后手牌与牌数变化, 全局水位看门狗即可继续判进展)。
+    watchdog_s = 90.0
 
     def __init__(self) -> None:
         self.a11y = None

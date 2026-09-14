@@ -61,7 +61,8 @@ class Runtime:
             if sig is not None and sig != last_signal:
                 last_signal = sig
                 last_prog = time.time()
-            if time.time() - last_prog > self.watchdog_s:
+            _ws = getattr(self.ad, "watchdog_s", None) or self.watchdog_s
+            if time.time() - last_prog > _ws:
                 self._log(f"[看门狗] {int(time.time() - last_prog)}s 无进展 → 恢复")
                 self.dev.recover(package=self.ad.package, url=self.ad.start_url)
                 last_prog = time.time()

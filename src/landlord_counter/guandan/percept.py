@@ -360,3 +360,23 @@ def read_settle(rec, img) -> tuple[str, bool | None]:
         elif any(k in txt for k in ("西", "东")):
             win = False
     return txt, win
+
+
+def page_looks_ok(img) -> bool:
+    """页面是否处于正常牌桌状态(用于识别白屏/异常, 防空转)。
+
+    判据: ① 手牌带白卡在合理范围(27 张≈66k, 超 80k 视为异常白屏)
+          ② 牌桌中部不是整片白(正常为深绿台面)
+    """
+    try:
+        if white_count(img) > 80000:
+            return False
+        seg = img[300:700, 60:660]
+        if seg is None or seg.size == 0:
+            return False
+        b, g, r = (float(seg[:, :, i].mean()) for i in range(3))
+        if r > 150 and g > 150 and b > 150:   # 中部整片白 → 白屏
+            return False
+    except Exception:  # noqa: BLE001
+        return True
+    return True

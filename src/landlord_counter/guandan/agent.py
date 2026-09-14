@@ -355,6 +355,17 @@ def legacy_main() -> int:
             time.sleep(1)
             continue
         _track_last_seat(img)   # 跟踪"刚出牌的那一家"(供队友判定)
+        # 页面健康度: 白屏/异常(手牌白卡超上限 或 中部整片白) → 恢复(25s 冷却防抖)
+        if not P.page_looks_ok(img):
+            if time.time() - last_prog > 25:
+                print("[健康检查] 页面异常(白屏/超限) → 重开页面", flush=True)
+                _recover_page("页面异常白屏")
+                last_prog = time.time()
+                last_wc = -1
+                stall = 0
+            else:
+                time.sleep(2)
+            continue
         # 看门狗: 3 分钟无任何进展(无大金钮/无我方回合动作/手牌无变化) → 重开页面自愈
         wc_now = white_count(img)
         if wc_now != last_wc:

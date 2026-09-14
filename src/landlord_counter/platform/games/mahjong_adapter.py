@@ -67,7 +67,24 @@ class MahjongAdapter(GameAdapter):
         return [n for n in self.a11y.dump(force=True)
                 if (n.text or "").strip() in ACTION_TEXTS]
 
+    def _wall(self):
+        """剩余牌数(牌数: N) —— 全局水位, 随对局单调下降, 比手牌节点稳。"""
+        try:
+            txt = [n.text.strip() for n in self.a11y.dump()]
+        except Exception:  # noqa: BLE001
+            return None
+        for i, t in enumerate(txt):
+            if t == "牌数:" and i + 1 < len(txt):
+                try:
+                    return int(txt[i + 1])
+                except ValueError:
+                    return None
+        return None
+
     def progress_signal(self, frame):
+        w = self._wall()
+        if w is not None:
+            return w
         try:
             return len(self._hand_nodes())
         except Exception:  # noqa: BLE001
@@ -128,28 +145,43 @@ class MahjongAdapter(GameAdapter):
         nodes = self._hand_nodes()
         if not nodes:
             return ExecResult(False, 0, "读不到手牌")
-        idx = min(int(action.combo or 0), len(nodes) - 1)
-        target = nodes[idx]
+        target = nodes[min(int(action.combo or 0), len(nodes) - 1)]
         before_names = [n.text for n in nodes]
-        # 主路径 = **点击该牌**(物理通道, 与真实玩家一致)。
-        # 注意: ENTER 只做兜底 —— 实测 ENTER 会激活页面上获得焦点的导航链接,
-        #       把页面带回标题页(跑 2 步就掉出对局)。
-        self.device.tap(*target.center, wait=1.0)
-        # 回执: 轮询手牌**列表**是否变化(打出/摸牌都会变), 最多 ~3 次
+        wall0 = self._wall()
+        # 主路径 = **键盘通道**: 本容器里 touch 对页面完全无效(实测点击后牌面/牌数零变化),
+        # 而网页游戏实现了键盘选择(setSelector): 方向键移动选择器 + Enter 确认。
+        # 方向键按到底(次数 > 张数)使选择器**夹在最后一张** ⇒ 确定性"ツモ切り"(弃刚摸的牌)。
+        for _ in range(len(nodes) + 6):
+            self.device.shell("input", "keyevent", "22")   # KEYCODE_DPAD_RIGHT
+            time.sleep(0.18)
+        self.device.shell("input", "keyevent", "66")       # KEYCODE_ENTER
+        time.sleep(1.6)
+        # 回执: 牌数下降(全局水位) 或 手牌牌面变化
         for _ in range(3):
             time.sleep(1.0)
-            after = self._hand_nodes()
-            names = [n.text for n in after]
-            if len(names) != len(before_names) or names != before_names:
+            if wall0 is not None:
+                w = self._wall()
+                if w is not None and w < wall0:
+                    self._fails = 0
+                    return ExecResult(True, 0, f"键盘出手(牌数 {wall0}→{w})")
+            names = [n.text for n in self._hand_nodes()]
+            if names and names != before_names:
                 self._fails = 0
-                return ExecResult(True, 0, f"打出 {target.text}({len(before_names)}→{len(names)})")
-        # 兜底: ENTER(自摸切り时 UI 聚焦最后一张; 用后若页面跳回标题页由 Runtime 的进桌逻辑兜)
+                return ExecResult(True, 0, f"键盘出手 牌面变化({len(before_names)}→{len(names)})")
+        # 兜底1: 再补一次 Enter(动画/焦点未落定)
         self.device.shell("input", "keyevent", "66")
-        time.sleep(0.9)
-        n_after_key = [n.text for n in self._hand_nodes()]
-        if not n_after_key or n_after_key != before_names:
+        time.sleep(1.2)
+        names = [n.text for n in self._hand_nodes()]
+        if names and names != before_names:
             self._fails = 0
-            return ExecResult(True, 0, f"ENTER 兜底出手({len(before_names)}→{len(n_after_key)})")
+            return ExecResult(True, 0, "补 Enter 出手")
+        # 兜底2: 点按(某些承载/容器触控可用)
+        self.device.tap(*target.center, wait=1.0)
+        time.sleep(1.0)
+        names = [n.text for n in self._hand_nodes()]
+        if names and names != before_names:
+            self._fails = 0
+            return ExecResult(True, 0, "点击兜底出手")
         # 未变化: 多半不是我的回合 → 记失败并退避(避免狂点)
         self._fails += 1
         if self._fails >= 2:

@@ -130,14 +130,9 @@ class MahjongAdapter(GameAdapter):
         idx = min(int(action.combo or 0), len(nodes) - 1)
         target = nodes[idx]
         before_names = [n.text for n in nodes]
-        # 主路径: ENTER 确认(majiang-ui 的 setSelector 用 Enter 确认聚焦项; 出手阶段聚焦最后一张)
-        self.device.shell("input", "keyevent", "66")
-        time.sleep(0.8)
-        n_after_key = [n.text for n in self._hand_nodes()]
-        if n_after_key != before_names:
-            self._fails = 0
-            return ExecResult(True, 0, f"ENTER 出手({len(before_names)}→{len(n_after_key)})")
-        # 兜底: 点该牌
+        # 主路径 = **点击该牌**(物理通道, 与真实玩家一致)。
+        # 注意: ENTER 只做兜底 —— 实测 ENTER 会激活页面上获得焦点的导航链接,
+        #       把页面带回标题页(跑 2 步就掉出对局)。
         self.device.tap(*target.center, wait=1.0)
         # 回执: 轮询手牌**列表**是否变化(打出/摸牌都会变), 最多 ~3 次
         for _ in range(3):
@@ -147,6 +142,13 @@ class MahjongAdapter(GameAdapter):
             if len(names) != len(before_names) or names != before_names:
                 self._fails = 0
                 return ExecResult(True, 0, f"打出 {target.text}({len(before_names)}→{len(names)})")
+        # 兜底: ENTER(自摸切り时 UI 聚焦最后一张; 用后若页面跳回标题页由 Runtime 的进桌逻辑兜)
+        self.device.shell("input", "keyevent", "66")
+        time.sleep(0.9)
+        n_after_key = [n.text for n in self._hand_nodes()]
+        if not n_after_key or n_after_key != before_names:
+            self._fails = 0
+            return ExecResult(True, 0, f"ENTER 兜底出手({len(before_names)}→{len(n_after_key)})")
         # 未变化: 多半不是我的回合 → 记失败并退避(避免狂点)
         self._fails += 1
         if self._fails >= 2:

@@ -45,6 +45,8 @@ class MahjongAdapter(GameAdapter):
         self._fails = 0        # 连续动作失败次数(用于退避)
         self._last_round = None   # 结算去重: 上一次看到的局名(東一局/東二局...)
         self._last_score = None   # 我方(東)点数
+        self._last_wall = None    # 上一次看到的牌数(用于"牌堆回涨=新一局"判定)
+        self._deal_score = None   # 本局开始时的我方点数(判胜负基线)
 
     # ---------- 装配 ----------
     def attach(self, device, vision=None) -> None:
@@ -215,17 +217,20 @@ class MahjongAdapter(GameAdapter):
 
     # ---------- 结算 ----------
     def settle(self, frame):
-        """按"局数推进"判定一局结束: 東一局→東二局(或南X局) 变化即一局。
+        """判一局结束。**双判据**:
 
-        我方 = 東(实测: 我方手牌在最下方, 牌桌信息里 東 的点位最低) → win = 我方点数未下降。
-        用 self._last_round/_last_score 去重, 重复调用返回 None(由 Runtime 周期调用)。
+        ① 牌数回涨(上一局末尾牌数很小 → 新一局开头牌数很大) —— 覆盖"流局重开还在同一局名"的情况
+           (实测: 牌数一路 18→…→0, 随后跳到 68 = 新的一局, 但局名仍写 東一局 ⇒ 只看局名会漏计)
+        ② 局名推进(東一局→東二局/南一局 …)
+
+        我方 = 東(实测: 我方手牌在最下方, 且 東 的牌桌点位最低) → win = 本局期间我方点数未下降。
         """
         try:
             txt = [n.text.strip() for n in self.a11y.dump()]
         except Exception:  # noqa: BLE001
             return None
         rd, score = None, None
-        for i, t in enumerate(txt):
+        for t in txt:
             if re.match(r"^(東|南|西|北)[一二三四]局$", t):
                 rd = t
             if t.startswith("東:"):
@@ -233,10 +238,29 @@ class MahjongAdapter(GameAdapter):
                     score = int(t.split(":")[1].strip().replace(",", ""))
                 except ValueError:
                     pass
-        if rd and self._last_round and rd != self._last_round and score is not None and self._last_score is not None:
-            info = SettleInfo(raw=f"{self._last_round}→{rd} 我方点数 {self._last_score}→{score}",
-                              win=score >= self._last_score)
-            self._last_round, self._last_score = rd, score
-            return info
-        self._last_round, self._last_score = rd, score
-        return None
+        wall = None
+        for i, t in enumerate(txt):
+            if t == "牌数:" and i + 1 < len(txt):
+                try:
+                    wall = int(txt[i + 1])
+                except ValueError:
+                    pass
+
+        new_deal = False
+        if wall is not None and self._last_wall is not None and self._last_wall <= 25 and wall >= self._last_wall + 20:
+            new_deal = True                     # 牌堆回涨 = 上一局结束、新一局开始
+        if rd and self._last_round and rd != self._last_round:
+            new_deal = True                     # 局名推进(非流局时)
+
+        info = None
+        if new_deal and score is not None and self._deal_score is not None:
+            info = SettleInfo(raw=f"{self._last_round or '?'} 结束(牌数 {self._last_wall}→{wall}) "
+                                  f"我方点数 {self._deal_score}→{score}",
+                              win=score > self._deal_score)
+            self._deal_score = score
+        if self._deal_score is None and score is not None:
+            self._deal_score = score
+        if new_deal and score is not None:
+            self._deal_score = score
+        self._last_round, self._last_score, self._last_wall = rd, score, wall
+        return info

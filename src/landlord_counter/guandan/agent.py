@@ -197,9 +197,12 @@ def ours_decide(img, rec) -> str:
         f"  [ours] 决策={R.group_to_str(choice)} idx={idxs} (手牌{len(hand)}, 压={R.cards_to_str(last_cards) if last_cards else '领出'})",
         flush=True,
     )
-    # 执行策略: 跟牌(压牌)一律"提示选牌执行"; 领出 ≥3 张也走提示; 仅"领出 1-2 张"直选
+    # 执行策略(2026-09-14 数据驱动修改):
+    #   实测"领出 1-2 张走点选直出"时 33% 出牌未生效(682/2058), 而提示路径 0 失败
+    #   ⇒ 默认**出牌一律走"提示选牌执行"**(决策层只决定"出/不出", 具体牌由游戏提示选, 与 MVP 同执行面);
+    #     点选直出降级为实验开关 GUANDAN_OURS_DIRECT=1(对照实验/残局研究用)。
     follow = bool(last_cards)
-    if len(idxs) >= 3 or follow:
+    if len(idxs) >= 3 or follow or os.getenv("GUANDAN_OURS_DIRECT", "0") != "1":
         tag = "跟牌" if follow else f"多张({len(idxs)})"
         print(f"  [ours] {tag} → 提示选牌执行", flush=True)
         base_lift = P.lifted_px(img)          # 抬起量基线(Bromite 等承载下存在偏移)

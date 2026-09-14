@@ -396,19 +396,28 @@ def legacy_main() -> int:
             if r == "play":
                 plays += 1
                 print(f"  ✓ 出牌(ours) (出牌{plays} 不出{passes})", flush=True)
-                _iv = snap()
-                if _iv is not None and white_count(_iv) >= WHITE_MIN:
+                _eff = False
+                for _k in range(2):
+                    time.sleep(1.2)
+                    _iv = snap()
+                    if _iv is None:
+                        continue
+                    _wcx = white_count(_iv)
+                    if _wcx < wc - 1500 or _wcx < WHITE_MIN:
+                        _eff = True
+                        break
+                if _eff:
+                    stall = 0
+                else:
                     stall += 1
-                    print(f"  ! 出牌后仍是手牌(无效动作 {stall}/3)", flush=True)
-                    if stall >= 3:
-                        print("  ! 连续 3 次动作无效 → 重开页面", flush=True)
-                        _recover_page("连续3次动作无效(ours)")
+                    print(f"  ! 出牌后手牌未减少(无效动作 {stall}/4)", flush=True)
+                    if stall >= 4:
+                        print("  ! 连续 4 次动作无效 → 重开页面", flush=True)
+                        _recover_page("连续4次动作无效(ours)")
                         stall = 0
                         last_prog = time.time()
                         last_wc = -1
                         continue
-                else:
-                    stall = 0
                 time.sleep(1.0)
                 continue
             # fallback → 走提示钮
@@ -425,24 +434,31 @@ def legacy_main() -> int:
             passes += 1
             print(f"  → 不出 (累计出牌{plays} 不出{passes})", flush=True)
         time.sleep(0.8)
-        # 进度自检: 手牌白卡未变且仍我回合 → 记一次无效; 连续 3 次 → 判页面卡死, 重开自愈
-        img3 = snap()
-        if img3 is not None and white_count(img3) >= WHITE_MIN:
-            wc2 = white_count(img3)
-            if abs(wc2 - wc) < 300:  # 无变化 = 这次动作没生效
-                stall += 1
-                print(f"  ! 疑似无进展({stall}/3), 尝试另一动作", flush=True)
-                if stall >= 3:
-                    print("  ! 连续 3 次动作无效 → 判定页面卡死, 重开页面", flush=True)
-                    _recover_page("连续3次动作无效")
-                    stall = 0
-                    last_prog = time.time()
-                    last_wc = -1
-                    continue
-                tap(*BTN_PASS, wait=1.8)
-                tap(*BTN_PLAY, wait=2.0)
-            else:
+        # 回执校验(稳健): 手牌明显减少 或 手牌带消失 = 生效; 否则留时间再判一次
+        effective = False
+        for _k in range(2):
+            time.sleep(1.5)
+            imgx = snap()
+            if imgx is None:
+                continue
+            wcx = white_count(imgx)
+            if wcx < wc - 1500 or wcx < WHITE_MIN:
+                effective = True
+                break
+        if effective:
+            stall = 0
+        else:
+            stall += 1
+            print(f"  ! 动作无效({stall}/4): 手牌未减少 → 换动作重试", flush=True)
+            if stall >= 4:
+                print("  ! 连续 4 次动作无效 → 判定页面卡死, 重开页面", flush=True)
+                _recover_page("连续4次动作无效")
                 stall = 0
+                last_prog = time.time()
+                last_wc = -1
+                continue
+            tap(*BTN_PASS, wait=1.8)
+            tap(*BTN_PLAY, wait=2.0)
     print(f"▶ 结束: 出牌{plays} 不出{passes}", flush=True)
     return 0
 

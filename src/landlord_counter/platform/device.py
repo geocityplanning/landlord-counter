@@ -41,6 +41,7 @@ class AdbDevice:
         self.shell("am", "force-stop", pkg)
 
     def open_url(self, url: str, component: str | None = None) -> None:
+        component = component or os.getenv("BROWSER_COMPONENT") or os.getenv("BROWSER_ACT")
         args = ["am", "start", "-a", "android.intent.action.VIEW", "-d", url]
         if component:
             args += ["-n", component]

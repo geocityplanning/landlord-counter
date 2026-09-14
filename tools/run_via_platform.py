@@ -32,6 +32,11 @@ def main() -> int:
         raise SystemExit(f"未知适配器: {name} (可选: {', '.join(registry.names())})")
     ad = registry.create(name)
 
+    # 打开该游戏自己的页面(适配器 start_url), 再交给运行时进桌/托管
+    if getattr(ad, "start_url", None):
+        print(f"↻ 打开页面: {ad.start_url}")
+        dev.recover(package=getattr(ad, "package", None), url=ad.start_url)
+
     from landlord_counter.platform.runtime import Runtime
 
     rt = Runtime(ad, dev, vision=vision,

@@ -116,9 +116,15 @@ def test_execute_actions() -> None:
 
 
 def test_execute_play() -> None:
-    """出手: ENTER 主路径能成; ENTER 无效时点牌兜底。"""
-    # ENTER 生效: 假 a11y 在手牌变化后更新
+    """出手: **点击为主路径**; 点不动时 ENTER 兜底。"""
+    # 主路径: 点击生效(假设备点手牌区=出手)
     ad, a, d = build(["牌"] * 14)
+    r = ad.execute(Action("play", combo=13), ad.sense(None))
+    assert r.ok and "打出" in r.detail, r
+    assert d.enters == 0, "主路径不该用 ENTER"
+    # 点击无效 → ENTER 兜底
+    ad, a, d = build(["牌"] * 14)
+    d.tap = lambda x, y, wait=0.0: None          # 点不动
     orig_shell = d.shell
 
     def shell_enter(*args):
@@ -128,12 +134,8 @@ def test_execute_play() -> None:
 
     d.shell = shell_enter
     r = ad.execute(Action("play", combo=13), ad.sense(None))
-    assert r.ok and "ENTER" in r.detail, r
-    # ENTER 无效 → 点击兜底(假设备点了就出手)
-    ad, a, d = build(["牌"] * 14)
-    r = ad.execute(Action("play", combo=13), ad.sense(None))
-    assert r.ok, r
-    print("✓ 执行(出手): ENTER 主路径 + 点击兜底 均通过")
+    assert r.ok and "ENTER 兜底" in r.detail, r
+    print("✓ 执行(出手): 点击主路径 + ENTER 兜底 均通过")
 
 
 def test_no_hand() -> None:

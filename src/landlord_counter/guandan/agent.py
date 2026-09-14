@@ -339,6 +339,7 @@ def legacy_main() -> int:
     deals = 0
     last_prog = time.time()  # 看门狗: 最近进展时刻
     last_wc = -1
+    stall = 0                # 连续"动作无效"次数(触发页面重开)
     rec = None
     if OURS or os.getenv("STATS_FILE"):
         from ..config import load_config
@@ -384,8 +385,7 @@ def legacy_main() -> int:
         if wc < WHITE_MIN or not P.play_button_active(img):  # 非我回合(残局手牌仍显示但按钮禁用)
             time.sleep(0.8)
             continue
-        # 我回合
-        last_prog = time.time()
+        # 我回合(注意: 不在此处刷新 last_prog — 空转时同样会进这里, 会把看门狗"喂活")
         if OURS:
             r = ours_decide(img, rec)
             if r == "pass":
@@ -396,6 +396,19 @@ def legacy_main() -> int:
             if r == "play":
                 plays += 1
                 print(f"  ✓ 出牌(ours) (出牌{plays} 不出{passes})", flush=True)
+                _iv = snap()
+                if _iv is not None and white_count(_iv) >= WHITE_MIN:
+                    stall += 1
+                    print(f"  ! 出牌后仍是手牌(无效动作 {stall}/3)", flush=True)
+                    if stall >= 3:
+                        print("  ! 连续 3 次动作无效 → 重开页面", flush=True)
+                        _recover_page("连续3次动作无效(ours)")
+                        stall = 0
+                        last_prog = time.time()
+                        last_wc = -1
+                        continue
+                else:
+                    stall = 0
                 time.sleep(1.0)
                 continue
             # fallback → 走提示钮
@@ -412,14 +425,24 @@ def legacy_main() -> int:
             passes += 1
             print(f"  → 不出 (累计出牌{plays} 不出{passes})", flush=True)
         time.sleep(0.8)
-        # 进度自检: 手牌白卡未变且仍我回合 → 下一轮换动作
+        # 进度自检: 手牌白卡未变且仍我回合 → 记一次无效; 连续 3 次 → 判页面卡死, 重开自愈
         img3 = snap()
         if img3 is not None and white_count(img3) >= WHITE_MIN:
             wc2 = white_count(img3)
-            if abs(wc2 - wc) < 300:  # 无变化
-                print("  ! 疑似无进展, 尝试另一动作", flush=True)
+            if abs(wc2 - wc) < 300:  # 无变化 = 这次动作没生效
+                stall += 1
+                print(f"  ! 疑似无进展({stall}/3), 尝试另一动作", flush=True)
+                if stall >= 3:
+                    print("  ! 连续 3 次动作无效 → 判定页面卡死, 重开页面", flush=True)
+                    _recover_page("连续3次动作无效")
+                    stall = 0
+                    last_prog = time.time()
+                    last_wc = -1
+                    continue
                 tap(*BTN_PASS, wait=1.8)
                 tap(*BTN_PLAY, wait=2.0)
+            else:
+                stall = 0
     print(f"▶ 结束: 出牌{plays} 不出{passes}", flush=True)
     return 0
 

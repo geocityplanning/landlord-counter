@@ -47,6 +47,7 @@ class MahjongAdapter(GameAdapter):
         self._last_score = None   # 我方(東)点数
         self._last_wall = None    # 上一次看到的牌数(用于"牌堆回涨=新一局"判定)
         self._deal_score = None   # 本局开始时的我方点数(判胜负基线)
+        self._last_settle_ts = 0.0  # 上次记一局的时间(防抖冷却)
 
     # ---------- 装配 ----------
     def attach(self, device, vision=None) -> None:
@@ -256,12 +257,17 @@ class MahjongAdapter(GameAdapter):
         if rd and self._last_round and rd != self._last_round:
             new_deal = True                     # 局名推进(非流局时)
 
+        now = time.time()
+        # 冷却: 牌数读数会抖动(无障碍树偶发少节点), 同一次"新局"可能被连判多次 → 30s 内只记一局
+        if new_deal and (now - self._last_settle_ts) < 30.0:
+            new_deal = False
         info = None
         if new_deal and score is not None and self._deal_score is not None:
             info = SettleInfo(raw=f"{self._last_round or '?'} 结束(牌数 {self._last_wall}→{wall}) "
                                   f"我方点数 {self._deal_score}→{score}",
                               win=score > self._deal_score)
             self._deal_score = score
+            self._last_settle_ts = now
         if self._deal_score is None and score is not None:
             self._deal_score = score
         if new_deal and score is not None:

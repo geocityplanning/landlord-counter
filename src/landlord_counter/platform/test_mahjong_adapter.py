@@ -158,10 +158,12 @@ def test_settle() -> None:
     ad, a, d = build([tile(i) for i in range(14)])
     assert ad.settle(None) is None, "第一次只做基线, 不应判结算"
     a.round, a.score = "東二局", 26000          # 我方+1000
+    ad._last_settle_ts = 0.0                    # 绕过防抖冷却(测试里时间不流逝)
     info = ad.settle(None)
     assert info is not None and info.win is True, info
     assert ad.settle(None) is None, "同一局名重复调用不应再计"
     a.round, a.score = "東三局", 24000          # 我方-2000
+    ad._last_settle_ts = 0.0
     info2 = ad.settle(None)
     assert info2 is not None and info2.win is False, info2
     # 流局重开(局名不变, 只有牌数回涨) 也要判出一局
@@ -170,7 +172,10 @@ def test_settle() -> None:
     ad.settle(None)
     a.wall = 68                                  # 新一局: 牌数回涨
     a.score = 24000
+    ad._last_settle_ts = 0.0
     info3 = ad.settle(None)
+    info4 = ad.settle(None)
+    assert info4 is None, "同一局 30s 内不应重复记(防抖)"
     assert info3 is not None and "牌數" not in info3.raw, info3
     print(f"✓ 结算: {info.raw} / {info2.raw} / {info3.raw}")
 

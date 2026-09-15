@@ -111,6 +111,11 @@ class Runtime:
                 time.sleep(self.idle_sleep)
                 continue
             res = self.ad.execute(act, obs)
+            if getattr(res, "skipped", False):
+                # 执⾏器规范: skipped = 前置不满足(如非我回合/通道无反应) → 不算动作、不喂看门狗
+                self._log(f"[跳过] {act.kind} · {res.detail}")
+                time.sleep(self.idle_sleep)
+                continue
             self.actions += 1
             self._log(f"[动作] {act.kind} → ok={res.ok} retries={res.retries} {res.detail}")
             last_prog = time.time()

@@ -306,6 +306,10 @@ class GuandanAdapter(GameAdapter):
                          if 0 <= i < len(obs.hand)]
                 if ex.direct_play(idxs, len(obs.hand), ranks=ranks):
                     return ExecResult(True, 0, "直选出牌(RL)")
+                rpt = getattr(ex, "last_report", None)
+                if rpt is not None and (rpt.not_our_turn or rpt.skipped):
+                    # 执行器规范: 识别/活性不满足 ⇒ 跳过, 不是失败(不计入失败率)
+                    return ExecResult(True, 0, f"跳过 · {rpt.reason}", skipped=True)
                 return ExecResult(False, 1, "直选失败(RL)")
         want = len(action.combo.cards) if action.combo is not None else None
         follow = bool(obs.table)

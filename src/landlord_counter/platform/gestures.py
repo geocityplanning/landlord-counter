@@ -8,6 +8,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from .actloop import ActReport, Evidence
+
 import numpy as np
 
 
@@ -42,7 +44,9 @@ class Executor:
         self.dev = device
         self.L = layout
         self.log = log
-        self._dx = 0          # 点选自纠正偏移(全局, 由"实际抬起位 vs 想点位"的差累加得到)
+        self._dx = 0          # 点选自纠正偏移(全局)
+        self.last_report = None      # 最近一次动作的 ActReport(执行器规范: 识别→动作→校验)
+        self._liveness_fails = 0     # 连续"点了没反应"次数(活性探针)
 
     # ---------- 基础 ----------
     def _snap(self):
@@ -128,8 +132,9 @@ class Executor:
         """
         base = self._lift(self._snap())
 
-        def cnt() -> int:
-            img = self._snap()
+        def cnt(img=None) -> int:
+            if img is None:
+                img = self._snap()
             if img is None:
                 return -1
             return max(0, round((self._lift(img) - base) / self.L.lift_one))
@@ -145,20 +150,57 @@ class Executor:
             else:
                 groups.append([r, [i]])
         prev = 0
-        for r, gidx in groups:
+        reacted = 0
+        for gi, (r, gidx) in enumerate(groups):
             x = self._pos(gidx[0], n)
             if not (0 < x < 720):
                 continue
+            b = self._snap()
             self.dev.tap(x, self.L.hand_y, wait=0.6)
-            c = cnt()
-            if c <= prev:                      # 没增长(可能点成取消/漏点) → 补点一次
+            a = self._snap()
+            c = cnt(a)
+            # ---- 活性探针(执行器规范第 2/4 步): 首次点击必须带来可观测反应 ----
+            if gi == 0 and c <= 0 and not self._frame_changed(b, a):
+                self._liveness_fails += 1
+                self.last_report = ActReport(
+                    kind="select", skipped=True, not_our_turn=True,
+                    reason=f"首次点击无任何反应(非我回合或通道失灵), 连续{self._liveness_fails}次",
+                    evidence=Evidence(src="frame_diff",
+                                      before={"lift": self._lift(b) if b is not None else None},
+                                      after={"lift": self._lift(a) if a is not None else None},
+                                      changed=False))
+                return False
+            self._liveness_fails = 0
+            changed = self._frame_changed(b, a)
+            if c <= prev and not changed:      # 没选中也没画面变化 → 补点一次
                 self.log(f"  [gesture] ↻ 组选: x={x}(点数{r}) 未增({prev}→{c}) → 补点")
                 self.dev.tap(x, self.L.hand_y, wait=0.6)
-                c = cnt()
+                a2 = self._snap()
+                c2 = cnt(a2)
+                changed = changed or self._frame_changed(a, a2)
+                c = max(c, c2)
+            if changed or c > prev:
+                reacted += 1
             prev = max(prev, c)
-        ok = prev >= len(groups)
-        self.log(f"  [gesture] {'✓ 组选完成' if ok else '✗ 组选不中'}: {len(groups)}组 选中≈{prev}张 (n={n})")
+        # 成功判据: 每组都点到了(有明显反应) —— 是否"打出去"由出牌回执(wait_receipt)终判
+        ok = reacted >= 1 and (reacted >= len(groups) or prev >= len(groups))
+        self.last_report = ActReport(kind="select", ok=ok, retries=0,
+                                     reason=f"{len(groups)}组 → 有反应{reacted}组, 选中≈{prev}张",
+                                     evidence=Evidence(src="measured",
+                                                       before={"lift_base": base},
+                                                       after={"lift_now": self._lift(self._snap())},
+                                                       changed=prev > 0))
+        self.log(f"  [gesture] {'✓ 组选完成' if ok else '✗ 组选不中'}: {len(groups)}组 有反应{reacted}组 选中≈{prev}张 (n={n})")
         return ok
+
+    def _frame_changed(self, a, b, thr: float = 20.0) -> bool:
+        """两帧是否有可见差异(活性探针用)。"""
+        try:
+            if a is None or b is None:
+                return False
+            return float(np.abs(b.astype(int) - a.astype(int)).mean()) > thr / 255.0
+        except Exception:  # noqa: BLE001
+            return False
 
     def _selected_xs(self) -> list:
         """当前已抬起(选中)的牌位 x(绝对测量)。"""

@@ -38,6 +38,7 @@ class ExecResult:
     ok: bool
     retries: int = 0
     detail: str = ""
+    skipped: bool = False      # 非失败: 前置条件不满足(如"非我回合")→ 不计入动作失败率
 
 
 @dataclass

@@ -172,7 +172,15 @@ def ours_decide(img, rec) -> str:
     返回 'play'|'pass'|'fallback'(回落提示钮)。"""
     global _LAST_SIG, _SAME_SIG_N
     # 像素数牌(已滤噪) 作为期望张数喂给识别
-    n_vis = P.hand_card_count_est(img) or P.hand_columns(img)   # 块宽实测真值优先
+    # 期望张数(喂给 VLM 的提示词): 只在**两种口径一致**时才注入 —— 块宽估算会偏大
+    # (实测用户看图确认: 视觉估 19 vs 实际 17), 把偏大的数字写进提示词会把读数带偏。
+    _est = P.hand_card_count_est(img)
+    _seg = P.hand_columns(img)
+    if _est and _seg and abs(_est - _seg) <= 1:
+        n_vis = _est                     # 两法一致 → 可信, 作为提示
+    else:
+        n_vis = 0                        # 不一致 → 不带提示(让模型自由读), 避免被带偏
+        print(f"  [读牌] 张数口径不一致(块宽{_est}/分段{_seg}) → 不注入期望值", flush=True)
     hand = _read_hand(img, rec, n_vis)
     if not hand:  # 读失败 → 重新取帧再读一次(VLM 偶发空返回)
         img2 = snap()

@@ -122,9 +122,9 @@ class GuandanAdapter(GameAdapter):
         est = P.card_positions(frame, n)
         raw: dict = {}
         for i, x in enumerate(est):
-            b = self._snap()
+            b = self.device.snap()
             self.device.tap(x, 875, wait=0.55)
-            aa = self._snap()
+            aa = self.device.snap()
             raw[i] = [c for c, _w in P.lifted_columns(b, aa)]
             self.device.tap(x, 875, wait=0.35)      # 复位(再点一次取消选中)
         xs0 = sorted(c - 24 * i for i, cols in raw.items() for c in cols)

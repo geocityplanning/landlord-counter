@@ -38,6 +38,8 @@ class GuandanAdapter(GameAdapter):
         self._rl_hist: list = []
         self._rl_played = [0.0, 0.0, 0.0, 0.0]
         self._read_fail_n = 0        # 连续读牌失败次数(空读治理: 不空转)
+        self._turn_checked_at = 0.0  # 上次"游戏真值"复核时刻(CDP 用)
+        self._n_truth = 0            # 实测(反推)到的确切张数
         self._dump_n = 0             # 帧留证计数
         self._dump_t = 0.0
         self._tap_cal = None         # 点选自标定结果: {"n0","x0","raw","pairs"}
@@ -149,6 +151,48 @@ class GuandanAdapter(GameAdapter):
         print(f"  [标定] 真值左缘 x0={x0:.0f} | 命中 {hit}/{n} 位 | 配对关系 {sum(1 for v in pairs.values() if v)} 处",
               flush=True)
 
+    def _probe_card_count(self, frame) -> int:
+        """反推**确切张数**(边界判别法)。
+
+        原理: 整排是"居中 + 固定间距" → 张数估**多**时, 算出的"第 1 张"位置会落到
+        牌行**左边界之外**(点下去没反应); 张数估**少**时, 位置落在行内(会选中)。
+        ⇒ 从大到小试, **第一个能点中的 n 就是真值**(它正好是行首那张)。
+        代价: 每次标定最多 3 次点击, 且点完立刻取消, 不留残留。
+        """
+        ex = self._ex
+        if ex is None or getattr(ex, "cdp", None) is None or self.device is None:
+            return 0
+        est = P.hand_card_count_est(frame) or P.hand_columns(frame)
+        if est <= 0:
+            return 0
+        for cand in (est + 1, est, est - 1, est - 2, est - 3):
+            if not (8 <= cand <= 27):
+                continue
+            try:
+                pts = ex.cdp.card_tap_points(cand)
+            except Exception:  # noqa: BLE001
+                continue
+            if len(pts) != cand:
+                continue
+            x, y = pts[0]                     # 只看"第 1 张": 估多会落到行外
+            i0 = self.device.snap()
+            if i0 is None:
+                continue
+            try:
+                ex.cdp.click_screen(x, y, settle=0.55)
+            except Exception:  # noqa: BLE001
+                continue
+            i1 = self.device.snap()
+            if i1 is None:
+                continue
+            if P.lifted_px(i1) > P.lifted_px(i0) + 300:
+                ex.cdp.click_screen(x, y, settle=0.45)      # 取消, 恢复干净
+                print(f"  [张数标定] 视觉估{est} → 实测 **{cand}** 张(行首点中)", flush=True)
+                return cand
+            print(f"  [张数标定] 试 {cand}: 行首点不中(位置在行外)", flush=True)
+        print(f"  [张数标定] 未定(沿用视觉估 {est})", flush=True)
+        return est
+
     def _cal_positions(self, frame, n: int) -> list:
         """执行层取位(按可信度排序):
 
@@ -159,6 +203,18 @@ class GuandanAdapter(GameAdapter):
         实测教训(2026-09-15): 标定给的 x0=47 反而把点选带偏(0 成功/13 失败),
         而卡边界给的 ~82 能选中 ⇒ 边界优先。
         """
+        # ① 测试台真值几何(游戏源码公式, 需 CDP; 同时用于校准视觉)
+        if os.getenv("GUANDAN_TRUTH_GEOM", "0") == "1" and self._ex is not None \
+                and getattr(self._ex, "cdp", None) is not None:
+            try:
+                nc = self._n_truth or self._probe_card_count(frame) or n
+                self._n_truth = nc
+                pts = self._ex.cdp.card_tap_points(nc)
+                if len(pts) == n:
+                    self._truth_pts = pts
+                    return [p[0] for p in pts]
+            except Exception as e:  # noqa: BLE001
+                print(f"    [真值几何] 失败({type(e).__name__}) → 回落卡边界", flush=True)
         pe = P.card_positions_by_edges(frame)
         if pe:
             return pe
@@ -220,6 +276,19 @@ class GuandanAdapter(GameAdapter):
             return Observation(frame=frame, my_turn=False)
         if not self._band_looks_like_hand(frame):
             return Observation(frame=frame, my_turn=False)   # 假"我回合" → 跳过, 不空转
+        # CDP 可用时: 用**游戏真值**复核"是不是我的回合"(像素启发式会被残局/动画骗)
+        ex = self._ex
+        if ex is not None and getattr(ex, "cdp", None) is not None:
+            now = time.time()
+            if now - getattr(self, "_turn_checked_at", 0.0) >= 4.0:
+                try:
+                    ok, why = ex.cdp.our_turn_probe(ex.L.btn_play)
+                    self._turn_checked_at = now
+                    if not ok:
+                        print(f"    [真值] {why} → 跳过本帧", flush=True)
+                        return Observation(frame=frame, my_turn=False)
+                except Exception as e:  # noqa: BLE001
+                    print(f"    [真值] 回合探针异常({type(e).__name__}) → 沿用像素判据", flush=True)
         # 期望张数: 优先"块宽实测真值"(不依赖 VLM/像素分段, 实测比 hand_columns 准)
         n_vis = P.hand_card_count_est(frame) or P.hand_columns(frame)
         if self.rl and self._tap_cal is None and n_vis >= 25:
@@ -326,11 +395,19 @@ class GuandanAdapter(GameAdapter):
                          if 0 <= i < len(obs.hand)]
                 if ex.direct_play(idxs, len(obs.hand), ranks=ranks):
                     return ExecResult(True, 0, "直选出牌(RL)")
+                why = ""
+                if getattr(ex, "cdp", None) is not None:
+                    try:
+                        why = ex.cdp.toast()
+                    except Exception:  # noqa: BLE001
+                        why = ""
+                if why:
+                    print(f"  [真值] 出牌被游戏拒绝: {why}", flush=True)
                 rpt = getattr(ex, "last_report", None)
                 if rpt is not None and (rpt.not_our_turn or rpt.skipped):
                     # 执行器规范: 识别/活性不满足 ⇒ 跳过, 不是失败(不计入失败率)
                     return ExecResult(True, 0, f"跳过 · {rpt.reason}", skipped=True)
-                return ExecResult(False, 1, "直选失败(RL)")
+                return ExecResult(False, 1, f"直选失败(RL){' · ' + why if why else ''}")
         want = len(action.combo.cards) if action.combo is not None else None
         follow = bool(obs.table)
         r = ex.play_by_hint(want=want, follow=follow)

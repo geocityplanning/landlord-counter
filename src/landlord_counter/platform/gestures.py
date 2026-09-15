@@ -48,6 +48,7 @@ class Executor:
         self.last_report = None      # 最近一次动作的 ActReport(执行器规范: 识别→动作→校验)
         self.cdp = None              # 可选: CDP 输入后端(实测 adb tap 点"出牌"不生效, CDP 可)
         self._liveness_fails = 0     # 连续"点了没反应"次数(活性探针)
+        self._lift_min = None        # 本次运行见过的最小抬起量(≈"空"基线, 自适应)
 
     # ---------- 基础 ----------
     def _snap(self):
@@ -311,8 +312,19 @@ class Executor:
         first = self._snap()
         before = self.L.white_count(first)
         base_lift = self._lift(first)
+        self._lift_min = base_lift if self._lift_min is None else min(self._lift_min, base_lift)
         want_x = [self._pos(i, n) for i in idxs]
         pre_select = first
+        # ---- 清残留选中(实测: 残留会让"我们选的+残留"变成非法牌型 → 出牌被拒) ----
+        # "空"基线估计: 取"见过的最小值"与 250 的更小者(实测空手牌抬起≈196; 脏值会带偏自适应)
+        empty = min(self._lift_min if self._lift_min is not None else 250, 250)
+        if base_lift > empty + 400:
+            for k in range(min(n, 30)):
+                cur = self._lift(self._snap())
+                if cur <= empty + 400:
+                    break
+                self._tap_card_at(self._pos(k, n), wait=0.45)
+            self.log(f"  [gesture] 清残留选中: {base_lift} → {self._lift(self._snap())} (空基线≈{empty})")
         for r in range(rounds):
             if r:
                 self.log("  [gesture] ↻ 直选重试(重新取帧)")

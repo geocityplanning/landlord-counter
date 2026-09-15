@@ -75,6 +75,15 @@ class GuandanAdapter(GameAdapter):
             white_count=P.white_count,
         )
         self._ex = Executor(self.device, layout, log=print)
+        # 按钮点击走 CDP(可选): 实测 adb tap 点"出牌"不生效, CDP 派发可以
+        if os.getenv("GUANDAN_USE_CDP", "0") == "1":
+            try:
+                from ..cdp import CDP
+
+                self._ex.cdp = CDP(url_filter="8123")
+                print("▶ 按钮输入走 CDP(Bromite 调试口)", flush=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"⚠ CDP 不可用({e}) → 按钮仍走 adb", flush=True)
 
     # ---------- 感知 ----------
     def start_button(self, frame):

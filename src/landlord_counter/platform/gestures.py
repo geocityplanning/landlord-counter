@@ -46,6 +46,7 @@ class Executor:
         self.log = log
         self._dx = 0          # 点选自纠正偏移(全局)
         self.last_report = None      # 最近一次动作的 ActReport(执行器规范: 识别→动作→校验)
+        self.cdp = None              # 可选: CDP 输入后端(实测 adb tap 点"出牌"不生效, CDP 可)
         self._liveness_fails = 0     # 连续"点了没反应"次数(活性探针)
 
     # ---------- 基础 ----------
@@ -55,6 +56,23 @@ class Executor:
     def _lift(self, img) -> int:
         return self.L.lift_px(img) if img is not None else 0
 
+    def _press(self, pt, wait: float = 1.6) -> bool:
+        """按**按钮**: 优先 CDP 派发(实测 adb tap 在'出牌'上完全无反应), 失败回落 adb tap。
+
+        CDP 只是"把这次点击送进去"的另一个通道; 是否生效仍由调用方的**校验**判定
+        (执行器规范第 4 步: 点完必须看可观测信号)。
+        """
+        if pt is None:
+            return False
+        if self.cdp is not None:
+            try:
+                self.cdp.click_screen(pt[0], pt[1], settle=wait)
+                return True
+            except Exception as e:  # noqa: BLE001
+                self.log(f"  [input] CDP 点击失败({type(e).__name__}) → 回落 adb tap")
+        self.dev.tap(pt[0], pt[1], wait=wait)
+        return True
+
     def btn(self, name: str, frame=None):
         """取按钮坐标: 优先 btn_resolver(动态), 否则固定点。返回 None 表示当前不可用。"""
         if self.L.btn_resolver is not None:
@@ -63,6 +81,20 @@ class Executor:
                 return None
             return self.L.btn_resolver(img).get(name)
         return getattr(self.L, f"btn_{name}", None)
+
+    def _tap_card_at(self, x: int, wait: float = 0.45) -> None:
+        """点手牌某位置: 优先 CDP(可信事件), 否则 adb tap。
+
+        实测教训(2026-09-15): adb 的 touch 能让牌视觉上抬起, 但**游戏内部不认这手牌**
+        (点"出牌"毫无反应); 改用 CDP 派发的鼠标事件后, "选牌→出牌"一次成功 ✓。
+        """
+        if self.cdp is not None:
+            try:
+                self.cdp.click_screen(x, self.L.hand_y, settle=wait)
+                return
+            except Exception as e:  # noqa: BLE001
+                self.log(f"  [input] CDP 点牌失败({type(e).__name__}) → 回落 adb")
+        self.dev.tap(x, self.L.hand_y, wait=wait)
 
     def tap_card(self, idx: int, n: int) -> bool:
         """点选第 idx 张并验证抬起; 失败则左右扫点(小牌量牌位漂移)。
@@ -77,7 +109,7 @@ class Executor:
             if not (0 < x_want < 720):
                 return False
             before_img = self._snap()
-            self.dev.tap(x_want, self.L.hand_y, wait=0.45)
+            self._tap_card_at(x_want, wait=0.45)
             after_img = self._snap()
             if after_img is None:
                 continue
@@ -156,7 +188,7 @@ class Executor:
             if not (0 < x < 720):
                 continue
             b = self._snap()
-            self.dev.tap(x, self.L.hand_y, wait=0.6)
+            self._tap_card_at(x, wait=0.6)
             a = self._snap()
             c = cnt(a)
             # ---- 活性探针(执行器规范第 2/4 步): 首次点击必须带来可观测反应 ----
@@ -174,7 +206,7 @@ class Executor:
             changed = self._frame_changed(b, a)
             if c <= prev and not changed:      # 没选中也没画面变化 → 补点一次
                 self.log(f"  [gesture] ↻ 组选: x={x}(点数{r}) 未增({prev}→{c}) → 补点")
-                self.dev.tap(x, self.L.hand_y, wait=0.6)
+                self._tap_card_at(x, wait=0.6)
                 a2 = self._snap()
                 c2 = cnt(a2)
                 changed = changed or self._frame_changed(a, a2)
@@ -214,7 +246,7 @@ class Executor:
 
     def clear(self, idxs: list[int], n: int) -> None:
         for i in idxs:
-            self.dev.tap(self._pos(i, n), self.L.hand_y, wait=0.15)
+            self._tap_card_at(self._pos(i, n), wait=0.15)
 
     def selected_count(self, img, base: float | None = None) -> int:
         """已选张数: 用**相对基线**的抬起增量(承载存在基线偏移, 绝对值会多算)。"""
@@ -226,7 +258,7 @@ class Executor:
         if not p:
             self.log("  [gesture] ✗ 找不到'不出'按钮")
             return False
-        self.dev.tap(*p, wait=1.6)
+        self._press(p, wait=1.6)
         return True
 
     # ---------- 出牌 ----------
@@ -252,7 +284,7 @@ class Executor:
         ph = self.btn("hint")
         if not ph:
             return "fail"
-        self.dev.tap(*ph, wait=1.6)
+        self._press(ph, wait=1.6)
         iv = self._snap()
         delta = self._lift(iv) - baseline    # 只用增量估算选中张数
         est = round(delta / self.L.lift_one) if delta > self.L.lift_min else 0
@@ -264,11 +296,11 @@ class Executor:
         pp = self.btn("play")
         if not pp:
             return "fail"
-        self.dev.tap(*pp, wait=1.6)
+        self._press(pp, wait=1.6)
         if self.wait_receipt(before):
             return "ok"
         self.log("  [gesture] ↻ 出牌未生效 → 补点一次")
-        self.dev.tap(*pp, wait=1.6)
+        self._press(pp, wait=1.6)
         if self.wait_receipt(before, polls=6):
             return "ok"
         return "fail"
@@ -313,11 +345,11 @@ class Executor:
             if not pp:
                 self.clear(idxs, n)
                 continue
-            self.dev.tap(*pp, wait=1.6)
+            self._press(pp, wait=1.6)
             if self.wait_receipt(before):
                 return True
             self.log("  [gesture] ↻ 出牌未生效 → 补点一次")
-            self.dev.tap(*pp, wait=1.6)
+            self._press(pp, wait=1.6)
             if self.wait_receipt(before, polls=6):
                 return True
             self.clear(idxs, n)

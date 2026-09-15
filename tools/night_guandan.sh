@@ -11,7 +11,12 @@ export GUANDAN_LEGACY=1
 if [ -z "${STATS_TAG:-}" ]; then          # 手动指定时尊重调用方(白天定向采样用)
   H=$(date +%H)
   H=$((10#$H))
-  if [ $((H % 2)) -eq 1 ]; then
+  # 三臂 A/B: 23 点 = 自研+点选直出(ours_direct) / 其余奇数点 = 自研+提示执行(ours) / 偶数点 = 基线(mvp)
+  if [ "$H" = "23" ]; then
+    export GUANDAN_OURS=1
+    export GUANDAN_OURS_DIRECT=1
+    export STATS_TAG=ours_direct
+  elif [ $((H % 2)) -eq 1 ]; then
     export GUANDAN_OURS=1
     export STATS_TAG=ours
   else

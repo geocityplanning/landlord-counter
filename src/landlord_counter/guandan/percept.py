@@ -345,6 +345,37 @@ def card_tap_x(index: int, n: int) -> int:
     return int(hand_start_x(n) + index * 24 + 20)
 
 
+def hand_block(img, thr: int = 150, min_col: int = 6):
+    """实测我方手牌块的左右边缘(按白卡列轮廓)。取不到返回 (None, None)。"""
+    y0, y1 = HAND_BAND
+    band = img[y0:y1]
+    colsum = (band.min(axis=2) > thr).sum(axis=0)
+    xs = np.where(colsum > min_col)[0]
+    if len(xs) < 10:
+        return None, None
+    return int(xs.min()), int(xs.max())
+
+
+def card_positions(img, n: int, pitch: float = 24.0) -> list:
+    """每张手牌的可点 x 坐标(**实测**, 与"张数"读数解耦)。
+
+    背景(2026-09-15 实测): 公式 hand_start_x(n) 依赖上游读到的张数, VLM 多读/少读
+    1 张 → 整排平移 12px+ → 点到邻牌 → 选出的牌型非法 → 游戏忽略"出牌"按钮
+    (表现就是"点选失败/点了没反应")。实测: 手牌块左缘=78, 公式在 n=21 时=76 ✓,
+    n=22 时=64 ✗(差 14px), n=17 时=124 ✗(差 46px)。
+    左缘实测 + 固定间距(源码: 每张露出 24px, 末张 88px) → 与张数无关 ⇒ 稳。
+    """
+    xl, xr = hand_block(img)
+    if xl is None:
+        return [card_tap_x(i, n) for i in range(n)]      # 取不到 → 回落公式
+    p = float(pitch)                                     # 源码常量(24px/张), 与"张数"读数无关
+    if n > 1 and xl + (n - 1) * p + 88.0 > xr + 24:      # 整排溢出实测右缘 = 上游张数偏高
+        est = (xr - xl - 88.0) / (n - 1)                 # 才用右缘反推
+        if 16.0 <= est <= 40.0:
+            p = est
+    return [int(round(xl + i * p + p / 2)) for i in range(n)]
+
+
 def hand_columns(img) -> int:
     """像素数手牌张数: 手牌带亮列分段数(仅计宽度≥8px 的段, 滤噪声)"""
     y0, y1 = HAND_BAND

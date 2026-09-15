@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 
@@ -18,11 +18,12 @@ class GestureLayout:
     按钮坐标可以是固定点, 也可以用 ``btn_resolver(frame)`` 动态解析(如按颜色找按钮)。
     """
 
-    card_tap_x: Callable[[int, int], int]      # (索引, 手牌张数) -> 设备x
+    card_tap_x: Callable[[int, int], int]      # (索引, 手牌张数) -> 设备x(公式, 兜底)
     hand_y: int                                # 手牌带点击 y
     lift_px: Callable[[np.ndarray], int]       # 抬起像素量(用于选牌验证)
     my_turn: Callable[[np.ndarray], bool]      # 是否我方回合(含按钮可用)
     white_count: Callable[[np.ndarray], int]   # 手牌白卡像素(用于回执)
+    card_positions: Callable[[Any, int], list[int]] | None = None  # 实测牌位(优先, 与张数解耦)
     btn_hint: tuple[int, int] | None = None
     btn_play: tuple[int, int] | None = None
     btn_pass: tuple[int, int] | None = None
@@ -63,7 +64,7 @@ class Executor:
 
         验证方式: 有 lift_diff(帧差) 用它(更稳); 否则用绝对抬起量增量。
         """
-        base = self.L.card_tap_x(idx, n)
+        base = self._pos(idx, n)
         for dx in (0, 8, -8, 16, -16):
             if self.L.lift_diff is not None:
                 before_img = self._snap()
@@ -81,6 +82,19 @@ class Executor:
                     return True
         return False
 
+    def _pos(self, idx: int, n: int) -> int:
+        """第 idx 张的可点 x: 优先"实测牌位", 失败回落公式。"""
+        f = self.L.card_positions
+        if f is not None:
+            try:
+                img = self._snap()
+                xs = f(img, n) if img is not None else None
+                if xs and 0 <= idx < len(xs):
+                    return int(xs[idx])
+            except Exception:  # noqa: BLE001
+                pass
+        return self.L.card_tap_x(idx, n)
+
     def select(self, idxs: list[int], n: int) -> bool:
         """逐张点选; 全中才算成功。"""
         for i in idxs:
@@ -91,10 +105,11 @@ class Executor:
 
     def clear(self, idxs: list[int], n: int) -> None:
         for i in idxs:
-            self.dev.tap(self.L.card_tap_x(i, n), self.L.hand_y, wait=0.15)
+            self.dev.tap(self._pos(i, n), self.L.hand_y, wait=0.15)
 
-    def selected_count(self, img) -> int:
-        lift = self._lift(img)
+    def selected_count(self, img, base: float | None = None) -> int:
+        """已选张数: 用**相对基线**的抬起增量(承载存在基线偏移, 绝对值会多算)。"""
+        lift = self._lift(img) - (base or 0.0)
         return round(lift / self.L.lift_one) if lift > self.L.lift_min else 0
 
     def pass_turn(self, frame=None) -> bool:
@@ -151,7 +166,9 @@ class Executor:
 
     def direct_play(self, idxs: list[int], n: int, rounds: int = 2) -> bool:
         """直选执行: 点选 → 校验张数 → 出牌 → 回执; 失败清选后再来一轮。"""
-        before = self.L.white_count(self._snap())
+        first = self._snap()
+        before = self.L.white_count(first)
+        base_lift = self._lift(first)
         for r in range(rounds):
             if r:
                 self.log("  [gesture] ↻ 直选重试(重新取帧)")
@@ -160,7 +177,7 @@ class Executor:
                 self.clear(idxs, n)
                 continue
             time.sleep(0.5)
-            est = self.selected_count(self._snap())
+            est = self.selected_count(self._snap(), base_lift)
             if est == 0 or abs(est - len(idxs)) > max(1, len(idxs) // 2):
                 self.log(f"  [gesture] ✗ 选牌校验失败(选中≈{est} vs 目标{len(idxs)})")
                 self.clear(idxs, n)

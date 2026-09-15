@@ -55,6 +55,7 @@ class GuandanAdapter(GameAdapter):
 
         layout = GestureLayout(
             card_tap_x=P.card_tap_x,
+            card_positions=P.card_positions,
             hand_y=875,
             btn_hint=BTN_HINT,
             btn_play=BTN_PLAY,

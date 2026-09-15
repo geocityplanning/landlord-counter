@@ -395,6 +395,52 @@ def hand_block(img, thr: int = 150, min_col: int = 6):
     return int(xs.min()), int(xs.max())
 
 
+def card_edges(img, y0: int = 805, y1: int = 945, min_gap: int = 10) -> list:
+    """手牌带里所有**竖直边界线**的 x(卡与卡的分界)。
+
+    纯像素、与"公式/张数/布局假设"完全无关 —— 这是能迁移到其它游戏(腾讯掼蛋 App/小程序)
+    的做法: 任何把牌叠起来画的手牌区, 卡与卡之间都有一条边界线, 找到它就有牌位。
+    """
+    band = img[y0:y1].mean(axis=2)
+    gx = np.abs(np.diff(band, axis=1)).mean(axis=0)
+    if gx.size < 20:
+        return []
+    thr = max(0.35 * float(gx.max()), 1.0)
+    peaks: list = []
+    for x in range(1, gx.size - 1):
+        if gx[x] > thr and gx[x] >= gx[x - 1] and gx[x] > gx[x + 1]:
+            if peaks and x - peaks[-1] < min_gap:
+                if gx[x] > gx[peaks[-1]]:
+                    peaks[-1] = x
+            else:
+                peaks.append(x)
+    return peaks
+
+
+def card_positions_by_edges(img, n_hint: int = 0) -> list:
+    """每张牌的可点 x = **实测卡边界** 规整化后的"左缘 + 半间距"。
+
+    做法: 找边界 → 用相邻间距中位数当 pitch(抗噪) → 以首条边界为起点按 pitch 生成,
+    误检的边界自然被剔除。返回空 = 边界不可用(交给上层回落)。
+    n_hint 只用于日志/一致性参考, 不参与计算(边界是实测的, 比读数可信)。
+    """
+    ps = card_edges(img)
+    if len(ps) < 2:
+        return []
+    diffs = sorted(b - a for a, b in zip(ps, ps[1:]) if 8 <= (b - a) <= 120)
+    if not diffs:
+        return []
+    pitch = diffs[len(diffs) // 2]
+    # 只用"与 pitch 一致"的边界(逐条滤掉误检/末张宽边), 每条边界 = 一张牌的左缘
+    keep = [ps[0]]
+    for b in ps[1:]:
+        if abs((b - keep[-1]) - pitch) <= max(4.0, pitch * 0.35):
+            keep.append(b)
+    if not (1 <= len(keep) <= 30):
+        return []
+    return [int(round(x + pitch / 2)) for x in keep]
+
+
 def card_positions(img, n: int, pitch: float = 24.0) -> list:
     """每张手牌的可点 x 坐标(**实测**, 与"张数"读数解耦)。
 
@@ -404,9 +450,12 @@ def card_positions(img, n: int, pitch: float = 24.0) -> list:
     n=22 时=64 ✗(差 14px), n=17 时=124 ✗(差 46px)。
     左缘实测 + 固定间距(源码: 每张露出 24px, 末张 88px) → 与张数无关 ⇒ 稳。
     """
+    pe = card_positions_by_edges(img, n)                 # ① 首选: 卡边界实测(与假设无关)
+    if pe:
+        return pe
     xl, xr = hand_block(img)
     if xl is None:
-        return [card_tap_x(i, n) for i in range(n)]      # 取不到 → 回落公式
+        return [card_tap_x(i, n) for i in range(n)]      # ③ 取不到 → 回落公式
     p = float(pitch)                                     # 源码常量(24px/张), 与"张数"读数无关
     if n > 1 and xl + (n - 1) * p + 88.0 > xr + 24:      # 整排溢出实测右缘 = 上游张数偏高
         est = (xr - xl - 88.0) / (n - 1)                 # 才用右缘反推
@@ -468,13 +517,15 @@ def hand_is_real(img, tol: int = 2):
     return abs(n_est - ne) <= tol, info
 
 
-def lifted_columns(before, after, y0: int = 756, y1: int = 806,
+def lifted_columns(before, after, y0: int = 776, y1: int = 802,
                    min_px: int = 3, gap: int = 6) -> list:
     """帧差定位"刚被抬起的是哪几张牌" → 返回变化列段中心 x 列表。
 
     原理: 选中的牌整张上移, 手牌带**上方那条带**(默认 y756-806)从"无牌"变"有牌";
     未选中的牌不动。用途: 身份校验 —— 点选后核对"抬起的 x" 是不是"想点的 x"。
     实测: 点"提示"钮选牌 → 该带变化 23k 像素; 点到空地 → 0 像素。
+    ⚠️ 带的 y 范围必须紧贴手牌带**正上方**(约 25px): 取太宽(如 756-806)会混进桌面
+    牌堆区, 产生"总停在同一列"的幻影(实测 599), 把正确的点选误判成点偏。
     """
     if before is None or after is None:
         return []

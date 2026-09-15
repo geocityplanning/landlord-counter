@@ -84,17 +84,19 @@ class Executor:
                 cols = [c for c, _w in _P.lifted_columns(before_img, after_img)]
             except Exception:  # noqa: BLE001
                 pass
-            if not cols:                      # 完全没抬起 → 微调再试
-                self._dx += 8
-                continue
-            near = min(cols, key=lambda c: abs(c - x_want))
-            d = near - x_want
-            if abs(d) <= 16:                  # 命中目标牌
-                self._dx += d
+            # 可靠信号: 抬起增量(真的选中了牌)。抬起位只作**软校验/日志**:
+            #   实测抬起带易混进桌面牌堆 → 幻影会诱导"取消重试"反而毁掉正确点选,
+            #   故不据它取消。位置本身已由"卡边界实测"保证(与公式/张数无关)。
+            est = round((self._lift(after_img) - (self._lift(before_img))) / self.L.lift_one)
+            if est > 0:
+                if cols:
+                    near = min(cols, key=lambda c: abs(c - x_want))
+                    if abs(near - x_want) > 20:
+                        self.log(f"  [gesture] ⚠ 抬起位(想{x_want} 实测{near}) 不符, 但已选中{est}张 → 接受")
                 return True
-            self.log(f"  [gesture] ↻ 点偏了(想{x_want} 实际{near}, 偏{d:+d}) → 取消并自纠正")
-            self.dev.tap(x_want, self.L.hand_y, wait=0.25)   # 取消刚选中的那张
-            self._dx += d
+            if cols:                          # 没抬起但画面变了 → 记录后微调重试
+                self.log(f"  [gesture] ⚠ 未选中但画面有变化 {cols} → 微调重试")
+            self._dx += 6
         return False
 
     def _pos(self, idx: int, n: int) -> int:

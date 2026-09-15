@@ -98,7 +98,8 @@ class GuandanAdapter(GameAdapter):
         self._track_seat(frame)
         if not P.my_turn(frame):          # 手牌白卡 + 按钮可用(防残局误判)
             return Observation(frame=frame, my_turn=False)
-        n_vis = P.hand_columns(frame)
+        # 期望张数: 优先"块宽实测真值"(不依赖 VLM/像素分段, 实测比 hand_columns 准)
+        n_vis = P.hand_card_count_est(frame) or P.hand_columns(frame)
         hand = P.read_hand_ordered(self.vision, frame, expected=n_vis)
         if not hand:
             return Observation(frame=frame, my_turn=True, hand=None, extra={"read_fail": True})
@@ -108,6 +109,8 @@ class GuandanAdapter(GameAdapter):
             hand2 = P.read_hand_ordered(self.vision, frame, expected=n_vis)
             if hand2:
                 hand = hand2
+            if abs(n_vis - len(hand)) > 1:      # 重读后仍对不上 → 不敢用, 走提示驱动
+                return Observation(frame=frame, my_turn=True, hand=None, extra={"read_fail": True})
         return Observation(frame=frame, my_turn=True, hand=hand, table=cards,
                            extra={"n_vis": n_vis})
 

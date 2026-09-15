@@ -172,7 +172,7 @@ def ours_decide(img, rec) -> str:
     返回 'play'|'pass'|'fallback'(回落提示钮)。"""
     global _LAST_SIG, _SAME_SIG_N
     # 像素数牌(已滤噪) 作为期望张数喂给识别
-    n_vis = P.hand_columns(img)
+    n_vis = P.hand_card_count_est(img) or P.hand_columns(img)   # 块宽实测真值优先
     hand = _read_hand(img, rec, n_vis)
     if not hand:  # 读失败 → 重新取帧再读一次(VLM 偶发空返回)
         img2 = snap()

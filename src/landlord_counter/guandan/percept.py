@@ -376,6 +376,22 @@ def card_positions(img, n: int, pitch: float = 24.0) -> list:
     return [int(round(xl + i * p + p / 2)) for i in range(n)]
 
 
+def hand_card_count_est(img, pitch: float = 24.0, last_w: float = 88.0) -> int:
+    """从手牌块**实测宽度**反推张数 —— 不依赖 VLM 的独立真值。
+
+    源码布局: 整排宽 = (n-1)*24 + 88 且居中。实测块宽 W → n ≈ (W-88)/24 + 1。
+    实测(2026-09-15): 块 78..642 = 564 宽 → 21 张 ✓ (而 hand_columns 像素分段只有 17 ✗,
+    VLM 也会偶尔少读)。用途: 当读牌的"期望张数"和一致性闸门。
+    """
+    xl, xr = hand_block(img)
+    if xl is None:
+        return 0
+    w = float(xr - xl)
+    if w < 60:
+        return 0
+    return max(1, int(round((w - last_w) / pitch)) + 1)
+
+
 def hand_columns(img) -> int:
     """像素数手牌张数: 手牌带亮列分段数(仅计宽度≥8px 的段, 滤噪声)"""
     y0, y1 = HAND_BAND

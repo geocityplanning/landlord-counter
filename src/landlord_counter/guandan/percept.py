@@ -392,6 +392,43 @@ def hand_card_count_est(img, pitch: float = 24.0, last_w: float = 88.0) -> int:
     return max(1, int(round((w - last_w) / pitch)) + 1)
 
 
+def card_edge_count(img, min_gap: int = 12) -> int:
+    """手牌带**竖直边缘**(卡与卡的边界线)计数 + 1 → 张数的独立估计。
+
+    与"块宽反推"和"VLM 读数"互相独立: 真手牌每张露出 24px, 边界线等距可数;
+    开始界面的大片白区没有这种周期性结构(实测 边缘=3 vs 块宽推 23)。
+    """
+    y0, y1 = HAND_BAND
+    gray = img[y0:y1].mean(axis=2)
+    gx = np.abs(np.diff(gray, axis=1)).mean(axis=0)
+    if gx.size == 0 or gx.max() <= 0:
+        return 0
+    thr = 0.45 * float(gx.max())
+    peaks: list = []
+    for x in range(1, gx.size - 1):
+        if gx[x] > thr and gx[x] >= gx[x - 1] and gx[x] > gx[x + 1]:
+            if not peaks or x - peaks[-1] >= min_gap:
+                peaks.append(x)
+            elif gx[x] > gx[peaks[-1]]:
+                peaks[-1] = x
+    return len(peaks) + 1 if peaks else 0
+
+
+def hand_is_real(img, tol: int = 2):
+    """手牌带是否真是"局内我方手牌": 块宽反推张数 与 边缘计数 是否自洽。
+
+    返回 (bool, info)。实测: 开始界面白区 推23 vs 边缘3(差20) → 假 ✓;
+    真手牌(27 张满手) 两者一致 ✓。用途: 挡掉"对着开始界面空转"。
+    """
+    xl, xr = hand_block(img)
+    n_est = hand_card_count_est(img)
+    ne = card_edge_count(img)
+    info = {"block": (xl, xr), "n_est": n_est, "n_edges": ne, "diff": abs(n_est - ne)}
+    if xl is None or n_est < 1 or ne < 1:
+        return False, info
+    return abs(n_est - ne) <= tol, info
+
+
 def hand_columns(img) -> int:
     """像素数手牌张数: 手牌带亮列分段数(仅计宽度≥8px 的段, 滤噪声)"""
     y0, y1 = HAND_BAND

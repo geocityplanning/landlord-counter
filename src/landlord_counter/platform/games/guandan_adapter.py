@@ -133,15 +133,19 @@ class GuandanAdapter(GameAdapter):
         用途: "我方回合"判据会被动画帧/桌面残影骗到, 于是去读牌 → 读不到 → 点提示 →
         提示也没反应 → 每轮空转打一条"提示空且无手牌"(实测一晚几十条)。加这道闸门后
         不像手牌就直接当"非我回合"跳过, 不产生假动作。
-        实测(2026-09-15): 真手牌带 块宽413 密度0.46; 开始界面等假阳性明显偏低。
+        实测(2026-09-15): 只靠"密度"挡不住开始界面(块46-673/密度0.67/块宽推23张, 看着像 23 张牌)
+        → 主循环会一直对着开始界面空转"提示空且无手牌"。改为两道硬判据:
+          ① 画面没有"金钮"(开始游戏/再来一局/结算) = 不是决策时刻;
+          ② 手牌带结构自洽(块宽反推张数 ≈ 卡边界计数, 见 P.hand_is_real)。
         """
         try:
-            xl, xr = P.hand_block(frame)
-            if xl is None or (xr - xl) < 80:
+            if gold_button(frame) is not None:
                 return False
-            y0, y1 = P.HAND_BAND
-            sub = frame[y0:y1, xl:xr + 1]
-            return float((sub.min(axis=2) > 150).mean()) >= 0.30
+            ok, info = P.hand_is_real(frame)
+            if not ok:
+                self._last_band_info = info
+                return False
+            return True
         except Exception:  # noqa: BLE001
             return True
 

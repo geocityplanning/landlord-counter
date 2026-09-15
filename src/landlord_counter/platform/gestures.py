@@ -30,7 +30,7 @@ class GestureLayout:
     btn_resolver: Callable[[np.ndarray], dict] | None = None   # → {'hint','play','pass'} 坐标
     lift_diff: Callable[[np.ndarray, np.ndarray], float] | None = None  # 帧差抬起量(可选, 更稳)
     lift_eps: float = 300.0     # "新抬起一张"的最小增量(像素口径≈300, 张数口径≈0.5)
-    lift_one: float = 1460.0    # 单张抬起量(像素口径≈1460, 张数口径=1)
+    lift_one: float = 1260.0    # 单张抬起量(Bromite 实测 3 张=3779 → ≈1260/张; 原 1460 偏大)
     lift_min: float = 500.0     # 判定"有选中"的最小抬起量
 
 
@@ -115,13 +115,60 @@ class Executor:
             base = self.L.card_tap_x(idx, n)
         return int(base + getattr(self, "_dx", 0))
 
-    def select(self, idxs: list[int], n: int) -> bool:
-        """逐张点选; 全中才算成功。"""
-        for i in idxs:
-            if not self.tap_card(i, n):
-                self.log(f"  [gesture] ✗ 点选不中 idx={i} (n={n})")
-                return False
-        return True
+    def select(self, idxs: list[int], n: int, ranks: list | None = None) -> bool:
+        """按**组**点选: 同点数的牌只点一次(游戏会"帮点"补齐整组)。
+
+        现场结论(2026-09-15 实测):
+          · 帮点逻辑: 点一张 → 同点数整组一起选中(抬起量 +2559 ≈ 2 张, 单张≈1260);
+          · 反效果: 再点同组的第二张 = **整组取消** ⇒ "一张一张点"会自己抵消, 永远选不上;
+          · "抬起条在哪一列"的绝对读数不可靠(上方混着桌面牌堆, 实测点 x=208 读出 122)。
+        做法: 目标牌按点数分组 → 每组只点一次 → 用**抬起量**确认这次点击是选中还是取消
+              (没增长就补点一次) → 每组至少贡献一张即算成功。
+        这是通用做法: 任何"点一张选一组"的手牌区(App/小程序同理)都适用。
+        """
+        base = self._lift(self._snap())
+
+        def cnt() -> int:
+            img = self._snap()
+            if img is None:
+                return -1
+            return max(0, round((self._lift(img) - base) / self.L.lift_one))
+
+        # 目标位按点数分组(ranks 缺省则各自成组)
+        picks = list(zip(idxs, ranks if (ranks and len(ranks) == len(idxs)) else [None] * len(idxs)))
+        groups: list = []
+        for i, r in picks:
+            for gp in groups:
+                if r is not None and gp[0] == r:
+                    gp[1].append(i)
+                    break
+            else:
+                groups.append([r, [i]])
+        prev = 0
+        for r, gidx in groups:
+            x = self._pos(gidx[0], n)
+            if not (0 < x < 720):
+                continue
+            self.dev.tap(x, self.L.hand_y, wait=0.6)
+            c = cnt()
+            if c <= prev:                      # 没增长(可能点成取消/漏点) → 补点一次
+                self.log(f"  [gesture] ↻ 组选: x={x}(点数{r}) 未增({prev}→{c}) → 补点")
+                self.dev.tap(x, self.L.hand_y, wait=0.6)
+                c = cnt()
+            prev = max(prev, c)
+        ok = prev >= len(groups)
+        self.log(f"  [gesture] {'✓ 组选完成' if ok else '✗ 组选不中'}: {len(groups)}组 选中≈{prev}张 (n={n})")
+        return ok
+
+    def _selected_xs(self) -> list:
+        """当前已抬起(选中)的牌位 x(绝对测量)。"""
+        try:
+            from ..guandan import percept as _P
+
+            img = self._snap()
+            return _P.selected_columns(img) if img is not None else []
+        except Exception:  # noqa: BLE001
+            return []
 
     def clear(self, idxs: list[int], n: int) -> None:
         for i in idxs:
@@ -184,7 +231,8 @@ class Executor:
             return "ok"
         return "fail"
 
-    def direct_play(self, idxs: list[int], n: int, rounds: int = 2) -> bool:
+    def direct_play(self, idxs: list[int], n: int, rounds: int = 2,
+                    ranks: list | None = None) -> bool:
         """直选执行: 点选 → 校验张数 → 出牌 → 回执; 失败清选后再来一轮。"""
         first = self._snap()
         before = self.L.white_count(first)
@@ -195,7 +243,7 @@ class Executor:
             if r:
                 self.log("  [gesture] ↻ 直选重试(重新取帧)")
                 time.sleep(1.0)
-            if not self.select(idxs, n):
+            if not self.select(idxs, n, ranks=ranks):
                 self.clear(idxs, n)
                 continue
             time.sleep(0.5)

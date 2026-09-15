@@ -517,6 +517,41 @@ def hand_is_real(img, tol: int = 2):
     return abs(n_est - ne) <= tol, info
 
 
+def selected_columns(img, y0: int = 776, y1: int = 802) -> list:
+    """当前**已抬起(选中)**的牌位 x —— 绝对测量, 不是帧差。
+
+    原理: 选中的牌整张上移 → 手牌带正上方的窄带里会出现这些牌的卡面/边界。
+    用同一套"卡边界"检测读这条带, 就能知道"现在到底选中了哪几张"。
+    用途: 按组点选循环 —— 每次点击后据此判断"选中/取消", 而不是靠猜。
+    """
+    sub = img[y0:y1]
+    ps = card_edges(sub, y0=0, y1=sub.shape[0])
+    if len(ps) < 1:
+        # 边界不行就退化为"白卡列段"
+        colsum = (sub.min(axis=2) > 150).sum(axis=0)
+        xs = np.where(colsum > 3)[0]
+        if len(xs) == 0:
+            return []
+        runs, st, prev = [], int(xs[0]), int(xs[0])
+        for x in xs[1:]:
+            x = int(x)
+            if x - prev > 6:
+                runs.append((st, prev))
+                st = x
+            prev = x
+        runs.append((st, prev))
+        return [int((u + v) / 2) for u, v in runs if v - u >= 4]
+    diffs = sorted(b - a for a, b in zip(ps, ps[1:]) if 8 <= (b - a) <= 120)
+    if not diffs:
+        return [int(x + 12) for x in ps]
+    pitch = diffs[len(diffs) // 2]
+    keep = [ps[0]]
+    for b in ps[1:]:
+        if abs((b - keep[-1]) - pitch) <= max(4.0, pitch * 0.35):
+            keep.append(b)
+    return [int(x + pitch / 2) for x in keep]
+
+
 def lifted_columns(before, after, y0: int = 776, y1: int = 802,
                    min_px: int = 3, gap: int = 6) -> list:
     """帧差定位"刚被抬起的是哪几张牌" → 返回变化列段中心 x 列表。

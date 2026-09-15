@@ -302,7 +302,9 @@ class GuandanAdapter(GameAdapter):
         if action.meta.get("direct") and action.combo is not None and obs.hand:
             idxs = _map_indices(obs.hand, action.combo.cards)
             if idxs:
-                if ex.direct_play(idxs, len(obs.hand)):
+                ranks = [getattr(obs.hand[i], "zhi", None) for i in idxs
+                         if 0 <= i < len(obs.hand)]
+                if ex.direct_play(idxs, len(obs.hand), ranks=ranks):
                     return ExecResult(True, 0, "直选出牌(RL)")
                 return ExecResult(False, 1, "直选失败(RL)")
         want = len(action.combo.cards) if action.combo is not None else None

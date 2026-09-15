@@ -31,6 +31,7 @@ class GuandanAdapter(GameAdapter):
         self._rl = None
         self._rl_hist: list = []
         self._rl_played = [0.0, 0.0, 0.0, 0.0]
+        self._read_fail_n = 0        # 连续读牌失败次数(空读治理: 不空转)
 
     def attach(self, device, vision=None) -> None:
         super().attach(device, vision)
@@ -94,22 +95,47 @@ class GuandanAdapter(GameAdapter):
             self._last_seat["who"] = None
         self._last_seat["blocks"] = cur
 
+    def _band_looks_like_hand(self, frame) -> bool:
+        """手牌带是否**真的**是手牌: 有足够宽的块且块内白密度够高。
+
+        用途: "我方回合"判据会被动画帧/桌面残影骗到, 于是去读牌 → 读不到 → 点提示 →
+        提示也没反应 → 每轮空转打一条"提示空且无手牌"(实测一晚几十条)。加这道闸门后
+        不像手牌就直接当"非我回合"跳过, 不产生假动作。
+        实测(2026-09-15): 真手牌带 块宽413 密度0.46; 开始界面等假阳性明显偏低。
+        """
+        try:
+            xl, xr = P.hand_block(frame)
+            if xl is None or (xr - xl) < 80:
+                return False
+            y0, y1 = P.HAND_BAND
+            sub = frame[y0:y1, xl:xr + 1]
+            return float((sub.min(axis=2) > 150).mean()) >= 0.30
+        except Exception:  # noqa: BLE001
+            return True
+
     def sense(self, frame) -> Observation:
         self._track_seat(frame)
         if not P.my_turn(frame):          # 手牌白卡 + 按钮可用(防残局误判)
             return Observation(frame=frame, my_turn=False)
+        if not self._band_looks_like_hand(frame):
+            return Observation(frame=frame, my_turn=False)   # 假"我回合" → 跳过, 不空转
         # 期望张数: 优先"块宽实测真值"(不依赖 VLM/像素分段, 实测比 hand_columns 准)
         n_vis = P.hand_card_count_est(frame) or P.hand_columns(frame)
         hand = P.read_hand_ordered(self.vision, frame, expected=n_vis)
         if not hand:
+            self._read_fail_n += 1
+            if self._read_fail_n >= 3:      # 连续读不到 → 本帧不当"我回合", 交给看门狗/健康检查
+                return Observation(frame=frame, my_turn=False)
             return Observation(frame=frame, my_turn=True, hand=None, extra={"read_fail": True})
+        self._read_fail_n = 0
         table = P.read_table_last(self.vision, frame)
         cards = table or []
+        # 一致性闸门: 牌位已与张数解耦(实测牌位), 故张数相差 1 张无害 → 只挡 >2 的离谱读数
         if hand and n_vis and abs(n_vis - len(hand)) > 1:
             hand2 = P.read_hand_ordered(self.vision, frame, expected=n_vis)
             if hand2:
                 hand = hand2
-            if abs(n_vis - len(hand)) > 1:      # 重读后仍对不上 → 不敢用, 走提示驱动
+            if abs(n_vis - len(hand)) > 2:      # 重读后仍离谱 → 不敢用, 走提示驱动
                 return Observation(frame=frame, my_turn=True, hand=None, extra={"read_fail": True})
         return Observation(frame=frame, my_turn=True, hand=hand, table=cards,
                            extra={"n_vis": n_vis})

@@ -26,6 +26,11 @@ class GuandanAdapter(GameAdapter):
         self.ours = (os.getenv("GUANDAN_OURS", "0") == "1") if ours is None else ours
         self._last_seat = {"who": None, "blocks": {}}
         self._ex = None
+        # RL 决策臂(2026-09-15): 开源预训练权重在我方合法候选里选牌 → 必须走点选直出
+        self.rl = os.getenv("GUANDAN_DECIDE", "").strip().lower() == "rl"
+        self._rl = None
+        self._rl_hist: list = []
+        self._rl_played = [0.0, 0.0, 0.0, 0.0]
 
     def attach(self, device, vision=None) -> None:
         super().attach(device, vision)
@@ -120,10 +125,41 @@ class GuandanAdapter(GameAdapter):
         st.jipai = JIPAI
         st.shi_dui_you = self._last_seat.get("who") == "top"
         last = R.identify(cards, JIPAI) if cards else None
+        if self.rl:
+            return self._decide_rl(obs, last, cards)
         choice = AI.choose_play(obs.hand, last, st)
         if choice is None or getattr(choice, "is_invalid", False):
             return Action("pass", meta={"why": "引擎判不出"})
         return Action("play", combo=choice, meta={"why": "自研决策"})
+
+    def _decide_rl(self, obs: Observation, last, cards: list) -> Action:
+        """RL 臂: 预训练权重在"我方全部合法出牌"里选 → 标记 direct(执行层点选直出)。"""
+        who = self._last_seat.get("who")
+        wi = {"right": 1, "top": 2, "left": 3}.get(who or "", 1)
+        if len(obs.hand) >= 25:                      # 手牌回到满手 = 新一局 → 清历史
+            self._rl_hist.clear()
+            self._rl_played = [0.0, 0.0, 0.0, 0.0]
+        if last is not None and (not self._rl_hist or self._rl_hist[-1][1] is not last):
+            self._rl_hist.append((wi, last))
+            self._rl_played[wi] = min(27.0, self._rl_played[wi] + len(cards))
+        if self._rl is None:
+            from ...guandan.rl_policy import RLPolicy
+
+            self._rl = RLPolicy()
+            print(f"▶ RL 决策器已加载: {os.path.basename(self._rl.path)}", flush=True)
+        cands = AI.zhao_ke_chu_de_pai(obs.hand, last, JIPAI)
+        mine = float(len(obs.hand))
+        others = [max(0.0, 27 - self._rl_played[i]) for i in (1, 2, 3)]
+        choice, info = self._rl.choose(cands, obs.hand, self._rl_hist[-16:],
+                                       [mine] + others + [mine + sum(others)], (wi, last), 0)
+        print(f"  [rl] 手牌{len(obs.hand)} 候选{info['n_cand']}(可映射{info['mapped']}) → "
+              f"{R.group_to_str(choice) if choice is not None else '不出'} | value={info['value']:.3f}",
+              flush=True)
+        if choice is None:
+            return Action("pass", meta={"why": "RL判不出/不出"})
+        self._rl_hist.append((0, choice))
+        self._rl_played[0] = min(27.0, self._rl_played[0] + len(choice.cards))
+        return Action("play", combo=choice, meta={"why": "RL决策", "direct": True})
 
     # ---------- 执行 ----------
     def execute(self, action: Action, obs: Observation) -> ExecResult:
@@ -134,6 +170,13 @@ class GuandanAdapter(GameAdapter):
         if action.kind == "pass":
             ex.pass_turn()
             return ExecResult(True, 0, "不出")
+        # RL 臂: 打的是我们自己选的牌 → 必须点选直出(提示只会出游戏自己选的牌)
+        if action.meta.get("direct") and action.combo is not None and obs.hand:
+            idxs = _map_indices(obs.hand, action.combo.cards)
+            if idxs:
+                if ex.direct_play(idxs, len(obs.hand)):
+                    return ExecResult(True, 0, "直选出牌(RL)")
+                return ExecResult(False, 1, "直选失败(RL)")
         want = len(action.combo.cards) if action.combo is not None else None
         follow = bool(obs.table)
         r = ex.play_by_hint(want=want, follow=follow)

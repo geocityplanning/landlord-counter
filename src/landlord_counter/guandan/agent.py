@@ -104,6 +104,34 @@ def selection_up(img) -> int:
 
 JIPAI = int(os.getenv("GUANDAN_JIPAI", "2"))  # 本局级牌(默认打2)
 OURS = os.getenv("GUANDAN_OURS", "0") == "1"  # 自研决策模式
+
+# ---- RL 决策臂(2026-09-15): 开源预训练权重在"我方合法候选"里选牌 ----
+#   GUANDAN_DECIDE=rl 启用。模型(MonadMorph/guandan-RL, 453k 参数, CPU ~5ms)对
+#   20 个状态 token 打分, 在我们 rules.find_all_plays 出的候选里取 argmax(或不出)。
+#   注意: 打自己选的牌必须自己点 → 该臂强制走"点选直出"(不受 GUANDAN_OURS_DIRECT 影响)。
+RL_DECIDE = os.getenv("GUANDAN_DECIDE", "").strip().lower() == "rl"
+_RL_POLICY = None
+_RL_HIST: list = []                      # [(座位号, Group)] 最近观测到的出牌(≤16)
+_RL_PLAYED = [0.0, 0.0, 0.0, 0.0]         # 各座位累计出牌张数(估算, 供余牌 token)
+_SEAT_IDX = {"right": 1, "top": 2, "left": 3}   # 我方=0; 对家=北(top)=2
+
+
+def _rl_get():
+    """惰性加载 RL 决策器(首次调用才读权重)。"""
+    global _RL_POLICY
+    if _RL_POLICY is None:
+        from .rl_policy import RLPolicy
+
+        _RL_POLICY = RLPolicy()
+        print(f"▶ RL 决策器已加载: {os.path.basename(_RL_POLICY.path)}", flush=True)
+    return _RL_POLICY
+
+
+def _rl_left(hand) -> list:
+    """[我方, 下家, 对家, 上家, 合计] 余牌(我方精确, 他家按累计出牌估算)。"""
+    mine = float(len(hand))
+    others = [max(0.0, 27 - _RL_PLAYED[i]) for i in (1, 2, 3)]
+    return [mine] + others + [mine + sum(others)]
 _LAST_SIG = ""   # 上次决策签名(防重复空转)
 _SAME_SIG_N = 0
 
@@ -185,7 +213,26 @@ def ours_decide(img, rec) -> str:
     last = R.identify(last_cards, JIPAI) if last_cards else None
     if last_cards:
         print(f"  [ours] 上家={'队友(北)' if st.shi_dui_you else _LAST_SEAT.get('who') or '未知'}", flush=True)
-    choice = AI.choose_play(hand, last, st)
+    if RL_DECIDE:
+        # RL 臂: 记录本回合观测到的"上家出牌" → 历史 token; 候选 = 我方全部合法出牌
+        if last_cards and last is not None:
+            w = _SEAT_IDX.get(_LAST_SEAT.get("who") or "", 1)
+            if not _RL_HIST or _RL_HIST[-1][1] is not last:
+                _RL_HIST.append((w, last))
+                _RL_PLAYED[w] = min(27.0, _RL_PLAYED[w] + len(last_cards))
+        cands = AI.zhao_ke_chu_de_pai(hand, last, JIPAI)
+        seat_last = (_SEAT_IDX.get(_LAST_SEAT.get("who") or "", 1), last)
+        choice, _rlinfo = _rl_get().choose(cands, hand, _RL_HIST[-16:], _rl_left(hand), seat_last, 0)
+        print(
+            f"  [ours:rl] 候选{_rlinfo['n_cand']}(可映射{_rlinfo['mapped']}) → "
+            f"{R.group_to_str(choice) if choice is not None else '不出'} | value={_rlinfo['value']:.3f}",
+            flush=True,
+        )
+        if choice is not None:
+            _RL_HIST.append((0, choice))
+            _RL_PLAYED[0] = min(27.0, _RL_PLAYED[0] + len(choice.cards))
+    else:
+        choice = AI.choose_play(hand, last, st)
     if choice is None or getattr(choice, "is_invalid", False):
         print(f"  [ours] 决策=不出 (手牌{len(hand)}张, 待压={R.cards_to_str(last_cards) if last_cards else '无'})", flush=True)
         return "pass"
@@ -202,7 +249,7 @@ def ours_decide(img, rec) -> str:
     #   ⇒ 默认**出牌一律走"提示选牌执行"**(决策层只决定"出/不出", 具体牌由游戏提示选, 与 MVP 同执行面);
     #     点选直出降级为实验开关 GUANDAN_OURS_DIRECT=1(对照实验/残局研究用)。
     follow = bool(last_cards)
-    if len(idxs) >= 3 or follow or os.getenv("GUANDAN_OURS_DIRECT", "0") != "1":
+    if not RL_DECIDE and (len(idxs) >= 3 or follow or os.getenv("GUANDAN_OURS_DIRECT", "0") != "1"):
         tag = "跟牌" if follow else f"多张({len(idxs)})"
         print(f"  [ours] {tag} → 提示选牌执行", flush=True)
         base_lift = P.lifted_px(img)          # 抬起量基线(Bromite 等承载下存在偏移)
@@ -423,6 +470,9 @@ def legacy_main() -> int:
             last_prog = time.time()
             _LAST_SEAT["who"] = None      # 新一局: 清空上家跟踪
             _LAST_SEAT["blocks"] = {}
+            if RL_DECIDE:                 # RL 臂: 新一局清空历史/余牌估算
+                _RL_HIST.clear()
+                _RL_PLAYED[:] = [0.0, 0.0, 0.0, 0.0]
             sf = os.getenv("STATS_FILE")
             if sf:
                 r = rec if rec is not None else _lazy_rec()

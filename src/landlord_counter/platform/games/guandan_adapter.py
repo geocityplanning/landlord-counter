@@ -141,10 +141,21 @@ class GuandanAdapter(GameAdapter):
               flush=True)
 
     def _cal_positions(self, frame, n: int) -> list:
-        """执行层取位: 有标定 → 用真值图(按张数平移); 否则用实测左缘公式。"""
+        """执行层取位(按可信度排序):
+
+        ① **卡边界实测**(直接量出来的锚点, 不依赖任何假设) —— 手工验证过: 点它给的 x=208
+           第 5 张确实被选中 ✓;
+        ② 点选自标定图(从"点击→抬起"的对应关系反推的 x0, 会被游戏的"整组帮点"带偏 ✗);
+        ③ 兜底: 块宽实测 / 公式。
+        实测教训(2026-09-15): 标定给的 x0=47 反而把点选带偏(0 成功/13 失败),
+        而卡边界给的 ~82 能选中 ⇒ 边界优先。
+        """
+        pe = P.card_positions_by_edges(frame)
+        if pe:
+            return pe
         cal = self._tap_cal
         if cal:
-            x0 = cal["x0"] + (cal["n0"] - n) * 12     # 整排居中: 张数少 1 → 左缘右移 12px
+            x0 = cal["x0"] + (cal["n0"] - n) * 12
             return [int(x0 + 24 * i + 12) for i in range(n)]
         return P.card_positions(frame, n)
 

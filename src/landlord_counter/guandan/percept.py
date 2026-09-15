@@ -105,6 +105,45 @@ def read_hand_strips(rec, img, n: int, batch: int = 9) -> list[Card] | None:
     return _sanitize(toks, n)
 
 
+def read_hand_strips_measured(rec, img, n: int, batch: int = 9) -> list[Card] | None:
+    """按**实测牌位**分段读手牌(每段恰好覆盖 batch 张, 段间无损)。
+
+    与 read_hand_strips 的区别: 段边界取自 card_positions() 的**实测**位置,
+    不再用 hand_start_x(n) 公式 —— 上游"张数"读错时公式会整排平移, 分段裁切跟着错。
+    实测(2026-09-15): 整排直读会**只读左半排**(27 张的手牌只读出 12 张), 故改分段。
+    """
+    y0, y1 = HAND_BAND
+    if n <= 0:
+        return None
+    xs = card_positions(img, n)
+    if not xs or len(xs) != n:
+        return None
+    toks: list[str] = []
+    i = 0
+    while i < n:
+        j = min(n, i + batch)
+        x0 = max(0, xs[i] - 14)
+        x1 = min(img.shape[1], xs[j - 1] + (88 if j == n else 26))
+        prompt = PROMPT_HAND + f" 这一段共 {j - i} 张。"
+        # 单段最多试 3 次: VLM 偶发"空返回/少数"(服务端排队, 见技能库铁律 9),
+        # 实测同一裁剪第二次就能读全 → 一次空就整次作废太浪费(直选失败的主因之一)。
+        t: list[str] = []
+        for _try in range(3):
+            t = _split_tokens(_read(rec, img[y0:y1, x0:x1], prompt))
+            if t and len(t) <= (j - i) + 3 and not _looks_cyclic(t) and abs(len(t) - (j - i)) <= 1:
+                break
+            t = []
+        if not t:
+            return None                      # 重试后仍不可信 → 整次作废(宁可回落)
+        toks.extend(t)
+        if len(toks) > n + 3:
+            return None
+        i = j
+    if len(toks) != n:
+        return None
+    return _sanitize(toks, n)
+
+
 PROMPT_ONE = "这是叠在一起的一小段扑克牌(从左到右1-2张),只输出最左边那张的\"花色+点数\",如 ♠K;点数10写10,大王写大王,小王写小王。不要解释。"
 
 

@@ -157,7 +157,15 @@ class GuandanAdapter(GameAdapter):
             return Observation(frame=frame, my_turn=False)   # 假"我回合" → 跳过, 不空转
         # 期望张数: 优先"块宽实测真值"(不依赖 VLM/像素分段, 实测比 hand_columns 准)
         n_vis = P.hand_card_count_est(frame) or P.hand_columns(frame)
-        hand = P.read_hand_ordered(self.vision, frame, expected=n_vis)
+        # 优先"实测几何分段读"(整排直读会只读左半排, 实测 27 张只读出 12 张); 失败再回落整排。
+        # 整轮重试 2 次: VLM 偶发空返回(服务端排队), 实测同一帧 3 次里 1 次失手 → 重试可兜住。
+        hand = None
+        for _try in range(2):
+            hand = P.read_hand_strips_measured(self.vision, frame, n_vis) if n_vis else None
+            if hand:
+                break
+        if not hand:
+            hand = P.read_hand_ordered(self.vision, frame, expected=n_vis)
         if not hand:
             self._read_fail_evidence = {"n_est": n_vis, "n_read": None,
                                         "block": list(P.hand_block(frame) or (None, None))}

@@ -42,6 +42,7 @@ class Executor:
         self.dev = device
         self.L = layout
         self.log = log
+        self._dx = 0          # 点选自纠正偏移(全局, 由"实际抬起位 vs 想点位"的差累加得到)
 
     # ---------- 基础 ----------
     def _snap(self):
@@ -64,36 +65,53 @@ class Executor:
 
         验证方式: 有 lift_diff(帧差) 用它(更稳); 否则用绝对抬起量增量。
         """
-        base = self._pos(idx, n)
-        for dx in (0, 8, -8, 16, -16):
-            if self.L.lift_diff is not None:
-                before_img = self._snap()
-                self.dev.tap(base + dx, self.L.hand_y, wait=0.35)
-                after_img = self._snap()
-                if after_img is None:
-                    continue
-                if self.L.lift_diff(before_img, after_img) >= self.L.lift_eps:
-                    return True
-            else:
-                before = self._lift(self._snap())
-                self.dev.tap(base + dx, self.L.hand_y, wait=0.30)
-                after = self._lift(self._snap())
-                if after > before + self.L.lift_eps:
-                    return True
+        # 身份驱动点选(2026-09-15): 点完看"实际抬起的列", 与目标位比对。
+        #   实测现场: 想点 310 → 实际抬起 360(系统性偏 ~50px, 布局左缘测得偏左)
+        #   ⇒ 把偏差累加进 self._dx(全局自纠正), 点偏了就取消重来。
+        for _rnd in range(2):
+            x_want = self._pos(idx, n)
+            if not (0 < x_want < 720):
+                return False
+            before_img = self._snap()
+            self.dev.tap(x_want, self.L.hand_y, wait=0.45)
+            after_img = self._snap()
+            if after_img is None:
+                continue
+            cols = []
+            try:
+                from ..guandan import percept as _P
+
+                cols = [c for c, _w in _P.lifted_columns(before_img, after_img)]
+            except Exception:  # noqa: BLE001
+                pass
+            if not cols:                      # 完全没抬起 → 微调再试
+                self._dx += 8
+                continue
+            near = min(cols, key=lambda c: abs(c - x_want))
+            d = near - x_want
+            if abs(d) <= 16:                  # 命中目标牌
+                self._dx += d
+                return True
+            self.log(f"  [gesture] ↻ 点偏了(想{x_want} 实际{near}, 偏{d:+d}) → 取消并自纠正")
+            self.dev.tap(x_want, self.L.hand_y, wait=0.25)   # 取消刚选中的那张
+            self._dx += d
         return False
 
     def _pos(self, idx: int, n: int) -> int:
-        """第 idx 张的可点 x: 优先"实测牌位", 失败回落公式。"""
+        """第 idx 张的可点 x: 优先"实测牌位", 失败回落公式, 再叠加自纠正偏移 dx。"""
+        base = None
         f = self.L.card_positions
         if f is not None:
             try:
                 img = self._snap()
                 xs = f(img, n) if img is not None else None
                 if xs and 0 <= idx < len(xs):
-                    return int(xs[idx])
+                    base = int(xs[idx])
             except Exception:  # noqa: BLE001
                 pass
-        return self.L.card_tap_x(idx, n)
+        if base is None:
+            base = self.L.card_tap_x(idx, n)
+        return int(base + getattr(self, "_dx", 0))
 
     def select(self, idxs: list[int], n: int) -> bool:
         """逐张点选; 全中才算成功。"""

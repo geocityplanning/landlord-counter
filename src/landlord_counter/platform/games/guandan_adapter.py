@@ -40,6 +40,7 @@ class GuandanAdapter(GameAdapter):
         self._read_fail_n = 0        # 连续读牌失败次数(空读治理: 不空转)
         self._dump_n = 0             # 帧留证计数
         self._dump_t = 0.0
+        self._tap_cal = None         # 点选自标定结果: {"n0","x0","raw","pairs"}
 
     def attach(self, device, vision=None) -> None:
         super().attach(device, vision)
@@ -64,7 +65,7 @@ class GuandanAdapter(GameAdapter):
 
         layout = GestureLayout(
             card_tap_x=P.card_tap_x,
-            card_positions=P.card_positions,
+            card_positions=self._cal_positions,
             hand_y=875,
             btn_hint=BTN_HINT,
             btn_play=BTN_PLAY,
@@ -102,6 +103,50 @@ class GuandanAdapter(GameAdapter):
         elif not cur and self._last_seat["blocks"]:
             self._last_seat["who"] = None
         self._last_seat["blocks"] = cur
+
+    def _calibrate_taps(self, frame) -> None:
+        """点选自标定: 逐位试一次, 用"实际抬起位"建**真值牌位图**。
+
+        为什么需要(实测 2026-09-15):
+          ① 布局左缘与我们假设的略有差 → 最左那张点不中(点 x=94 无任何变化);
+          ② 游戏会**自动配对**: 点一张会连带选中同点数的另一张(点 238 时 307 也抬起);
+          ③ 页面重开后布局可能变 → 每轮重新标一次最稳。
+        产出: x0(真值左缘) + 每位"点了会抬起哪些列"(raw) + 配对关系(pairs)。
+        代价: 一次 ~n 次点选(满手 27 张约 30s), 且只点选不出牌, 不影响牌局。
+        """
+        if self.device is None:
+            return
+        n = P.hand_card_count_est(frame)
+        if n < 20:
+            return
+        est = P.card_positions(frame, n)
+        raw: dict = {}
+        for i, x in enumerate(est):
+            b = self._snap()
+            self.device.tap(x, 875, wait=0.55)
+            aa = self._snap()
+            raw[i] = [c for c, _w in P.lifted_columns(b, aa)]
+            self.device.tap(x, 875, wait=0.35)      # 复位(再点一次取消选中)
+        xs0 = sorted(c - 24 * i for i, cols in raw.items() for c in cols)
+        if not xs0:
+            print("  [标定] 无任何抬起 → 放弃(触控/页面可能异常)", flush=True)
+            return
+        x0 = float(xs0[len(xs0) // 2])
+        pairs = {i: sorted({(c - x0) / 24 for c in cols
+                            if abs(c - (x0 + 24 * i)) > 16})
+                 for i, cols in raw.items()}
+        self._tap_cal = {"n0": n, "x0": x0, "raw": raw, "pairs": pairs}
+        hit = sum(1 for i, cols in raw.items() if cols)
+        print(f"  [标定] 真值左缘 x0={x0:.0f} | 命中 {hit}/{n} 位 | 配对关系 {sum(1 for v in pairs.values() if v)} 处",
+              flush=True)
+
+    def _cal_positions(self, frame, n: int) -> list:
+        """执行层取位: 有标定 → 用真值图(按张数平移); 否则用实测左缘公式。"""
+        cal = self._tap_cal
+        if cal:
+            x0 = cal["x0"] + (cal["n0"] - n) * 12     # 整排居中: 张数少 1 → 左缘右移 12px
+            return [int(x0 + 24 * i + 12) for i in range(n)]
+        return P.card_positions(frame, n)
 
     def _dump_read_evidence(self, frame, tag: str, info: dict) -> None:
         """帧留证: 读牌与块宽真值分歧时, 存一帧 PNG + 两种读数 JSON。
@@ -157,6 +202,8 @@ class GuandanAdapter(GameAdapter):
             return Observation(frame=frame, my_turn=False)   # 假"我回合" → 跳过, 不空转
         # 期望张数: 优先"块宽实测真值"(不依赖 VLM/像素分段, 实测比 hand_columns 准)
         n_vis = P.hand_card_count_est(frame) or P.hand_columns(frame)
+        if self.rl and self._tap_cal is None and n_vis >= 25:
+            self._calibrate_taps(frame)          # 满手时标定一次(本轮只做一次)
         # 优先"实测几何分段读"(整排直读会只读左半排, 实测 27 张只读出 12 张); 失败再回落整排。
         # 整轮重试 2 次: VLM 偶发空返回(服务端排队), 实测同一帧 3 次里 1 次失手 → 重试可兜住。
         hand = None

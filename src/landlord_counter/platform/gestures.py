@@ -169,6 +169,8 @@ class Executor:
         first = self._snap()
         before = self.L.white_count(first)
         base_lift = self._lift(first)
+        want_x = [self._pos(i, n) for i in idxs]
+        pre_select = first
         for r in range(rounds):
             if r:
                 self.log("  [gesture] ↻ 直选重试(重新取帧)")
@@ -177,7 +179,22 @@ class Executor:
                 self.clear(idxs, n)
                 continue
             time.sleep(0.5)
-            est = self.selected_count(self._snap(), base_lift)
+            cur = self._snap()
+            est = self.selected_count(cur, base_lift)
+            # 身份校验(2026-09-15): 抬起的牌位必须与"想点的牌位"吻合, 否则就是点到了邻牌
+            try:
+                from ..guandan import percept as _P
+
+                got = [c for c, _w in _P.lifted_columns(pre_select, cur)]
+                if got:
+                    miss = [x for x in want_x
+                            if not any(abs(x - g) <= 16 for g in got)]
+                    if miss:
+                        self.log(f"  [gesture] ✗ 身份校验失败: 想点{want_x} 实际抬起{got}")
+                        self.clear(idxs, n)
+                        continue
+            except Exception:  # noqa: BLE001
+                pass
             if est == 0 or abs(est - len(idxs)) > max(1, len(idxs) // 2):
                 self.log(f"  [gesture] ✗ 选牌校验失败(选中≈{est} vs 目标{len(idxs)})")
                 self.clear(idxs, n)

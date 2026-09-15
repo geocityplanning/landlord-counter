@@ -468,6 +468,35 @@ def hand_is_real(img, tol: int = 2):
     return abs(n_est - ne) <= tol, info
 
 
+def lifted_columns(before, after, y0: int = 756, y1: int = 806,
+                   min_px: int = 3, gap: int = 6) -> list:
+    """帧差定位"刚被抬起的是哪几张牌" → 返回变化列段中心 x 列表。
+
+    原理: 选中的牌整张上移, 手牌带**上方那条带**(默认 y756-806)从"无牌"变"有牌";
+    未选中的牌不动。用途: 身份校验 —— 点选后核对"抬起的 x" 是不是"想点的 x"。
+    实测: 点"提示"钮选牌 → 该带变化 23k 像素; 点到空地 → 0 像素。
+    """
+    if before is None or after is None:
+        return []
+    b = before[y0:y1].astype(int)
+    a = after[y0:y1].astype(int)
+    d = np.abs(a - b).sum(axis=2) > 60
+    colsum = d.sum(axis=0)
+    xs = np.where(colsum > min_px)[0]
+    if len(xs) == 0:
+        return []
+    runs = []
+    st = prev = int(xs[0])
+    for x in xs[1:]:
+        x = int(x)
+        if x - prev > gap:
+            runs.append((st, prev))
+            st = x
+        prev = x
+    runs.append((st, prev))
+    return [(int((u + v) / 2), v - u + 1) for u, v in runs if (v - u + 1) >= 4]
+
+
 def hand_columns(img) -> int:
     """像素数手牌张数: 手牌带亮列分段数(仅计宽度≥8px 的段, 滤噪声)"""
     y0, y1 = HAND_BAND

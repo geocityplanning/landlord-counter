@@ -41,7 +41,9 @@ def main() -> int:
             f0 = dev.snap()
             from landlord_counter.guandan import percept as P
 
-            in_deal = bool(P.hand_is_real(f0)[0])
+            # 双判据(任一成立即在局): 手牌带结构自洽 **或** my_turn(白卡+按钮)
+            # (2026-09-16 教训: 只用 hand_is_real 时布局变体会被误判 → 又重开页冲掉牌局 ✗)
+            in_deal = bool(P.hand_is_real(f0)[0]) or bool(P.my_turn(f0))
         except Exception:  # noqa: BLE001
             in_deal = False
         if in_deal:

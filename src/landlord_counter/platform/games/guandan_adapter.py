@@ -292,6 +292,7 @@ class GuandanAdapter(GameAdapter):
 
     def sense(self, frame) -> Observation:
         self._track_seat(frame)
+        self._observe_table_gated(frame)     # 记牌: 每帧都看桌面(别人的出牌也要记 ✓)
         if not P.my_turn(frame):          # 手牌白卡 + 按钮可用(防残局误判)
             return Observation(frame=frame, my_turn=False)
         if not self._band_looks_like_hand(frame):
@@ -328,13 +329,16 @@ class GuandanAdapter(GameAdapter):
                                         "block": list(P.hand_block(frame) or (None, None))}
             self._dump_read_evidence(frame, "read_empty", self._read_fail_evidence)
             self._read_fail_n += 1
-            if self._read_fail_n >= 3:      # 连续读不到 → 本帧不当"我回合", 交给看门狗/健康检查
-                return Observation(frame=frame, my_turn=False)
+            if self._read_fail_n == 3:      # 连续读不到 → 打印一次, 但**不放弃**(保流程优先)
+                print("  [读牌] 连续 3 次读不到手牌 → 退回提示驱动(牌局继续推进, 记牌器继续观测)",
+                      flush=True)
+            # 说明: 走到这里已经过了 my_turn + 手牌带结构 + 在局判据 3 道闸门, 是真牌局;
+            # 读不到手牌就交给"提示驱动"(游戏自己挑合法牌) —— 比空转丢掉整局强。
             return Observation(frame=frame, my_turn=True, hand=None, extra={"read_fail": True})
         self._read_fail_n = 0
         table = P.read_table_last(self.vision, frame)
         cards = table or []
-        self._meter_vlm("table", ok=bool(cards))
+        self._observe_table(cards)               # 若与上面同帧重复 → 签名去重, 不重复计
         self._set_my_hand(hand)
         self._observe_table(cards)               # 记牌: 谁打了什么牌 → 事件日志 + 记牌器
         # 一致性闸门: 牌位已与张数解耦(实测牌位), 故张数相差 1 张无害 → 只挡 >2 的离谱读数
@@ -374,6 +378,32 @@ class GuandanAdapter(GameAdapter):
             self.tracker.observe(seat, list(cards))
         except Exception as e:                   # noqa: BLE001
             print(f"  [记牌] tracker.observe 异常({type(e).__name__}: {e})", flush=True)
+
+    def _table_changed(self, frame) -> bool:
+        """桌面区是否变化(廉价像素闸门 → 决定是否花一次 VLM 读桌面)。"""
+        try:
+            import numpy as np
+            h = frame.shape[0]
+            band = frame[int(h * 0.28):int(h * 0.62), :, :]   # 出牌区(中上部)
+            small = band[::8, ::8]
+            prev = getattr(self, "_table_sig", None)
+            self._table_sig = small
+            if prev is None or prev.shape != small.shape:
+                return True
+            return float(np.mean(np.abs(small.astype("int16") - prev.astype("int16")))) > 3.0
+        except Exception:                        # noqa: BLE001
+            return True                          # 判断不了就老实读
+
+    def _observe_table_gated(self, frame) -> None:
+        """每帧调用: 桌面有变化才读一次(控 VLM 成本), 读到就记牌。"""
+        if not self._table_changed(frame):
+            return
+        try:
+            cards = P.read_table_last(self.vision, frame) or []
+        except Exception:                        # noqa: BLE001
+            return
+        self._meter_vlm("table", ok=bool(cards))
+        self._observe_table(cards)
 
     def _observe_table(self, cards) -> None:
         """每帧看桌面: 有牌 → 记一次; 桌面清空 → 一轮结束(签名清零, 允许同牌再计)。"""

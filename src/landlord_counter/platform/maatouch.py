@@ -55,7 +55,20 @@ class MaaTouch:
                     self.max_x, self.max_y, self.max_p = int(p[2]), int(p[3]), int(p[4])
             elif line.startswith("$"):
                 return True
+        # 静默失败是"输入退化到 adb → 点击全无效"的元凶(2026-09-16 实测, 浪费一小时)
+        print("  [输入] ✗ MaaTouch 启动失败(10s 内没收到握手) → 输入会退化到 adb, "
+              "而 adb 点不动\"出牌/提示\"这类按钮!", flush=True)
         return False
+
+    def ensure(self) -> bool:
+        """确保通道可用: 死了就重拉(并在日志里说清楚)。"""
+        try:
+            if self.proc is not None and self.proc.poll() is None:
+                return True
+        except Exception:                            # noqa: BLE001
+            pass
+        print("  [输入] MaaTouch 不在 → 重新拉起", flush=True)
+        return self.start()
 
     def alive(self) -> bool:
         return self.proc is not None and self.proc.poll() is None

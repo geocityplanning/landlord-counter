@@ -395,7 +395,8 @@ def hand_block(img, thr: int = 150, min_col: int = 6):
     return int(xs.min()), int(xs.max())
 
 
-def card_edges(img, y0: int = 805, y1: int = 945, min_gap: int = 10) -> list:
+def card_edges(img, y0: int = 800, y1: int = 940, min_gap: int = 10,
+               q: float = 0.93, floor: float = 4.0) -> list:
     """手牌带里所有**竖直边界线**的 x(卡与卡的分界)。
 
     纯像素、与"公式/张数/布局假设"完全无关 —— 这是能迁移到其它游戏(腾讯掼蛋 App/小程序)
@@ -405,7 +406,9 @@ def card_edges(img, y0: int = 805, y1: int = 945, min_gap: int = 10) -> list:
     gx = np.abs(np.diff(band, axis=1)).mean(axis=0)
     if gx.size < 20:
         return []
-    thr = max(0.35 * float(gx.max()), 1.0)
+    # 阈值: 分位(自适应) + 中位数下限 + 绝对下限 ——
+    # 实测(2026-09-16, 真值 27 张): 旧的 0.35*max 只数出 8~15 个 ✗; 分位 0.93 数出 27 ✓✓
+    thr = max(float(np.quantile(gx, q)), float(np.median(gx)) + 1.0, float(floor))
     peaks: list = []
     for x in range(1, gx.size - 1):
         if gx[x] > thr and gx[x] >= gx[x - 1] and gx[x] > gx[x + 1]:
@@ -414,7 +417,33 @@ def card_edges(img, y0: int = 805, y1: int = 945, min_gap: int = 10) -> list:
                     peaks[-1] = x
             else:
                 peaks.append(x)
+    # 去重: 用**峰间距中位数**(实测牌距)当尺子, 丢掉过近的离群峰
+    if len(peaks) >= 5:
+        gaps = np.diff(peaks)
+        med = float(np.median(gaps))
+        if med > 0:
+            keep = [peaks[0]]
+            for x in peaks[1:]:
+                if x - keep[-1] < 0.55 * med:
+                    continue
+                keep.append(x)
+            peaks = keep
     return peaks
+
+
+def edges_regular(peaks) -> tuple:
+    """边界是否**等距规整**(真手牌每张露一截 → 等距; 大片白区噪声 → 不等距)。
+
+    返回 (bool, info)。真值标定(27 张): 中位间距 ≈24px, 规整度 ≈1.0。
+    """
+    if len(peaks) < 4:
+        return False, {"n": len(peaks), "why": "峰太少"}
+    gaps = np.diff(np.asarray(peaks, dtype=float))
+    med = float(np.median(gaps))
+    ok_range = 12.0 <= med <= 46.0
+    within = float(np.mean(np.abs(gaps - med) <= max(3.0, 0.25 * med)))
+    return (ok_range and within >= 0.7), {"n": len(peaks), "median_gap": round(med, 1),
+                                          "regular": round(within, 2), "pitch_ok": ok_range}
 
 
 def card_positions_by_edges(img, n_hint: int = 0) -> list:
@@ -486,20 +515,11 @@ def card_edge_count(img, min_gap: int = 12) -> int:
     与"块宽反推"和"VLM 读数"互相独立: 真手牌每张露出 24px, 边界线等距可数;
     开始界面的大片白区没有这种周期性结构(实测 边缘=3 vs 块宽推 23)。
     """
-    y0, y1 = HAND_BAND
-    gray = img[y0:y1].mean(axis=2)
-    gx = np.abs(np.diff(gray, axis=1)).mean(axis=0)
-    if gx.size == 0 or gx.max() <= 0:
-        return 0
-    thr = 0.45 * float(gx.max())
-    peaks: list = []
-    for x in range(1, gx.size - 1):
-        if gx[x] > thr and gx[x] >= gx[x - 1] and gx[x] > gx[x + 1]:
-            if not peaks or x - peaks[-1] >= min_gap:
-                peaks.append(x)
-            elif gx[x] > gx[peaks[-1]]:
-                peaks[-1] = x
-    return len(peaks) + 1 if peaks else 0
+    peaks = card_edges(img, min_gap=min_gap)
+    ok, info = edges_regular(peaks)
+    if not ok:
+        return 0                     # 不等距 = 不是手牌(白区/动画) → 0 张
+    return len(peaks)                # 峰 = 每张牌的左缘 → 直接就是张数
 
 
 def hand_is_real(img, tol: int = 2):

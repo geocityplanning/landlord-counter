@@ -140,6 +140,31 @@ def _tpl_dir() -> str:
     return _os.getenv("TPL_DIR", _os.path.join(root, "data", "templates"))
 
 
+
+def load_templates_sr(d: str | None = None) -> dict:
+    """加载"花色+点数"模板库: 目录下 *.npy, 文件名 <花色>_<点数>_<序号>.npy。"""
+    import os as _os
+    if d is None:
+        d = _os.path.join(_os.path.dirname(__file__), "..", "..", "..", "data", "templates_sr")
+    d = _os.path.abspath(d)
+    bank: dict = {}
+    if not _os.path.isdir(d):
+        return bank
+    for fn in _os.listdir(d):
+        if not fn.endswith(".npy"):
+            continue
+        # key 取**前两段**(花色_点数): 文件名形如 <花色>_<点数>_<序号>.npy
+        # (实时采集的是 0_<点数>_<样本>_<x>.npy → 前两段仍是 0_<点数> ✓)
+        parts = fn[:-4].split("_")
+        if len(parts) < 2:
+            continue
+        k = f"{parts[0]}_{parts[1]}"
+        try:
+            bank.setdefault(k, []).append(np.load(_os.path.join(d, fn)))
+        except Exception:
+            continue
+    return bank
+
 def load_templates(tpl_dir: str = "") -> dict:
     """加载模板库: {点数: np.ndarray(竖条图像)}。"""
     import os as _os
@@ -156,55 +181,54 @@ def load_templates(tpl_dir: str = "") -> dict:
     return out
 
 
-def tm_read_hand(img, tpl: dict | None = None, max_dist: float = 14.0):
+def tm_read_hand(img, tpl: dict | None = None, max_dist: float = 1.35, templates_dir: str | None = None):
     """**模板匹配**读手牌(纯像素, 不调模型)。
 
-    做法: 实测手牌带 + 卡边界定位每张牌的左缘 → 裁该牌露出的**整条竖条**(宽24×卡高)
-    → 与模板库逐点数据比对 → 最近者即该牌点数。
-    实测(2026-09-16): 跨帧自校验 100% ✓✓ (VLM 只有 64~68% ✗)。
+    做法: 实测手牌带 → 实测牌位(卡边界+占用范围) → 裁每张牌露出的**整条竖条**(宽24)
+    → 归一化后与模板库比 → 最近者即"花色+点数"。
 
-    返回 (list[(点数, 牌位x)], info)
+    实测(2026-09-16): 用户标注的 27 张满手图上 54 类模板库自校验 **27/27 = 100%** ✓✓
+    (VLM 只有 64~68% ✗, 且错误是结构性的: 遮挡/王渲染/)
+
+    返回 (list[(花色1-4, 点数2-16, x)], info); 花色: 1♠ 2♣ 3♥ 4♦; 点数 11=J 12=Q 13=K 14=A 15小王 16大王
     """
-    tpl = load_templates() if tpl is None else tpl
-    info = {"n_slot": 0, "unknown": 0, "max_dist": 0.0, "tpl": sorted(tpl)}
+    tpl = load_templates_sr(templates_dir) if tpl is None else tpl
+    info = {"n_slot": 0, "unknown": 0, "max_dist": 0.0, "tpl": len(tpl)}
     if not tpl:
         return [], info
     y0, y1 = hand_band_measured(img)
-    # 牌位横范围也**实测**: 牌面是"竖直边缘能量高 + 白底"的一段连续 x
-    # (2026-09-16 能量图: 手牌 x≈180..420; 若不限范围, 网格会铺到全屏 → 多出杂位 ✗)
-    x_lo, x_hi = hand_x_range(img, y0, y1)
-    peaks = card_edges(img, y0, y1)
-    peaks = [x for x in peaks if x_lo <= x <= x_hi] or peaks
-    # 牌位 = 卡边界实测结果(实测: 满手 27 张给出干净 27 峰, 间距正好 24px ✓)
-    # 教训: 此处曾加"最长等距串/末位补格/相位筛"等滤波 → 反而把干净结果搞乱 ✗ → 删掉
+    xs = card_slots(img, y0, y1)
     out = []
-    for x in peaks:
+    for x in xs:
         x0 = max(0, int(x))
-        patch = img[y0 + 8:y1 - 8, x0:x0 + 24].astype("float32")
+        patch = img[y0 + 8:y1 - 8, x0:x0 + 24]
         if patch.size == 0 or patch.shape[0] < 10:
             continue
-        # 纯色块(如手牌最左的"你"字小框)不是牌 → 丢掉(实测它会被误认成一张 3 ✗)
-        if float(patch.std()) < 10.0:
+        if float(patch.std()) < 10.0:            # 纯色块(如"你"字小框)不是牌
             info["unknown"] += 1
             continue
-        best_z, best_d = None, 1e18
-        for z, t in tpl.items():
-            if patch.shape != t.shape:
-                continue
-            d = float(np.mean(np.abs(patch - t.astype("float32"))))
-            if d < best_d:
-                best_d, best_z = d, z
-        if best_z is None:
+        if float(patch.mean()) < 120:            # 暗的也不是牌(桌面绿 ~59 / 底部标签条 ~40)
+            info["unknown"] += 1               # 实测: 右侧"打A"标签区的峰会被误当牌位 ✗
             continue
-        if best_d > max_dist:                    # 不像任何牌(如"你"字框/空白) → **丢掉该位**
+        a = norm_patch(patch)
+        best_k, best_d = None, 1e18
+        for k, arrs in tpl.items():
+            for t in arrs:
+                b = norm_patch(t)
+                if b.shape != a.shape:
+                    continue
+                d = float(np.mean(np.abs(a - b)))
+                if d < best_d:
+                    best_d, best_k = d, k
+        if best_k is None or best_d > max_dist:  # 不像任何已知牌 → 丢掉该位(不算一张)
             info["unknown"] += 1
             continue
-        out.append((best_z, x0))
-        info["max_dist"] = max(info["max_dist"], round(best_d, 2))
+        suit, rank = (int(v) for v in best_k.split("_"))
+        out.append((suit, rank, x0))
+        info["max_dist"] = max(info["max_dist"], round(best_d, 3))
     info["n_slot"] = len(out)
+    info["keys"] = sorted(tpl)
     return out, info
-
-
 def _parse_hand_text(raw: str, expected: int = 0) -> list:
     """VLM 原始文本 → 牌 token 列表。
 
@@ -672,6 +696,86 @@ def band_ink_ratio(img, band=None) -> float:
     g = img[y0:y1].mean(axis=2)
     return float(((g < 205) & (g > 40)).mean())
 
+
+
+NORM_H, NORM_W = 96, 24          # 归一化统一尺寸(消除 1 像素高度差)
+
+
+def norm_patch(p: "np.ndarray") -> "np.ndarray":
+    """把牌面竖条归一化(灰度 + 去均值/除标准差)。
+
+    为什么要归一化: 模板可能采自 JPEG(用户发来的截图) 或 PNG(设备实时帧),
+    两者压缩/亮度有细差 → 直接比像素会全超阈值 ✗; 归一化后差异被抹平 ✓
+    """
+    g = cv2.cvtColor(p, cv2.COLOR_RGB2GRAY).astype("float32")
+    # ⚠️ 实测(2026-09-16): 实时帧与截图的牌条高度会差 1 像素(104 vs 105) →
+    # 形状不等就 continue 会让**全部比对被跳过**(距离恒为 1e18, 一张都读不出) ✗
+    # → 归一化前统一到固定尺寸(NORM_H x NORM_W)
+    g = cv2.resize(g, (NORM_W, NORM_H), interpolation=cv2.INTER_AREA)
+    g = cv2.GaussianBlur(g, (3, 3), 0)
+    g = g - g.mean()
+    sd = g.std()
+    return g / sd if sd > 1e-6 else g
+
+
+def card_slots(img, y0: int | None = None, y1: int | None = None, pitch_fallback: float = 24.0):
+    """**实测牌位**: 卡边界峰 → 牌距+相位 → 用"手牌实际横向占用"限定, 给出每张牌的左缘 x。
+
+    教训(2026-09-16): 为补首张而往左一直外推, 在实时帧上把 9 张牌推成 21 个位 ✗
+    → 改成用白占比高的连续段圈定横范围, 只在该范围内布点 ✓
+    """
+    if y0 is None or y1 is None:
+        y0, y1 = hand_band_measured(img)
+    peaks = [int(x) for x in card_edges(img, y0, y1)]
+    if not peaks:
+        return []
+    # 手牌横向占用: 牌面是白的, 桌面/背景不是
+    sub = img[y0 + 6:y1 - 6]
+    white = (sub.min(axis=2) > 150).mean(axis=0)
+    cols = np.where(white > 0.40)[0]
+    if len(cols) < 5:
+        return peaks
+    x_lo, x_hi = int(cols[0]), int(cols[-1])
+    pitch = pitch_fallback
+    if len(peaks) >= 3:
+        gaps = np.diff(peaks)
+        good = gaps[(gaps >= 18) & (gaps <= 32)]
+        if len(good):
+            pitch = float(np.median(good))
+    # 先找**最长等距串** = 真正的一排牌(实测: 9 张牌给 9 峰, 右侧"打A"等杂峰被排除 ✓)
+    best_chain: list = []
+    for i in range(len(peaks)):
+        chain = [peaks[i]]
+        for j in range(i + 1, len(peaks)):
+            if abs((peaks[j] - chain[-1]) - pitch) <= max(3.0, pitch * 0.18):
+                chain.append(peaks[j])
+        if len(chain) > len(best_chain):
+            best_chain = chain
+    if len(best_chain) < 2:
+        return peaks
+    lo, hi = best_chain[0], best_chain[-1]
+    # 两端按"是不是牌面(白占比高)"补格, 最多各 2 格(实测: 满手图首尾各缺 1 格 ✓)
+    def card_like(x: float) -> bool:
+        x = int(round(x))
+        if x < 0 or x + 8 >= img.shape[1]:
+            return False
+        col = img[y0 + 8:y1 - 8, x:x + 8].reshape(-1, 3).astype(int)
+        # 判"是不是牌面"用**亮度**(牌面亮, 桌面绿/底部标签条都暗):
+        # 实测(2026-09-16) 三代判据的教训:
+        #   ①"是否白" → 大小王/黄边级牌不是白的 → 误杀 ✗
+        #   ②"是否桌面绿" → 底部黑色标签条不是绿的 → 漏进 2 格 ✗
+        #   ③ 亮度 → 牌面 ~180, 桌面绿 ~59, 标签条 ~40 → 一刀切 ✓
+        return bool(col.mean() > 120)
+    k = 0
+    while k < 2 and card_like(lo - pitch * (k + 1)) and (lo - pitch * (k + 1)) >= x_lo - pitch:
+        k += 1
+    lo = lo - pitch * k
+    k = 0
+    while k < 2 and card_like(hi + pitch * (k + 1)) and (hi + pitch * (k + 1)) <= x_hi + pitch:
+        k += 1
+    hi = hi + pitch * k
+    n = int(round((hi - lo) / pitch)) + 1
+    return [int(round(lo + i * pitch)) for i in range(n)]
 
 def card_edges(img, y0: int = 0, y1: int = 0, min_gap: int = 10,
                q: float = 0.93, floor: float = 4.0) -> list:

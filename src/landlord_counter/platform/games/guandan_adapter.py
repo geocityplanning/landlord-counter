@@ -566,8 +566,7 @@ class GuandanAdapter(GameAdapter):
         choice = AI.choose_play(obs.hand, last, st)
         if choice is None or getattr(choice, "is_invalid", False):
             return Action("pass", meta={"why": "引擎判不出"})
-        self._log_plan(choice, "自研决策")
-        return Action("play", combo=choice, meta={"why": "自研决策"})
+        return Action("play", combo=choice, meta={"why": "自研决策", "planned": True})
 
     def _decide_rl(self, obs: Observation, last, cards: list) -> Action:
         """RL 臂: 预训练权重在"我方全部合法出牌"里选 → 标记 direct(执行层点选直出)。"""
@@ -596,8 +595,7 @@ class GuandanAdapter(GameAdapter):
         if choice is None:
             return Action("pass", meta={"why": "RL判不出/不出"})
         self._rl_hist.append((0, choice))
-        self._log_plan(choice, "RL决策")
-        self._log_seat_play("南", choice.cards, hand_left=max(0, len(obs.hand) - len(choice.cards)), src="own")
+        return Action("play", combo=choice, meta={"why": "RL决策", "direct": True, "planned": True})
         return Action("play", combo=choice, meta={"why": "RL决策", "direct": True})
 
     # ---------- 执行 ----------
@@ -606,6 +604,8 @@ class GuandanAdapter(GameAdapter):
             self._build_executor()
         ex = self._ex
         assert ex is not None
+        if action.meta.get("planned") and action.combo is not None:
+            self._log_plan(action.combo, action.meta.get("why", ""))   # 只在执行时记一次
         if action.kind == "pass":
             ex.pass_turn()
             self._expect_after = None         # 不出 → 不做掉牌校验

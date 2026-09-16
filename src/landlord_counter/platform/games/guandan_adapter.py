@@ -121,7 +121,18 @@ class GuandanAdapter(GameAdapter):
         return gold_button(frame)
 
     def progress_signal(self, frame):
-        return P.white_count(frame)
+        """进展信号 = **帧指纹**(降采样后哈希)。
+
+        原来用 white_count: 画面冻住时它仍会因手牌带抖动而变 ✗ →
+        看门狗永远不触发 → 牌局结束后整轮空转(实测 30 分钟里后 12 分钟全空转 ✗)。
+        改成帧指纹: 画面不变 → 指纹不变 → 看门狗按时恢复。
+        """
+        try:
+            import hashlib
+            sub = frame[::12, ::12]
+            return hashlib.md5(sub.tobytes()).hexdigest()[:16]
+        except Exception:                            # noqa: BLE001
+            return P.white_count(frame)
 
     def _track_seat(self, frame) -> None:
         cur = P.blocks_by_seat(frame)

@@ -111,6 +111,17 @@ class Runtime:
                 time.sleep(self.idle_sleep)
                 continue
             res = self.ad.execute(act, obs)
+            if not getattr(res, "ok", True) and not getattr(res, "skipped", False):
+                self._fail_streak = getattr(self, "_fail_streak", 0) + 1
+                if self._fail_streak >= 6:      # 连续失败 → 牌局多半结束了/界面卡住 → 恢复页面
+                    self._log(f"[自愈] 连续 {self._fail_streak} 次失败 → 恢复页面")
+                    self.dev.recover(package=self.ad.package, url=self.ad.start_url)
+                    self._fail_streak = 0
+                    last_prog = time.time()
+                    last_signal = None
+                    continue
+            else:
+                self._fail_streak = 0
             if getattr(res, "skipped", False):
                 # 执⾏器规范: skipped = 前置不满足(如非我回合/通道无反应) → 不算动作、不喂看门狗
                 self._log(f"[跳过] {act.kind} · {res.detail}")

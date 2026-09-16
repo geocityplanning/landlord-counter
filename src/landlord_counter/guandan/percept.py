@@ -93,8 +93,14 @@ def read_hand_ordered(rec, img, expected: int = 0) -> list[Card] | None:
     """读手牌: ≤14 张整排直读; 更多则切两半拼接。expected>0 时提示词注入张数。"""
     y0, y1 = hand_band_measured(img)   # 读取也用**实测**带(与探测一致)
     prompt = PROMPT_HAND + (f" 这一排共 {expected} 张。" if expected > 0 else "")
-    if expected and expected <= 14:
-        toks = _split_tokens(_read(rec, img[y0:y1, :, :], prompt))
+    # 先**整排直读**: 实测(2026-09-16, 27 张满手)一次读全 ✓✓;
+    # 旧的"一律切两半"会在每半注入"共27张"→ 模型输出跑偏 → 读出 0 张 ✗
+    toks = _split_tokens(_read(rec, img[y0:y1, :, :], prompt))
+    if toks:
+        got = _sanitize(toks, expected)
+        if got and (not expected or len(got) >= expected - 2):
+            return got
+    if expected and expected <= 14:                # ≤14 张: 整排读不行就直接返回
         return _sanitize(toks, expected)
     parts: list[list[str]] = []
     for (x0, x1) in SPLITS:

@@ -392,7 +392,7 @@ def read_table_last(rec, img) -> list[Card] | None:
 
 
 def white_count(img) -> int:
-    y0, y1 = HAND_BAND
+    y0, y1 = hand_band_measured(img)   # 实测带(原来用死常量 → 布局下移后数在空白区 → my_turn 恒 False ✗)
     band = img[y0:y1]
     b, g, r = band[:, :, 0].astype(int), band[:, :, 1].astype(int), band[:, :, 2].astype(int)
     return int(((b > 200) & (g > 200) & (r > 200)).sum())

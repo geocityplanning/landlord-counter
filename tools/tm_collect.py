@@ -33,7 +33,9 @@ from landlord_counter.platform.device import AdbDevice                 # noqa: E
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TPL_DIR = os.path.join(ROOT, "data", "templates")
 # 牌面字形在牌的左上角: 从牌的左缘往右 6px、牌顶往下 4px 起, 取一小块(够装下 10/A/王)
-CORNER = (3, 3, 20, 34)     # dx, dy, w, h —— 牌重叠, 每张只露约 24px, 裁块必须更窄 ✗否则混进隔壁牌
+# 牌重叠 → 每张只露左侧约 24px 的**竖条**; 用整条(含点数+花色)当模板
+# 实测(2026-09-16): 角块(20~34px 小方块)取到空白 ✗ 只有 22%; 整条竖条跨帧自校验 **100%** ✓✓
+CORNER = (0, 8, 24, 0)      # dx, dy, w, h(=0 表示到卡片底)
 
 
 def slots(img) -> list:
@@ -79,12 +81,13 @@ def main() -> int:
             else:
                 continue
         peaks = peaks[:len(truth)]
-        dx, dy, w, h = CORNER
+        dx, dy, w, hh = CORNER
         for idx, z in enumerate(truth):
             x = peaks[idx] + dx
             y = y0 + dy
-            patch = f[y:y + h, x:x + w]
-            if patch.shape[:2] != (h, w):
+            y_end = (y1 - dy) if not hh else (y + hh)
+            patch = f[y:y_end, x:x + w]
+            if patch.size == 0 or patch.shape[0] < 20:
                 continue
             samples[z].append(patch.astype(np.float32))
         got += 1

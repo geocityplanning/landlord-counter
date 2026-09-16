@@ -604,8 +604,6 @@ class GuandanAdapter(GameAdapter):
             self._build_executor()
         ex = self._ex
         assert ex is not None
-        if action.meta.get("planned") and action.combo is not None:
-            self._log_plan(action.combo, action.meta.get("why", ""))   # 只在执行时记一次
         if action.kind == "pass":
             ex.pass_turn()
             self._expect_after = None         # 不出 → 不做掉牌校验
@@ -617,6 +615,7 @@ class GuandanAdapter(GameAdapter):
                 ranks = [getattr(obs.hand[i], "zhi", None) for i in idxs
                          if 0 <= i < len(obs.hand)]
                 if ex.direct_play(idxs, len(obs.hand), ranks=ranks):
+                    self._log_plan(action.combo, action.meta.get("why", ""))   # 打出去了才记决策
                     self._log_seat_play("南", action.combo.cards,
                                         hand_left=max(0, len(obs.hand) - len(action.combo.cards)),
                                         src="own")
@@ -642,6 +641,8 @@ class GuandanAdapter(GameAdapter):
         if r == "ok":
             if want and obs.hand:      # 按我们意图的张数设期望(提示臂 want=决策张数)
                 self._expect_after = max(0, len(obs.hand) - want)
+                if action.combo is not None:
+                    self._log_plan(action.combo, action.meta.get("why", ""))
             return ExecResult(True, 0, "出牌成功")
         if r == "none":
             self._expect_after = None

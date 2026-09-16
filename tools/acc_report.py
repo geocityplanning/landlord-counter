@@ -111,8 +111,8 @@ def main() -> int:
             print(f"{gid:<22}{fd:<26}{fg:<26}{res}")
     print()
     print("=== 张数口径(不依赖桌面读回) ===")
-    print(f"{'局':<22}{'决策张数':<12}{'实际掉牌':<12}结果")
-    print("-" * 60)
+    print(f"{'局':<22}{'决策N张':<10}{'期望手牌':<10}{'实际手牌':<10}{'掉牌':<8}结果")
+    print("-" * 76)
     vt = vok = 0
     vreason: Counter = Counter()
     for f in fs:
@@ -125,9 +125,10 @@ def main() -> int:
             n_dec = None
             if i < len(pn):
                 n_dec = pn[i].get("n")
+            drop = (v.get("hand_after") if False else None)
             if v.get("ok"):
                 vok += 1
-                print(f"{gid:<22}{str(n_dec):<12}{str(got):<12}✓ 一致")
+                print(f"{gid:<22}{str(n_dec):<10}{str(exp):<10}{str(got):<10}{'0':<8}✓ 一致")
             else:
                 d = None
                 if exp is not None and got is not None:
@@ -135,7 +136,7 @@ def main() -> int:
                 res = f"✗ 多打出 {-d} 张(自动带同点数?)" if d is not None and d < 0 else \
                       ("✗ 少打出 %s 张" % d if d is not None and d > 0 else "✗ 不符")
                 vreason["多打出(自动带同点数)" if d is not None and d < 0 else "少打出" if d else "不符"] += 1
-                print(f"{gid:<22}{str(n_dec):<12}{str(got):<12}{res}")
+                print(f"{gid:<22}{str(n_dec):<10}{str(exp):<10}{str(got):<10}{str(d):<8}{res}")
     print("-" * 60)
     if vt:
         print(f"张数口径准确率: {vok}/{vt} = {vok / vt * 100:.1f}%   目标 ≥99%")

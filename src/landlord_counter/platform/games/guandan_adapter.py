@@ -404,7 +404,6 @@ class GuandanAdapter(GameAdapter):
         try:
             hb = len(getattr(self, "_cur_hand", []) or [])
             self.log.plan("南", [str(c) for c in choice.cards], why=why, hand_before=hb or None)
-            self._expect_after = (hb - len(choice.cards)) if hb else None
         except Exception:                            # noqa: BLE001
             pass
 
@@ -609,6 +608,7 @@ class GuandanAdapter(GameAdapter):
         assert ex is not None
         if action.kind == "pass":
             ex.pass_turn()
+            self._expect_after = None         # 不出 → 不做掉牌校验
             return ExecResult(True, 0, "不出")
         # RL 臂: 打的是我们自己选的牌 → 必须点选直出(提示只会出游戏自己选的牌)
         if action.meta.get("direct") and action.combo is not None and obs.hand:
@@ -618,7 +618,10 @@ class GuandanAdapter(GameAdapter):
                          if 0 <= i < len(obs.hand)]
                 if ex.direct_play(idxs, len(obs.hand), ranks=ranks):
                     self._log_seat_play("南", action.combo.cards,
-                                        hand_left=max(0, len(obs.hand) - len(action.combo.cards)))
+                                        hand_left=max(0, len(obs.hand) - len(action.combo.cards)),
+                                        src="own")
+                    # 出牌**成功后**才设期望(按我们意图的张数) → 下次读手牌做校验
+                    self._expect_after = max(0, len(obs.hand) - len(action.combo.cards))
                     return ExecResult(True, 0, "直选出牌(RL)")
                 why = ""
                 if getattr(ex, "cdp", None) is not None:
@@ -637,8 +640,11 @@ class GuandanAdapter(GameAdapter):
         follow = bool(obs.table)
         r = ex.play_by_hint(want=want, follow=follow)
         if r == "ok":
+            if want and obs.hand:      # 按我们意图的张数设期望(提示臂 want=决策张数)
+                self._expect_after = max(0, len(obs.hand) - want)
             return ExecResult(True, 0, "出牌成功")
         if r == "none":
+            self._expect_after = None
             if follow:
                 ex.pass_turn()
                 return ExecResult(True, 0, "提示无可出→不出")

@@ -39,8 +39,26 @@ HAND_SIZE = 27
 
 
 def _zhi(card) -> int:
-    """取牌的点数值(2..14=A, 15=小王, 16=大王)。"""
-    return int(getattr(card, "zhi", card))
+    """取牌的点数值(2..14=A, 15=小王, 16=大王)。
+
+    支持: int / Card(有 .zhi) / 牌名字符串('♣7'、'小王')。
+    (2026-09-16: 原来只认 int/Card, 传字符串会抛 ValueError 被上层跳过 → 漏记。)
+    """
+    z = getattr(card, "zhi", None)
+    if z is not None:
+        return int(z)
+    if isinstance(card, int):
+        return card
+    s = str(card)
+    if "王" in s:
+        return 15 if "小" in s else 16
+    import re
+
+    m = re.search(r"(10|[2-9AJQK])", s.upper())
+    if not m:
+        return 0
+    t = m.group(1)
+    return {"A": 14, "J": 11, "Q": 12, "K": 13, "10": 10}.get(t, int(t) if t.isdigit() else 0)
 
 
 def _sig(cards: Iterable) -> tuple:

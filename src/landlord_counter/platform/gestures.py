@@ -46,7 +46,8 @@ class Executor:
         self.log = log
         self._dx = 0          # 点选自纠正偏移(全局)
         self.last_report = None      # 最近一次动作的 ActReport(执行器规范: 识别→动作→校验)
-        self.cdp = None              # 可选: CDP 输入后端(实测 adb tap 点"出牌"不生效, CDP 可)
+        self.cdp = None              # 可选: CDP 输入后端(调试/标定用)
+        self.mt = None               # 可选: MaaTouch 拟人化输入(真实 MotionEvent: 压力/接触/时长)
         self._liveness_fails = 0     # 连续"点了没反应"次数(活性探针)
         self._lift_min = None        # 本次运行见过的最小抬起量(≈"空"基线, 自适应)
 
@@ -65,6 +66,13 @@ class Executor:
         """
         if pt is None:
             return False
+        if self.mt is not None:                 # ① 拟人化输入优先(产品路径)
+            try:
+                self.mt.tap(pt[0], pt[1])
+                time.sleep(wait)
+                return True
+            except Exception as e:  # noqa: BLE001
+                self.log(f"  [input] MaaTouch 失败({type(e).__name__}) → 回落 CDP/adb")
         if self.cdp is not None:
             try:
                 self.cdp.click_screen(pt[0], pt[1], settle=wait)
@@ -89,6 +97,12 @@ class Executor:
         实测教训(2026-09-15): adb 的 touch 能让牌视觉上抬起, 但**游戏内部不认这手牌**
         (点"出牌"毫无反应); 改用 CDP 派发的鼠标事件后, "选牌→出牌"一次成功 ✓。
         """
+        if self.mt is not None:                 # ① 拟人化输入优先
+            try:
+                self.mt.tap(x, self.L.hand_y)
+                return
+            except Exception as e:  # noqa: BLE001
+                self.log(f"  [input] MaaTouch 点牌失败({type(e).__name__}) → 回落")
         if self.cdp is not None:
             try:
                 self.cdp.click_screen(x, self.L.hand_y, settle=wait)

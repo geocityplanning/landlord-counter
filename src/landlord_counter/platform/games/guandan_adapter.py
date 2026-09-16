@@ -77,7 +77,18 @@ class GuandanAdapter(GameAdapter):
             white_count=P.white_count,
         )
         self._ex = Executor(self.device, layout, log=print)
-        # 按钮点击走 CDP(可选): 实测 adb tap 点"出牌"不生效, CDP 派发可以
+        # 拟人化输入(MaaTouch): 真实 MotionEvent(压力/接触/时长) —— 产品路径用这个
+        if os.getenv("GUANDAN_NO_MAATOUCH", "0") != "1":
+            try:
+                from ..maatouch import MaaTouch
+
+                mt = MaaTouch(getattr(self.device, "serial", "127.0.0.1:5555"))
+                if mt.alive():
+                    self._ex.mt = mt
+                    print(f"▶ 输入走 MaaTouch 拟人化(压力/微移/随机时长) {mt.max_x}x{mt.max_y}", flush=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"⚠ MaaTouch 不可用({e}) → 回落", flush=True)
+        # 按钮点击走 CDP(可选, 调试用): 实测 adb tap 点"出牌"不生效, CDP 派发可以
         if os.getenv("GUANDAN_USE_CDP", "0") == "1":
             try:
                 from ..cdp import CDP

@@ -27,6 +27,7 @@ from urllib.parse import parse_qs, urlparse
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
 from landlord_counter.platform.game_log import DATA_DIR, GameLog, list_games   # noqa: E402
+from landlord_counter.platform.usage import UsageMeter   # noqa: E402
 
 CACHE: dict = {}
 
@@ -55,6 +56,18 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a) -> None:      # 静音(避免刷屏)
         pass
 
+    def do_POST(self) -> None:              # noqa: N802  (计量上报确认: 底座收到后回执)
+        parts = [p for p in urlparse(self.path).path.split("/") if p]
+        n = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(n) if n else b"{}"
+        try:
+            obj = json.loads(body or b"{}")
+        except Exception:                    # noqa: BLE001
+            obj = {}
+        if parts[:2] == ["usage", "ack"]:
+            return self._send({"ok": True, "acked": UsageMeter().ack(obj)})
+        return self._send({"error": "not found"}, 404)
+
     def do_GET(self) -> None:               # noqa: N802
         u = urlparse(self.path)
         q = parse_qs(u.query)
@@ -62,6 +75,16 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if u.path in ("/", "/health"):
                 return self._send({"ok": True, "data_dir": DATA_DIR, "games": len(list_games())})
+            if parts and parts[0] == "usage":
+                m = UsageMeter()
+                if len(parts) == 1:
+                    since = float((q.get("since") or ["0"])[0]) or None
+                    return self._send(m.summary(since=since))
+                if parts[1] == "batch":
+                    return self._send(m.batch())
+                if parts[1] == "events":
+                    return self._send({"events": m.pending()[-200:]})
+                return self._send({"error": f"未知子路径 {parts[1]}"}, 404)
             if parts and parts[0] == "games":
                 if len(parts) == 1:
                     return self._send({"games": list_games()})

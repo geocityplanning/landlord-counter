@@ -11,6 +11,7 @@ import time
 
 from ..types import Action, ExecResult, GameAdapter, Observation, SettleInfo
 from ..game_log import GameLog
+from ..usage import UsageMeter
 from ...guandan.tracker import CardTracker
 
 # 复用已标定常量(见 docs/M4_掼蛋几何参考.md)
@@ -41,6 +42,8 @@ class GuandanAdapter(GameAdapter):
         # 记牌器 + 牌局事件日志(追溯"谁打了什么牌"/"池子里还剩什么"; 见 docs/记牌器_调研.md)
         self.log = GameLog(game_id=f"gd-{time.strftime('%Y%m%d-%H%M')}", game_type="guandan")
         self.tracker = CardTracker()
+        # AI 算力计量(伴随包 → 底座计费; 只记消耗, 不带价格)
+        self.usage = UsageMeter(game="guandan")
         self._last_sig: dict = {}          # 座位 → 上次观测到的手牌签名(去重: 同一手只计一次)
         self._rl_played = [0.0, 0.0, 0.0, 0.0]
         self._read_fail_n = 0        # 连续读牌失败次数(空读治理: 不空转)
@@ -319,6 +322,7 @@ class GuandanAdapter(GameAdapter):
                 break
         if not hand:
             hand = P.read_hand_ordered(self.vision, frame, expected=n_vis)
+        self._meter_vlm("hand", ok=bool(hand), n_est=n_vis)
         if not hand:
             self._read_fail_evidence = {"n_est": n_vis, "n_read": None,
                                         "block": list(P.hand_block(frame) or (None, None))}
@@ -330,6 +334,7 @@ class GuandanAdapter(GameAdapter):
         self._read_fail_n = 0
         table = P.read_table_last(self.vision, frame)
         cards = table or []
+        self._meter_vlm("table", ok=bool(cards))
         self._set_my_hand(hand)
         self._observe_table(cards)               # 记牌: 谁打了什么牌 → 事件日志 + 记牌器
         # 一致性闸门: 牌位已与张数解耦(实测牌位), 故张数相差 1 张无害 → 只挡 >2 的离谱读数
@@ -345,6 +350,13 @@ class GuandanAdapter(GameAdapter):
                 return Observation(frame=frame, my_turn=True, hand=None, extra={"read_fail": True})
         return Observation(frame=frame, my_turn=True, hand=hand, table=cards,
                            extra={"n_vis": n_vis})
+
+    def _meter_vlm(self, what: str, ok: bool = True, **meta) -> None:
+        """记一次视觉读牌算力(伴随包 → 底座计费)。"""
+        try:
+            self.usage.vlm_read(what=what, ok=bool(ok), **meta)
+        except Exception:                            # noqa: BLE001
+            pass
 
     # ---------- 记牌(观测 → 事件日志 + 记牌器) ----------
     _SEAT_OF = {"right": "西", "top": "北", "left": "东"}     # 相对"我(南)"的座位
@@ -414,6 +426,7 @@ class GuandanAdapter(GameAdapter):
                 return Action("play", combo=None, meta={"hint": True, "why": "待压牌非法→提示驱动"})
         if not self.ours:
             return Action("play", combo=None, meta={"hint": True, "why": "MVP提示驱动"})
+        self.usage.decide(arm=("rl" if self.rl else "ours"), hand=len(obs.hand))
         st = AI.GameState()
         st.jipai = JIPAI
         st.shi_dui_you = self._last_seat.get("who") == "top"
@@ -443,6 +456,7 @@ class GuandanAdapter(GameAdapter):
         mine = float(len(obs.hand))
         rem = self.log.seat_remaining()              # 记牌器实测(他方 = 27 − 已出)
         others = [float(rem.get(s, 27)) for s in ("西", "北", "东")]
+        self.usage.rl_infer(n_cand=len(cands), hand=len(obs.hand))
         choice, info = self._rl.choose(cands, obs.hand, self._rl_hist[-16:],
                                        [mine] + others + [mine + sum(others)], (wi, last), 0)
         print(f"  [rl] 手牌{len(obs.hand)} 候选{info['n_cand']}(可映射{info['mapped']}) → "

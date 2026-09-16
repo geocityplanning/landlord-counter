@@ -413,7 +413,7 @@ class GuandanAdapter(GameAdapter):
         """记一次出牌: 写 GameLog + 更新 CardTracker。同一手重复看到只计一次。"""
         if not cards or not seat:
             return
-        sig = _ranks_sig(cards)                  # 按**点数**做签名(花色读不稳, 点数稳)
+        sig = self._ranks_sig(cards)             # 按**点数**做签名(花色读不稳, 点数稳)
         prev = self._last_sig.get(seat)
         if prev is not None:
             a, b = set(prev), set(sig)

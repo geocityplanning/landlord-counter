@@ -344,6 +344,11 @@ class GuandanAdapter(GameAdapter):
             if self._read_fail_n == 3:      # 连续读不到 → 打印一次, 但**不放弃**(保流程优先)
                 print("  [读牌] 连续 3 次读不到手牌 → 退回提示驱动(牌局继续推进, 记牌器继续观测)",
                       flush=True)
+            if getattr(self, "_last_hand", None):
+                try:                              # 沿用上次成功读到的手牌(池子核算用), 决策仍走提示
+                    self.log.set_my_hand(self._last_hand)
+                except Exception:                 # noqa: BLE001
+                    pass
             # 说明: 走到这里已经过了 my_turn + 手牌带结构 + 在局判据 3 道闸门, 是真牌局;
             # 读不到手牌就交给"提示驱动"(游戏自己挑合法牌) —— 比空转丢掉整局强。
             return Observation(frame=frame, my_turn=True, hand=None, extra={"read_fail": True})
@@ -367,6 +372,26 @@ class GuandanAdapter(GameAdapter):
         return Observation(frame=frame, my_turn=True, hand=hand, table=cards,
                            extra={"n_vis": n_vis})
 
+    @staticmethod
+    def _ranks_sig(cards):
+        """牌的**点数**序列(排序) —— 去重签名用点数不用花色(VLM 花色会读错, 点数是稳的)。"""
+        import re as _re
+
+        out = []
+        for c in cards:
+            z = getattr(c, "zhi", None)
+            if z is not None:
+                out.append(int(z))
+                continue
+            t = str(c)
+            if "王" in t:
+                out.append(15 if "小" in t else 16)
+                continue
+            m = _re.search(r"(10|[2-9AJQK])", t.upper())
+            tok = m.group(1) if m else "0"
+            out.append({"A": 14, "J": 11, "Q": 12, "K": 13, "10": 10}.get(tok, int(tok) if tok.isdigit() else 0))
+        return tuple(sorted(out))
+
     def _meter_vlm(self, what: str, ok: bool = True, **meta) -> None:
         """记一次视觉读牌算力(伴随包 → 底座计费)。"""
         try:
@@ -381,12 +406,13 @@ class GuandanAdapter(GameAdapter):
         """记一次出牌: 写 GameLog + 更新 CardTracker。同一手重复看到只计一次。"""
         if not cards or not seat:
             return
-        sig = tuple(sorted(str(c) for c in cards))
+        sig = _ranks_sig(cards)                  # 按**点数**做签名(花色读不稳, 点数稳)
         prev = self._last_sig.get(seat)
         if prev is not None:
             a, b = set(prev), set(sig)
             jac = len(a & b) / max(1, len(a | b))
-            if jac >= 0.6:                       # 近似同一手(VLM 两次读数略差) → 不当新事件
+            if jac >= 0.6 or (len(prev) == len(sig) and sorted(prev) == sorted(sig)):
+                                                 # 近似同一手(花色读差) 或点数完全相同 → 不当新事件
                 if len(sig) > len(prev):         # 这次读得更全 → 修正上一条
                     self._last_sig[seat] = sig
                     try:
@@ -468,6 +494,7 @@ class GuandanAdapter(GameAdapter):
         if not cards:
             return
         self._cur_hand = cards
+        self._last_hand = cards                   # 记住最后一次成功读数(读失败时沿用)
         self.log.set_my_hand(cards)
         try:
             self.tracker.set_my_hand(list(cards))

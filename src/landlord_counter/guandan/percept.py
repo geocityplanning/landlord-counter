@@ -452,16 +452,21 @@ def hand_band_measured(img, y_lo: int = 620, y_hi: int = 1010) -> tuple:
     rows = [y for y in range(max(0, y_lo), min(len(white), y_hi)) if white[y] > 0.45]
     if not rows:
         return HAND_BAND
-    best = (rows[0], rows[0]); s0 = rows[0]; prev = rows[0]
+    # 找出**所有**白段(每排牌的下半是白底) → 取**最下面**那段 = 我方手牌
+    # (实测 2026-09-16: 上面那排是"桌面刚出的牌", 之前取最大白段 → 读到桌上牌 ✗)
+    runs = []
+    s0 = prev = rows[0]
     for y in rows[1:]:
         if y - prev <= 4:
             prev = y
         else:
-            if prev - s0 > best[1] - best[0]:
-                best = (s0, prev)
+            runs.append((s0, prev))
             s0 = prev = y
-    if prev - s0 > best[1] - best[0]:
-        best = (s0, prev)
+    runs.append((s0, prev))
+    cand = [r for r in runs if r[1] - r[0] >= 40]
+    if not cand:
+        return HAND_BAND
+    best = max(cand, key=lambda r: r[1])          # 最下面那段
     if best[1] - best[0] < 40:
         return HAND_BAND
     # 关键: 白段只是牌的**下半白底**, 点/花色在上半 → 向上扩到"牌的顶边"

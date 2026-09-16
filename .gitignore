@@ -18,3 +18,7 @@ node_modules
 # 牌局运行时数据(事件日志, 不入库)
 data/games/*.jsonl
 data/games/*.csv
+
+# 计量/计费运行时数据(绝不可入库)
+data/usage/
+data/

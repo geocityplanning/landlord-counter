@@ -181,7 +181,7 @@ def load_templates(tpl_dir: str = "") -> dict:
     return out
 
 
-def tm_read_hand(img, tpl: dict | None = None, max_dist: float = 1.35, templates_dir: str | None = None):
+def tm_read_hand(img, tpl: dict | None = None, max_dist: float = 0.6, templates_dir: str | None = None):
     """**模板匹配**读手牌(纯像素, 不调模型)。
 
     做法: 实测手牌带 → 实测牌位(卡边界+占用范围) → 裁每张牌露出的**整条竖条**(宽24)

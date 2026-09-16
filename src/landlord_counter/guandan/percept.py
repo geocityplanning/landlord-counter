@@ -9,12 +9,19 @@ import numpy as np
 
 from .rules import Card, cards_from_tokens
 
-HAND_BAND = (695, 825)   # 实测(2026-09-16 720x1280 掼蛋): 牌面 y≈695..825, 130px 高
+HAND_BAND = (695, 825)
+# 手牌行最左边是"你"字小框(浅绿), 它不是牌 → 读牌时从它右边开始
+# (实测 2026-09-16: 不裁会把"你"读成一张 8 并盖住第一张牌; 裁 20~65px 都能读全)
+HAND_X_PAD = 26   # 实测(2026-09-16 720x1280 掼蛋): 牌面 y≈695..825, 130px 高
 SPLITS = [(0, 370), (350, 720)]
 
 PROMPT_HAND = (
-    "这是一排掼蛋手牌的一部分(从左到右,相互重叠,每张只露出左上角的花色符号+点数)。"
-    "逐张输出\"花色+点数\",逗号分隔,不要解释,不要合并重复。花色用♠♥♦♣,10写10,大王写大王,小王写小王。"
+    # 2026-09-16 修正: 旧提示词写"每张只露出左上角" → 与本界面(整张可见)不符 ✗
+    # → 模型把最左边"你"字小框也当成一张半露的牌(读成 8)、王也读错。
+    # 用实测验证过的说法(真值对照: 9 张里 8 张逐张一致 ✓)
+    "这是一排掼蛋手牌。最左边的小方框不是牌,请忽略。"
+    "从左到右逐张列出每张的**点数**,用空格分隔,不要解释,不要合并重复。"
+    "10 写 10,J/Q/K/A 照写,小王写小王,大王写大王。"
 )
 PROMPT_TABLE = (
     "这是掼蛋牌桌的出牌区(四家)。请找出**当前需要被压过的那一手牌**(桌上最后打出的、不是\"不出\"的牌),"
@@ -51,7 +58,13 @@ def _norm_token(t: str) -> str:
 
 
 def _split_tokens(txt: str) -> list[str]:
-    return [_norm_token(t) for t in txt.replace("，", ",").replace("、", ",").split(",") if t.strip()]
+    """切牌 token。逗号/顿号/**空白**都当分隔符(实测 2026-09-16: 模型常按空格输出,
+    只按逗号切会整句当一个 token → 全被丢掉 ✗)。"""
+    import re as _re
+
+    norm = txt.replace("，", ",").replace("、", ",")
+    parts = [x for x in _re.split(r"[,\s]+", norm) if x.strip()]
+    return [_norm_token(t) for t in parts]
 
 
 def read_seat_panels(rec, img) -> dict:
@@ -95,7 +108,7 @@ def read_hand_ordered(rec, img, expected: int = 0) -> list[Card] | None:
     prompt = PROMPT_HAND + (f" 这一排共 {expected} 张。" if expected > 0 else "")
     # 先**整排直读**: 实测(2026-09-16, 27 张满手)一次读全 ✓✓;
     # 旧的"一律切两半"会在每半注入"共27张"→ 模型输出跑偏 → 读出 0 张 ✗
-    toks = _split_tokens(_read(rec, img[y0:y1, :, :], prompt))
+    toks = _split_tokens(_read(rec, img[y0:y1, HAND_X_PAD:, :], prompt))
     if toks:
         got = _sanitize(toks, expected)
         if got and (not expected or len(got) >= expected - 2):

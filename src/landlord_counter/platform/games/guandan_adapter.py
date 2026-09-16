@@ -10,6 +10,8 @@ import re
 import time
 
 from ..types import Action, ExecResult, GameAdapter, Observation, SettleInfo
+from ..game_log import GameLog
+from ...guandan.tracker import CardTracker
 
 # 复用已标定常量(见 docs/M4_掼蛋几何参考.md)
 from ...guandan import ai as AI
@@ -36,6 +38,10 @@ class GuandanAdapter(GameAdapter):
         self.rl = os.getenv("GUANDAN_DECIDE", "").strip().lower() == "rl"
         self._rl = None
         self._rl_hist: list = []
+        # 记牌器 + 牌局事件日志(追溯"谁打了什么牌"/"池子里还剩什么"; 见 docs/记牌器_调研.md)
+        self.log = GameLog(game_id=f"gd-{time.strftime('%Y%m%d-%H%M')}", game_type="guandan")
+        self.tracker = CardTracker()
+        self._last_sig: dict = {}          # 座位 → 上次观测到的手牌签名(去重: 同一手只计一次)
         self._rl_played = [0.0, 0.0, 0.0, 0.0]
         self._read_fail_n = 0        # 连续读牌失败次数(空读治理: 不空转)
         self._turn_checked_at = 0.0  # 上次"游戏真值"复核时刻(CDP 用)
@@ -324,6 +330,8 @@ class GuandanAdapter(GameAdapter):
         self._read_fail_n = 0
         table = P.read_table_last(self.vision, frame)
         cards = table or []
+        self._set_my_hand(hand)
+        self._observe_table(cards)               # 记牌: 谁打了什么牌 → 事件日志 + 记牌器
         # 一致性闸门: 牌位已与张数解耦(实测牌位), 故张数相差 1 张无害 → 只挡 >2 的离谱读数
         if hand and n_vis and abs(n_vis - len(hand)) > 1:
             hand2 = P.read_hand_ordered(self.vision, frame, expected=n_vis)
@@ -337,6 +345,63 @@ class GuandanAdapter(GameAdapter):
                 return Observation(frame=frame, my_turn=True, hand=None, extra={"read_fail": True})
         return Observation(frame=frame, my_turn=True, hand=hand, table=cards,
                            extra={"n_vis": n_vis})
+
+    # ---------- 记牌(观测 → 事件日志 + 记牌器) ----------
+    _SEAT_OF = {"right": "西", "top": "北", "left": "东"}     # 相对"我(南)"的座位
+
+    def _log_seat_play(self, seat: str, cards, hand_left=None) -> None:
+        """记一次出牌: 写 GameLog + 更新 CardTracker。同一手重复看到只计一次。"""
+        if not cards or not seat:
+            return
+        sig = tuple(sorted(str(c) for c in cards))
+        if self._last_sig.get(seat) == sig:      # 同一手重复观测 → 忽略
+            return
+        self._last_sig[seat] = sig
+        self.log.play(seat, [str(c) for c in cards], hand_left)
+        try:
+            self.tracker.observe(seat, list(cards))
+        except Exception as e:                   # noqa: BLE001
+            print(f"  [记牌] tracker.observe 异常({type(e).__name__}: {e})", flush=True)
+
+    def _observe_table(self, cards) -> None:
+        """每帧看桌面: 有牌 → 记一次; 桌面清空 → 一轮结束(签名清零, 允许同牌再计)。"""
+        if not cards:
+            self._last_sig.clear()
+            return
+        who = self._last_seat.get("who")
+        seat = self._SEAT_OF.get(who or "", "")
+        self._log_seat_play(seat, cards)
+
+    def _set_my_hand(self, cards) -> None:
+        """我方手牌 → 同时同步给 GameLog 与 CardTracker(两边不同步 → 池子对不上)。"""
+        if not cards:
+            return
+        self._cur_hand = cards
+        self.log.set_my_hand(cards)
+        try:
+            self.tracker.set_my_hand(list(cards))
+        except Exception:                        # noqa: BLE001
+            pass
+
+    def _new_deal(self) -> None:
+        """新一局: 记牌器/日志/RL 历史全部归零。"""
+        self.log.deal_start()
+        self.tracker.reset()
+        self._last_sig.clear()
+        self._rl_hist.clear()
+        self._rl_played = [0.0, 0.0, 0.0, 0.0]
+        print("  [记牌] 新一局 → 事件日志与记牌器已清零", flush=True)
+
+    def board_state(self) -> dict:
+        """给后台/决策用的当前牌局数据: 各家余牌 + 池子 + 守恒自检。"""
+        try:
+            self._set_my_hand(getattr(self, "_cur_hand", []) or [])
+        except Exception:                        # noqa: BLE001
+            pass
+        return {"summary": self.log.summary(),
+                "seat_remaining": self.log.seat_remaining(),
+                "pool": self.log.pool(),
+                "played": {s: dict(self.log.played[s]) for s in self.log.seats}}
 
     # ---------- 决策 ----------
     def decide(self, obs: Observation) -> Action:
@@ -364,12 +429,11 @@ class GuandanAdapter(GameAdapter):
         """RL 臂: 预训练权重在"我方全部合法出牌"里选 → 标记 direct(执行层点选直出)。"""
         who = self._last_seat.get("who")
         wi = {"right": 1, "top": 2, "left": 3}.get(who or "", 1)
-        if len(obs.hand) >= 25:                      # 手牌回到满手 = 新一局 → 清历史
-            self._rl_hist.clear()
-            self._rl_played = [0.0, 0.0, 0.0, 0.0]
+        if len(obs.hand) >= 25 and self._rl_hist:    # 手牌回到满手且上局有记录 = 新一局
+            self._new_deal()
         if last is not None and (not self._rl_hist or self._rl_hist[-1][1] is not last):
             self._rl_hist.append((wi, last))
-            self._rl_played[wi] = min(27.0, self._rl_played[wi] + len(cards))
+        self._set_my_hand(obs.hand)                  # 我方手牌(精确) → 日志 + 记牌器
         if self._rl is None:
             from ...guandan.rl_policy import RLPolicy
 
@@ -377,7 +441,8 @@ class GuandanAdapter(GameAdapter):
             print(f"▶ RL 决策器已加载: {os.path.basename(self._rl.path)}", flush=True)
         cands = AI.zhao_ke_chu_de_pai(obs.hand, last, JIPAI)
         mine = float(len(obs.hand))
-        others = [max(0.0, 27 - self._rl_played[i]) for i in (1, 2, 3)]
+        rem = self.log.seat_remaining()              # 记牌器实测(他方 = 27 − 已出)
+        others = [float(rem.get(s, 27)) for s in ("西", "北", "东")]
         choice, info = self._rl.choose(cands, obs.hand, self._rl_hist[-16:],
                                        [mine] + others + [mine + sum(others)], (wi, last), 0)
         print(f"  [rl] 手牌{len(obs.hand)} 候选{info['n_cand']}(可映射{info['mapped']}) → "
@@ -386,7 +451,7 @@ class GuandanAdapter(GameAdapter):
         if choice is None:
             return Action("pass", meta={"why": "RL判不出/不出"})
         self._rl_hist.append((0, choice))
-        self._rl_played[0] = min(27.0, self._rl_played[0] + len(choice.cards))
+        self._log_seat_play("南", choice.cards, hand_left=max(0, len(obs.hand) - len(choice.cards)))
         return Action("play", combo=choice, meta={"why": "RL决策", "direct": True})
 
     # ---------- 执行 ----------
@@ -405,6 +470,8 @@ class GuandanAdapter(GameAdapter):
                 ranks = [getattr(obs.hand[i], "zhi", None) for i in idxs
                          if 0 <= i < len(obs.hand)]
                 if ex.direct_play(idxs, len(obs.hand), ranks=ranks):
+                    self._log_seat_play("南", action.combo.cards,
+                                        hand_left=max(0, len(obs.hand) - len(action.combo.cards)))
                     return ExecResult(True, 0, "直选出牌(RL)")
                 why = ""
                 if getattr(ex, "cdp", None) is not None:
@@ -468,6 +535,10 @@ def _map_indices(hand, cards):
             if m2:
                 up = m2.group(1)
             raw = f"头游={head};升级={up}"
+            try:
+                self.log.deal_end(raw=raw, win=win)
+            except Exception:                    # noqa: BLE001
+                pass
             return SettleInfo(raw=raw, win=win)
         if self.vision is None:
             return None

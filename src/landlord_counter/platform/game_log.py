@@ -132,9 +132,17 @@ class GameLog:
                          cards=[_name(c) for c in cards], hand_left=hand_left, src=src)
         return ev
 
-    def plan(self, seat: str, cards, why: str = "") -> dict:
+    def plan(self, seat: str, cards, why: str = "", hand_before: int | None = None) -> dict:
         """记一次**决策**(我们打算出的牌) —— 用于"决定 vs 实际打出"的操作准确率对账。"""
-        return self.append("plan", seat=seat, cards=[_name(c) for c in cards], why=why)
+        return self.append("plan", seat=seat, cards=[_name(c) for c in cards], why=why,
+                           n=len(list(cards)), hand_before=hand_before)
+
+    def verify(self, seat: str, hand_after: int, expected_after: int) -> dict:
+        """出牌后的**张数校验**: 实际掉牌数 是否等于 决策张数(抓"自动带上同点数")。"""
+        return self.append("verify", seat=seat, hand_after=hand_after,
+                           expected_after=expected_after,
+                           ok=(hand_after == expected_after),
+                           delta=(expected_after - hand_after) if expected_after is not None else None)
 
     def pass_(self, seat: str) -> dict:
         return self.append("pass", seat=seat, action="pass")

@@ -400,11 +400,28 @@ class GuandanAdapter(GameAdapter):
             pass
 
     def _log_plan(self, choice, why: str) -> None:
-        """记一次决策(我们打算出的牌) → 操作准确率对账用。"""
+        """记一次决策(我们打算出的牌) → 操作准确率对账用。同时记下"决策前手牌张数"。"""
         try:
-            self.log.plan("南", [str(c) for c in choice.cards], why=why)
+            hb = len(getattr(self, "_cur_hand", []) or [])
+            self.log.plan("南", [str(c) for c in choice.cards], why=why, hand_before=hb or None)
+            self._expect_after = (hb - len(choice.cards)) if hb else None
         except Exception:                            # noqa: BLE001
             pass
+
+    def _check_hand_delta(self, hand) -> None:
+        """出牌后手牌张数校验: 掉了多少张 == 决策打多少张?
+
+        这是"操作准确率"的**张数口径**(不依赖桌面读回):
+        决定打 1 张、实际掉 3 张(游戏"自动带上同点数") → 立刻暴露 ✓
+        """
+        exp = getattr(self, "_expect_after", None)
+        if exp is None or not hand:
+            return
+        try:
+            self.log.verify("南", hand_after=len(hand), expected_after=exp)
+        except Exception:                            # noqa: BLE001
+            pass
+        self._expect_after = None
 
     # ---------- 记牌(观测 → 事件日志 + 记牌器) ----------
     _SEAT_OF = {"right": "西", "top": "北", "left": "东"}     # 相对"我(南)"的座位
@@ -502,6 +519,7 @@ class GuandanAdapter(GameAdapter):
             return
         self._cur_hand = cards
         self._last_hand = cards                   # 记住最后一次成功读数(读失败时沿用)
+        self._check_hand_delta(cards)             # 张数校验(决策后手牌应正好少 N 张)
         self.log.set_my_hand(cards)
         try:
             self.tracker.set_my_hand(list(cards))

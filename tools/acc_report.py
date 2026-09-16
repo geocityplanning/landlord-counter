@@ -70,6 +70,14 @@ def pair(path: str) -> list:
     return pairs
 
 
+def verify_stats(path: str) -> tuple:
+    """张数口径: 决策打 N 张 → 实际掉几张?(verify 事件)"""
+    rows = [json.loads(l) for l in open(path, encoding="utf-8") if l.strip()]
+    plans = [r for r in rows if r.get("type") == "plan"]
+    vers = [r for r in rows if r.get("type") == "verify"]
+    return plans, vers
+
+
 def main() -> int:
     fs = _files(sys.argv[1:])
     if not fs:
@@ -101,7 +109,41 @@ def main() -> int:
             fd = " ".join(str(x) for x in dec)
             fg = " ".join(str(x) for x in got)
             print(f"{gid:<22}{fd:<26}{fg:<26}{res}")
-    print("-" * 96)
+    print()
+    print("=== 张数口径(不依赖桌面读回) ===")
+    print(f"{'局':<22}{'决策张数':<12}{'实际掉牌':<12}结果")
+    print("-" * 60)
+    vt = vok = 0
+    vreason: Counter = Counter()
+    for f in fs:
+        gid = os.path.basename(f)[:-6]
+        plans, vers = verify_stats(f)
+        pn = [p for p in plans if p.get("hand_before")]
+        for i, v in enumerate(vers):
+            vt += 1
+            exp, got = v.get("expected_after"), v.get("hand_after")
+            n_dec = None
+            if i < len(pn):
+                n_dec = pn[i].get("n")
+            if v.get("ok"):
+                vok += 1
+                print(f"{gid:<22}{str(n_dec):<12}{str(got):<12}✓ 一致")
+            else:
+                d = None
+                if exp is not None and got is not None:
+                    d = exp - got
+                res = f"✗ 多打出 {-d} 张(自动带同点数?)" if d is not None and d < 0 else \
+                      ("✗ 少打出 %s 张" % d if d is not None and d > 0 else "✗ 不符")
+                vreason["多打出(自动带同点数)" if d is not None and d < 0 else "少打出" if d else "不符"] += 1
+                print(f"{gid:<22}{str(n_dec):<12}{str(got):<12}{res}")
+    print("-" * 60)
+    if vt:
+        print(f"张数口径准确率: {vok}/{vt} = {vok / vt * 100:.1f}%   目标 ≥99%")
+        for k, v in vreason.most_common():
+            print(f"   失败原因: {k} × {v}")
+    else:
+        print("(还没有 verify 事件 —— 需要带张数校验的版本跑窗口)")
+    print()
     if tot:
         print(f"操作准确率(identity级): {ok}/{tot} = {ok / tot * 100:.1f}%   目标 ≥99%")
         for k, v in reasons.most_common():

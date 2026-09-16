@@ -34,8 +34,21 @@ def main() -> int:
 
     # 打开该游戏自己的页面(适配器 start_url), 再交给运行时进桌/托管
     if getattr(ad, "start_url", None):
-        print(f"↻ 打开页面: {ad.start_url}")
-        dev.recover(package=getattr(ad, "package", None), url=ad.start_url)
+        # 已在牌局里就**不要重开页面**: 重开会丢掉进行中的牌局 →
+        # 接着"开始按钮"又认不出来 → 整轮 0 动作(2026-09-16 实测的元凶)。
+        in_deal = False
+        try:
+            f0 = dev.snap()
+            from landlord_counter.guandan import percept as P
+
+            in_deal = bool(P.hand_is_real(f0)[0])
+        except Exception:  # noqa: BLE001
+            in_deal = False
+        if in_deal:
+            print("↻ 检测到已在牌局中 → 不重开页面(保护进行中的牌局)")
+        else:
+            print(f"↻ 打开页面: {ad.start_url}")
+            dev.recover(package=getattr(ad, "package", None), url=ad.start_url)
 
     from landlord_counter.platform.runtime import Runtime
 

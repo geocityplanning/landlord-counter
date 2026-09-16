@@ -371,8 +371,18 @@ class GuandanAdapter(GameAdapter):
         if not cards or not seat:
             return
         sig = tuple(sorted(str(c) for c in cards))
-        if self._last_sig.get(seat) == sig:      # 同一手重复观测 → 忽略
-            return
+        prev = self._last_sig.get(seat)
+        if prev is not None:
+            a, b = set(prev), set(sig)
+            jac = len(a & b) / max(1, len(a | b))
+            if jac >= 0.6:                       # 近似同一手(VLM 两次读数略差) → 不当新事件
+                if len(sig) > len(prev):         # 这次读得更全 → 修正上一条
+                    self._last_sig[seat] = sig
+                    try:
+                        self.log.amend_last_play(seat, [str(c) for c in cards])
+                    except Exception:            # noqa: BLE001
+                        pass
+                return
         self._last_sig[seat] = sig
         self.log.play(seat, [str(c) for c in cards], hand_left)
         try:

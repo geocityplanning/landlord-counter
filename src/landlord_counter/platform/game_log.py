@@ -137,6 +137,31 @@ class GameLog:
     def deal_end(self, **result) -> dict:
         return self.append("deal_end", **result)
 
+    def amend_last_play(self, seat: str, cards) -> bool:
+        """把**最后一条**出牌事件的牌面改成更全的读数(同一手被读两次、第二次更全时用)。
+
+        记牌器要的是"某家出了哪些牌" —— 读到 8 张又读到 10 张时, 应以更全的为准。
+        """
+        for ev in reversed(self.events):
+            if ev.get("type") == "play" and ev.get("seat") == seat:
+                names = [str(c) for c in cards]
+                if len(names) <= len(ev.get("cards", [])):
+                    return False
+                ev["cards"] = names
+                ev["amended"] = True
+                try:                                  # 同步改落盘的最后一行
+                    if os.path.exists(self.path):
+                        rows = open(self.path, encoding="utf-8").read().splitlines()
+                        for i in range(len(rows) - 1, -1, -1):
+                            if rows[i].strip():
+                                rows[i] = json.dumps(ev, ensure_ascii=False)
+                                break
+                        open(self.path, "w", encoding="utf-8").write("\n".join(rows) + "\n")
+                except Exception:                     # noqa: BLE001
+                    pass
+                return True
+        return False
+
     def set_my_hand(self, cards) -> None:
         self.my_hand = Counter(_zhi(c) for c in cards)
 

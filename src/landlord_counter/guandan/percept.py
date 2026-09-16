@@ -56,7 +56,7 @@ def _split_tokens(txt: str) -> list[str]:
 
 def read_hand_ordered(rec, img, expected: int = 0) -> list[Card] | None:
     """读手牌: ≤14 张整排直读; 更多则切两半拼接。expected>0 时提示词注入张数。"""
-    y0, y1 = HAND_BAND
+    y0, y1 = hand_band_measured(img)   # 读取也用**实测**带(与探测一致)
     prompt = PROMPT_HAND + (f" 这一排共 {expected} 张。" if expected > 0 else "")
     if expected and expected <= 14:
         toks = _split_tokens(_read(rec, img[y0:y1, :, :], prompt))
@@ -82,7 +82,7 @@ def read_hand_strips(rec, img, n: int, batch: int = 9) -> list[Card] | None:
     从第 i 张的左缘裁到第 j-1 张的右缘, 画面里**恰好只有** i..j-1 这几张
     (前一张的露出区在左边界之外) → 段间并集无损、无需重叠拼接, 比"固定切两半"稳。
     """
-    y0, y1 = HAND_BAND
+    y0, y1 = hand_band_measured(img)   # 读取也用**实测**带(与探测一致)
     if n <= 0:
         return None
     xs = [int(hand_start_x(n) + i * 24) for i in range(n)]
@@ -112,7 +112,7 @@ def read_hand_strips_measured(rec, img, n: int, batch: int = 9) -> list[Card] | 
     不再用 hand_start_x(n) 公式 —— 上游"张数"读错时公式会整排平移, 分段裁切跟着错。
     实测(2026-09-15): 整排直读会**只读左半排**(27 张的手牌只读出 12 张), 故改分段。
     """
-    y0, y1 = HAND_BAND
+    y0, y1 = hand_band_measured(img)   # 读取也用**实测**带(与探测一致)
     if n <= 0:
         return None
     xs = card_positions(img, n)

@@ -156,7 +156,7 @@ def load_templates(tpl_dir: str = "") -> dict:
     return out
 
 
-def tm_read_hand(img, tpl: dict | None = None, max_dist: float = 22.0):
+def tm_read_hand(img, tpl: dict | None = None, max_dist: float = 14.0):
     """**模板匹配**读手牌(纯像素, 不调模型)。
 
     做法: 实测手牌带 + 卡边界定位每张牌的左缘 → 裁该牌露出的**整条竖条**(宽24×卡高)
@@ -197,13 +197,18 @@ def tm_read_hand(img, tpl: dict | None = None, max_dist: float = 22.0):
                     if nxt > x_hi + pitch // 2:
                         break
                     peaks.append(nxt)
-                # 同一张牌的重复位(实测会出 3,3 / 9,9 ✗) → 按牌距合并
-                dedup = [peaks[0]]
-                for x in peaks[1:]:
-                    if x - dedup[-1] < 0.7 * pitch:
-                        continue
-                    dedup.append(x)
-                peaks = dedup
+                # 重复位(实测每张被算两次 3,3 / 9,9 ✗)与真牌位相差**约半格** →
+                # 用**相位**筛: 真牌位相位一致, 重复位偏移半格
+                ph = [float(x) % pitch for x in peaks]
+                ref = float(np.median(ph))
+                keep = []
+                for x, v in zip(peaks, ph):
+                    d = abs(v - ref)
+                    d = min(d, pitch - d)
+                    if d < 0.28 * pitch:
+                        keep.append(x)
+                if len(keep) >= 2:
+                    peaks = keep
     except Exception:                            # noqa: BLE001
         pass
     out = []
@@ -211,6 +216,10 @@ def tm_read_hand(img, tpl: dict | None = None, max_dist: float = 22.0):
         x0 = max(0, int(x))
         patch = img[y0 + 8:y1 - 8, x0:x0 + 24].astype("float32")
         if patch.size == 0 or patch.shape[0] < 10:
+            continue
+        # 纯色块(如手牌最左的"你"字小框)不是牌 → 丢掉(实测它会被误认成一张 3 ✗)
+        if float(patch.std()) < 10.0:
+            info["unknown"] += 1
             continue
         best_z, best_d = None, 1e18
         for z, t in tpl.items():
@@ -221,8 +230,9 @@ def tm_read_hand(img, tpl: dict | None = None, max_dist: float = 22.0):
                 best_d, best_z = d, z
         if best_z is None:
             continue
-        if best_d > max_dist:                    # 太不像 → 记为未知(交给反推/二次确认)
+        if best_d > max_dist:                    # 不像任何牌(如"你"字框/空白) → **丢掉该位**
             info["unknown"] += 1
+            continue
         out.append((best_z, x0))
         info["max_dist"] = max(info["max_dist"], round(best_d, 2))
     info["n_slot"] = len(out)

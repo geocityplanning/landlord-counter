@@ -308,7 +308,10 @@ def _split_box(mask, box, y0):
 def table_plays(img):
     """桌面牌块检测: 返回 [(区域名, bbox, 白像素数)] — 聚类后按竖直间隙拆块再归属玩家区。
     同一玩家只保留最大块(每轮每人至多一手)。"""
-    x0, y0, x1, y1 = 0, 150, 720, 820
+    # 区域**自适应**(2026-09-16 修): 原来写死 y1=820, 界面布局下移后出牌区落到区域外
+    # → 一个出牌事件都记不到 ✗。改为: 下界 = 实测手牌带顶边之上一点(= 出牌区底), 上界 = 面板下方。
+    hy0, _hy1 = hand_band_measured(img)
+    x0, y0, x1, y1 = 0, 430, img.shape[1], max(560, int(hy0) - 4)
     sub = img[y0:y1, x0:x1]
     b, g, r = sub[:, :, 0].astype(int), sub[:, :, 1].astype(int), sub[:, :, 2].astype(int)
     m = ((b > 200) & (g > 200) & (r > 200)).astype(np.uint8) * 255
@@ -321,13 +324,14 @@ def table_plays(img):
             continue
         for (bx, by, bw, bh, cnt) in _split_box(m > 0, (x, y, w, h), y0):
             cx, cy = bx + bw // 2, by + bh // 2 + y0
-            if cy > 620:
+            # 座位判定也随实测走(不再写死 620/300/420/480)
+            if cy > int(hy0) - 90:          # 紧贴手牌上方 = 我方最近出的牌
                 name = "bottom"
-            elif cx < 300:
+            elif cx < img.shape[1] * 0.42:
                 name = "left"
-            elif cx > 420:
+            elif cx > img.shape[1] * 0.58:
                 name = "right"
-            elif cy < 480:
+            elif cy < y0 + 110:
                 name = "top"
             else:
                 continue  # 中心混合块忽略

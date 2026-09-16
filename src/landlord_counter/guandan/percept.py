@@ -19,8 +19,9 @@ PROMPT_HAND = (
     # 2026-09-16 修正: 旧提示词写"每张只露出左上角" → 与本界面(整张可见)不符 ✗
     # → 模型把最左边"你"字小框也当成一张半露的牌(读成 8)、王也读错。
     # 用实测验证过的说法(真值对照: 9 张里 8 张逐张一致 ✓)
-    "这是一排掼蛋手牌。最左边的小方框不是牌,请忽略。"
-    "从左到右逐张列出每张的**点数**,用空格分隔,不要解释,不要合并重复。"
+    "图里是一排掼蛋扑克牌(最左边的小方框不是牌,请忽略)。"
+    "先数一共有几张,再按从左到右列出每张的**点数**,空格分隔,不要解释,不要合并重复。"
+    "格式示例: 共9张 | 3 9 10 J Q K A A A 小王。"
     "10 写 10,J/Q/K/A 照写,小王写小王,大王写大王。"
 )
 PROMPT_TABLE = (
@@ -102,16 +103,86 @@ def read_seat_panels(rec, img) -> dict:
     return {"panels": panels, "level": level, "raw": raw}
 
 
+def _parse_hand_text(raw: str, expected: int = 0) -> list:
+    """VLM 原始文本 → 牌 token 列表。
+
+    实测输出形如 '共9张 | 3 A A A Q J 10 9 3' 或 '8\nA A A 6 J 10 Q 2'
+    —— 前面常带一行"张数", 后面才是牌 ✗。
+    做法: 正则扫出所有像牌的点数/王 → **从后往前取 expected 个**(张数行在前, 天然丢弃 ✓)
+    """
+    import re as _re
+
+    core = _re.sub(r"共\s*\d+\s*张", " ", raw)
+    toks = _re.findall(r"大王|小王|(?:10|[2-9AJQK])(?![0-9A-Za-z])", core)
+    if expected and len(toks) > expected:
+        toks = toks[-expected:]
+    return toks
+
+
+def _vote_tokens(cands: list) -> list:
+    """多采样投票: 按位置取多数(样本长度不一时以最长者为骨架)。"""
+    if not cands:
+        return []
+    if len(cands) == 1:
+        return cands[0]
+    base = max(cands, key=len)
+    return [max(set([c[i] for c in cands if i < len(c)]), key=[c[i] for c in cands if i < len(c)].count)
+            for i in range(len(base))]
+
+
+def _fix_last_card(rec, img, y0: int, y1: int, got: list) -> None:
+    """定点复读**最右那张**牌(就地修正 got)。
+
+    为什么: 掼蛋按点数升序排, **大小王排在最后** → 而模型常把王读成 3 ✗
+    (实测 2026-09-16: 同一手 9 张, 中间 7 张全对, 只有最右的王读成 3)。
+    做法: 用卡边界实测拿到最后一张的 x 区间 → 单独问一句"是不是王" → 是就替换。
+    """
+    try:
+        peaks = card_edges(img, y0, y1)
+        if len(peaks) < 2 or not got:
+            return
+        x_last = peaks[-1]
+        x_prev = peaks[-2]
+        pad = max(30, (x_last - x_prev) // 2)
+        x0 = max(0, x_last - pad)
+        x1 = min(img.shape[1], x_last + pad + 20)
+        crop = img[max(0, y0 - 6):y1 + 6, x0:x1]
+        txt = _read(rec, crop, "这一张扑克牌是: 小王、大王、还是普通点数(2-10/J/Q/K/A)? 只回一个答案, 不要解释")
+        t = (txt or "").strip()
+        z = None
+        if "小王" in t:
+            z = 15
+        elif "大王" in t:
+            z = 16
+        if z is None:
+            return
+        # 替换最后一个 token(旧的是误读) —— 用 zhi 值构造, 与 _norm_token 口径一致
+        name = "小王" if z == 15 else "大王"
+        if got and str(got[-1]) not in ("小王", "大王"):
+            got[-1] = name
+    except Exception:  # noqa: BLE001
+        return
+
+
 def read_hand_ordered(rec, img, expected: int = 0) -> list[Card] | None:
     """读手牌: ≤14 张整排直读; 更多则切两半拼接。expected>0 时提示词注入张数。"""
     y0, y1 = hand_band_measured(img)   # 读取也用**实测**带(与探测一致)
     prompt = PROMPT_HAND + (f" 这一排共 {expected} 张。" if expected > 0 else "")
     # 先**整排直读**: 实测(2026-09-16, 27 张满手)一次读全 ✓✓;
     # 旧的"一律切两半"会在每半注入"共27张"→ 模型输出跑偏 → 读出 0 张 ✗
-    toks = _split_tokens(_read(rec, img[y0:y1, HAND_X_PAD:, :], prompt))
+    # 三次采样投票(实测: VLM 单次输出格式/内容抖动大 ✗ → 投票最稳)
+    cand_toks = []
+    for _i in range(3):
+        raw = _read(rec, img[y0:y1, HAND_X_PAD:, :], prompt) or ""
+        toks_i = _parse_hand_text(raw, expected)
+        if toks_i:
+            cand_toks.append(toks_i)
+    toks = _vote_tokens(cand_toks) if cand_toks else []
     if toks:
-        got = _sanitize(toks, expected)
-        if got and (not expected or len(got) >= expected - 2):
+        exp2 = expected                   # 模型自报张数不可靠(实测常少报) → 用期望值清洗
+        got = _sanitize(toks, exp2)
+        if got and (not expected or len(got) >= expected - 1):
+            _fix_last_card(rec, img, y0, y1, got)   # 定点复读最右那张(王常被读错)
             return got
     if expected and expected <= 14:                # ≤14 张: 整排读不行就直接返回
         return _sanitize(toks, expected)

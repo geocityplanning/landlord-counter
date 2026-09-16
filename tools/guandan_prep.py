@@ -12,7 +12,10 @@ import sys
 sys.path.insert(0, "/project1/landlord-counter/src")
 
 ADB = ["adb", "-s", "127.0.0.1:5555"]
-URL = "http://172.18.0.1:8123/index.html"
+_URL_BASE = "http://172.18.0.1:8123/index.html"
+# 破缓存(2026-09-16): 8123 已指向**插桩版**(lab/guandan_www), 但浏览器会缓存旧 main.js ✗
+# → 每次进桌用带时间戳的 URL, 保证拉到带量测钩子(window.__truth)的版本 ✓
+URL = _URL_BASE + "?t=" + str(int(__import__("time").time()))
 # 浏览器承载: Bromite(自带 Chromium 引擎, 绕开容器里坏掉的系统 WebView 与崩溃频繁的 Gecko)
 BROWSER = os.getenv("BROWSER_PKG", "org.bromite.bromite")
 BROWSER_ACT = os.getenv("BROWSER_ACT", "com.google.android.apps.chrome.Main")

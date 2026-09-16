@@ -420,6 +420,18 @@ def hand_band_measured(img, y_lo: int = 620, y_hi: int = 1010) -> tuple:
     return best if best[1] - best[0] >= 40 else HAND_BAND
 
 
+def band_ink_ratio(img, band=None) -> float:
+    """手牌带里"牌面内容"占比(非纯白、非纯黑 = 点数/花色/边框)。
+
+    用来挡"大白区被当手牌": 真手牌带实测墨占比 ≈0.15~0.35(上半有字、下半是白底);
+    空白/蒙版区 ≈0 → 拒掉。教训(2026-09-16): 光靠边缘规整性会把开始界面的大白块
+    也数成 ~25 张 ✗。
+    """
+    y0, y1 = band if band else hand_band_measured(img)
+    g = img[y0:y1].mean(axis=2)
+    return float(((g < 205) & (g > 40)).mean())
+
+
 def card_edges(img, y0: int = 0, y1: int = 0, min_gap: int = 10,
                q: float = 0.93, floor: float = 4.0) -> list:
     """手牌带里所有**竖直边界线**的 x(卡与卡的分界)。
@@ -542,6 +554,9 @@ def card_edge_count(img, min_gap: int = 12) -> int:
     与"块宽反推"和"VLM 读数"互相独立: 真手牌每张露出 24px, 边界线等距可数;
     开始界面的大片白区没有这种周期性结构(实测 边缘=3 vs 块宽推 23)。
     """
+    ink = band_ink_ratio(img)
+    if ink < 0.03:                   # 几乎没有牌面内容 = 白区/蒙版 → 不是手牌
+        return 0
     peaks = card_edges(img, min_gap=min_gap)
     ok, info = edges_regular(peaks)
     if not ok:
@@ -558,7 +573,11 @@ def hand_is_real(img, tol: int = 2):
     xl, xr = hand_block(img)
     n_est = hand_card_count_est(img)
     ne = card_edge_count(img)
-    info = {"block": (xl, xr), "n_est": n_est, "n_edges": ne, "diff": abs(n_est - ne)}
+    ink = band_ink_ratio(img)
+    info = {"block": (xl, xr), "n_est": n_est, "n_edges": ne, "diff": abs(n_est - ne),
+            "ink": round(ink, 3)}
+    if ink < 0.03:                   # 白区/蒙版 → 不是手牌
+        return False, info
     if xl is None or n_est < 1 or ne < 1:
         return False, info
     return abs(n_est - ne) <= tol, info

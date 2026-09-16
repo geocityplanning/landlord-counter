@@ -106,6 +106,37 @@ class CDP:
     # ---------------- 游戏真值(源码依据: reference/guandan/www/js/main.js) ----------------
     #  chuPai(): phase!=='playing' 或 currentChuPaiZhe!==0(南=玩家) → 静默返回
     #            选中为空 → showToast('请选择要出的牌'); 牌型非法 → showToast(reason)
+    def find_truth(self, max_pages: int = 8) -> bool:
+        """在 8123 的页面里找到**带量测钩子**(window.__truth)的那个并连上去。
+
+        背景: 设备上有几十个僵尸页(prep/重开都会留一个) ✗ →
+        盲连 pages[0] 经常连到没钩子的旧页 → 读真值读到 None。
+        做法: 只扫同源(172.18.0.1:8123)的最新若干页, 命中 __truth 就锁定。
+        """
+        try:
+            pages = [x for x in self._list() if "8123" in (x.get("url") or "")][:max_pages]
+        except Exception:                            # noqa: BLE001
+            return False
+        for pg in pages:
+            try:
+                self._ws_url = pg.get("webSocketDebuggerUrl")
+                if self.eval_js("typeof window.__truth === 'function' ? 1 : 0") == 1:
+                    return True
+            except Exception:                        # noqa: BLE001
+                continue
+        self._ws_url = None
+        return False
+
+    def truth(self) -> dict:
+        """读游戏真值(仅实验室! 需插桩版页面)。"""
+        v = self.eval_js("typeof window.__truth === 'function' ? JSON.stringify(window.__truth()) : null")
+        import json as _j
+
+        try:
+            return _j.loads(v) if v else {}
+        except Exception:                            # noqa: BLE001
+            return {}
+
     def toast(self) -> str:
         """读 #toast 文本(1.5s 内有效)。空串=当前没提示。"""
         try:

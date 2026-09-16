@@ -45,6 +45,7 @@ class GuandanAdapter(GameAdapter):
         # AI 算力计量(伴随包 → 底座计费; 只记消耗, 不带价格)
         self.usage = UsageMeter(game="guandan")
         self._last_sig: dict = {}          # 座位 → 上次观测到的手牌签名(去重: 同一手只计一次)
+        self._last_block: dict = {}        # 座位|块位置 → 上次读过的块(桌面变化去重)
         self._rl_played = [0.0, 0.0, 0.0, 0.0]
         self._read_fail_n = 0        # 连续读牌失败次数(空读治理: 不空转)
         self._turn_checked_at = 0.0  # 上次"游戏真值"复核时刻(CDP 用)
@@ -394,16 +395,43 @@ class GuandanAdapter(GameAdapter):
         except Exception:                        # noqa: BLE001
             return True                          # 判断不了就老实读
 
+    _SEAT_OF_BLOCK = {"right": "西", "top": "北", "left": "东", "bottom": "南"}
+
     def _observe_table_gated(self, frame) -> None:
-        """每帧调用: 桌面有变化才读一次(控 VLM 成本), 读到就记牌。"""
+        """每帧调用: 桌面有变化才读一次(控 VLM 成本), **逐座位**读牌块 → 记牌。
+
+        为什么逐座位: 只读"最近一手"会漏掉其他家(而且我方出牌拿不到牌面 ✗)。
+        逐块读 → 四家(含我方 bottom)的每一手都能进记牌器。
+        """
         if not self._table_changed(frame):
             return
         try:
-            cards = P.read_table_last(self.vision, frame) or []
+            blocks = P.table_plays(frame)
         except Exception:                        # noqa: BLE001
+            blocks = []
+        if not blocks:
+            self._observe_table([])              # 桌面清空 → 一轮结束
             return
-        self._meter_vlm("table", ok=bool(cards))
-        self._observe_table(cards)
+        seen = set()
+        for name, box, _cnt in blocks:
+            seat = self._SEAT_OF_BLOCK.get(name)
+            if not seat:
+                continue
+            seen.add(seat)
+            key = f"{seat}|{box}"
+            if self._last_block.get(key) == box:  # 同块同位置 = 没变化
+                continue
+            self._last_block[key] = box
+            try:
+                cards = P.read_region_cards(self.vision, frame, box)
+            except Exception:                    # noqa: BLE001
+                cards = None
+            self._meter_vlm("table", ok=bool(cards), seat=seat)
+            if cards:
+                self._log_seat_play(seat, cards)
+        for k in list(self._last_block):
+            if k.split("|")[0] not in seen:      # 该家的牌块消失了(清桌)
+                self._last_block.pop(k, None)
 
     def _observe_table(self, cards) -> None:
         """每帧看桌面: 有牌 → 记一次; 桌面清空 → 一轮结束(签名清零, 允许同牌再计)。"""

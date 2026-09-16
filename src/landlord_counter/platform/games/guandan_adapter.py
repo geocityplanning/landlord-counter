@@ -399,10 +399,17 @@ class GuandanAdapter(GameAdapter):
         except Exception:                            # noqa: BLE001
             pass
 
+    def _log_plan(self, choice, why: str) -> None:
+        """记一次决策(我们打算出的牌) → 操作准确率对账用。"""
+        try:
+            self.log.plan("南", [str(c) for c in choice.cards], why=why)
+        except Exception:                            # noqa: BLE001
+            pass
+
     # ---------- 记牌(观测 → 事件日志 + 记牌器) ----------
     _SEAT_OF = {"right": "西", "top": "北", "left": "东"}     # 相对"我(南)"的座位
 
-    def _log_seat_play(self, seat: str, cards, hand_left=None) -> None:
+    def _log_seat_play(self, seat: str, cards, hand_left=None, src: str = "table") -> None:
         """记一次出牌: 写 GameLog + 更新 CardTracker。同一手重复看到只计一次。"""
         if not cards or not seat:
             return
@@ -421,7 +428,7 @@ class GuandanAdapter(GameAdapter):
                         pass
                 return
         self._last_sig[seat] = sig
-        self.log.play(seat, [str(c) for c in cards], hand_left)
+        self.log.play(seat, [str(c) for c in cards], hand_left, src=src)
         try:
             self.tracker.observe(seat, list(cards))
         except Exception as e:                   # noqa: BLE001
@@ -542,6 +549,7 @@ class GuandanAdapter(GameAdapter):
         choice = AI.choose_play(obs.hand, last, st)
         if choice is None or getattr(choice, "is_invalid", False):
             return Action("pass", meta={"why": "引擎判不出"})
+        self._log_plan(choice, "自研决策")
         return Action("play", combo=choice, meta={"why": "自研决策"})
 
     def _decide_rl(self, obs: Observation, last, cards: list) -> Action:
@@ -571,7 +579,8 @@ class GuandanAdapter(GameAdapter):
         if choice is None:
             return Action("pass", meta={"why": "RL判不出/不出"})
         self._rl_hist.append((0, choice))
-        self._log_seat_play("南", choice.cards, hand_left=max(0, len(obs.hand) - len(choice.cards)))
+        self._log_plan(choice, "RL决策")
+        self._log_seat_play("南", choice.cards, hand_left=max(0, len(obs.hand) - len(choice.cards)), src="own")
         return Action("play", combo=choice, meta={"why": "RL决策", "direct": True})
 
     # ---------- 执行 ----------

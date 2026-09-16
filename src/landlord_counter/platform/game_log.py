@@ -125,11 +125,16 @@ class GameLog:
         self.my_hand = Counter()
         return self.append("deal_start", seats=list(self.seats), **extra)
 
-    def play(self, seat: str, cards, hand_left: int | None = None) -> dict:
+    def play(self, seat: str, cards, hand_left: int | None = None, src: str = "table") -> dict:
+        """记一手出牌。src: table=从画面读回(实测) / own=我们自己发起的。"""
         cards = list(cards)
         ev = self.append("play", seat=seat, action="play",
-                         cards=[_name(c) for c in cards], hand_left=hand_left)
+                         cards=[_name(c) for c in cards], hand_left=hand_left, src=src)
         return ev
+
+    def plan(self, seat: str, cards, why: str = "") -> dict:
+        """记一次**决策**(我们打算出的牌) —— 用于"决定 vs 实际打出"的操作准确率对账。"""
+        return self.append("plan", seat=seat, cards=[_name(c) for c in cards], why=why)
 
     def pass_(self, seat: str) -> dict:
         return self.append("pass", seat=seat, action="pass")

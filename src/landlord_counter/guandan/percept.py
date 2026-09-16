@@ -9,7 +9,7 @@ import numpy as np
 
 from .rules import Card, cards_from_tokens
 
-HAND_BAND = (805, 945)
+HAND_BAND = (695, 825)   # 实测(2026-09-16 720x1280 掼蛋): 牌面 y≈695..825, 130px 高
 SPLITS = [(0, 370), (350, 720)]
 
 PROMPT_HAND = (
@@ -395,13 +395,40 @@ def hand_block(img, thr: int = 150, min_col: int = 6):
     return int(xs.min()), int(xs.max())
 
 
-def card_edges(img, y0: int = 800, y1: int = 940, min_gap: int = 10,
+def hand_band_measured(img, y_lo: int = 620, y_hi: int = 1010) -> tuple:
+    """**实测**手牌带 y 范围(不依赖死常量, 可迁移)。
+
+    做法: 牌面是"大片白" → 取白占比 >0.45 的最长连续行段。
+    实测(2026-09-16, 720x1280 掼蛋, 真值 27 张): y≈695..825, 白占比 0.62~0.88。
+    (教训: 之前写死 (805,945) → 框在牌下方空白区 → VLM 读牌一直失败。)
+    """
+    g = img.mean(axis=2)
+    white = (g > 200).mean(axis=1)
+    rows = [y for y in range(max(0, y_lo), min(len(white), y_hi)) if white[y] > 0.45]
+    if not rows:
+        return HAND_BAND
+    best = (rows[0], rows[0]); s0 = rows[0]; prev = rows[0]
+    for y in rows[1:]:
+        if y - prev <= 4:
+            prev = y
+        else:
+            if prev - s0 > best[1] - best[0]:
+                best = (s0, prev)
+            s0 = prev = y
+    if prev - s0 > best[1] - best[0]:
+        best = (s0, prev)
+    return best if best[1] - best[0] >= 40 else HAND_BAND
+
+
+def card_edges(img, y0: int = 0, y1: int = 0, min_gap: int = 10,
                q: float = 0.93, floor: float = 4.0) -> list:
     """手牌带里所有**竖直边界线**的 x(卡与卡的分界)。
 
     纯像素、与"公式/张数/布局假设"完全无关 —— 这是能迁移到其它游戏(腾讯掼蛋 App/小程序)
     的做法: 任何把牌叠起来画的手牌区, 卡与卡之间都有一条边界线, 找到它就有牌位。
     """
+    if not y0 or not y1:                      # 默认: 实测手牌带(不再用死常量)
+        y0, y1 = hand_band_measured(img)
     band = img[y0:y1].mean(axis=2)
     gx = np.abs(np.diff(band, axis=1)).mean(axis=0)
     if gx.size < 20:

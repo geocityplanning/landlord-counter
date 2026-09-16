@@ -54,6 +54,41 @@ def _split_tokens(txt: str) -> list[str]:
     return [_norm_token(t) for t in txt.replace("，", ",").replace("、", ",").split(",") if t.strip()]
 
 
+def read_seat_panels(rec, img) -> dict:
+    """读四家的**状态面板**(界面直接写着: 座位名 / 张数 / 级牌)。
+
+    实测(2026-09-16 掼蛋, 720x1280): VLM 一次读上半屏 → 稳定得到
+        北(队友) 27张 打A / 西 27张 打A / 东 27张 打A
+    比"用 27−已出 推算余牌"更直接、更准(而且界面自己标了"队友")。
+    返回: {"panels": {座位: {"left": 张数, "level": "A"}}, "level": "A", "raw": 原文}
+    """
+    y0, y1 = 90, 430
+    try:
+        txt = _read(rec, img[y0:y1], "读出图中所有文字（面板上的座位名、张数、级牌等），按行原样输出，不要解释")
+    except Exception:  # noqa: BLE001
+        return {"panels": {}, "level": "", "raw": ""}
+    import re
+    raw = txt or ""
+    panels: dict = {}
+    seat = None
+    level = ""
+    for line in [l.strip() for l in raw.splitlines() if l.strip()]:
+        m = re.search(r"(北|西|东|南|上家|下家|对家)", line)
+        if m:
+            seat = m.group(1)
+            if seat not in panels:
+                panels[seat] = {}
+        m2 = re.search(r"(\d{1,2})\s*张", line)
+        if m2 and seat:
+            panels[seat]["left"] = int(m2.group(1))
+        m3 = re.search(r"打\s*([2-9AJQK]|10)", line)
+        if m3:
+            level = m3.group(1)
+            if seat:
+                panels[seat]["level"] = level
+    return {"panels": panels, "level": level, "raw": raw}
+
+
 def read_hand_ordered(rec, img, expected: int = 0) -> list[Card] | None:
     """读手牌: ≤14 张整排直读; 更多则切两半拼接。expected>0 时提示词注入张数。"""
     y0, y1 = hand_band_measured(img)   # 读取也用**实测**带(与探测一致)
@@ -417,7 +452,20 @@ def hand_band_measured(img, y_lo: int = 620, y_hi: int = 1010) -> tuple:
             s0 = prev = y
     if prev - s0 > best[1] - best[0]:
         best = (s0, prev)
-    return best if best[1] - best[0] >= 40 else HAND_BAND
+    if best[1] - best[0] < 40:
+        return HAND_BAND
+    # 关键: 白段只是牌的**下半白底**, 点/花色在上半 → 向上扩到"牌的顶边"
+    # (牌的顶边 = 上方 90px 内**横边能量**最大的那一行; 实测该峰很明显)
+    s0, s1 = best
+    y_lo = max(0, s0 - 90)
+    reg = img[y_lo:s0 + 4].mean(axis=2)
+    if reg.shape[0] >= 3:
+        he = np.abs(np.diff(reg, axis=0)).mean(axis=1)      # 逐行横边能量
+        if he.size:
+            k = int(np.argmax(he))
+            if float(he[k]) > 2.0:
+                s0 = y_lo + k
+    return (s0, s1) if s1 - s0 >= 40 else HAND_BAND
 
 
 def band_ink_ratio(img, band=None) -> float:

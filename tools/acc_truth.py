@@ -58,7 +58,8 @@ def load_plans() -> list:
                 d = json.loads(line)
             except Exception:  # noqa: BLE001
                 continue
-            if d.get("type") == "plan":
+            if d.get("type") == "plan" and d.get("src", "hint") == "direct":
+                # 只统计**我们自己点出去**的牌: 提示臂是游戏自己挑牌, 与我们意图无关 ✗
                 out.append({"t": d.get("t"), "file": os.path.basename(f),
                             "why": d.get("why", ""), "n": d.get("n"),
                             "ranks": sorted(_z(c) for c in d.get("cards", []))})
@@ -82,6 +83,10 @@ def _z(name) -> int:
 def main() -> int:
     truth = load_truth()
     plans = load_plans()
+    if truth:                       # 只保留真值时间跨度内的决策(别把历史陈旧决策算进来)
+        t0 = min(p["t"] for p in truth if p.get("t"))
+        t1 = max(p["t"] for p in truth if p.get("t"))
+        plans = [p for p in plans if p["t"] and (t0 / 1000 - 5) <= p["t"] <= (t1 / 1000 + 5)]
     us = [p for p in truth if p.get("seat") == 0]
     print(f"真值出牌 {len(truth)} 手(我方 {len(us)} 手) | 我们的决策 {len(plans)} 条")
     if not truth:
@@ -98,9 +103,11 @@ def main() -> int:
     for pl in plans:
         if pl["t"] is None:
             continue
+        # 关键: plan 是**出牌成功那一刻**记的 → 与真值出牌的时差应在几秒内
+        # (原来用 0~60s 的大窗口 → 把历史文件的陈旧决策也配上了 ✗)
         cand = [p for i, p in enumerate(truth)
-                if i not in used and p.get("seat") == 0 and p.get("t") and p["t"] >= pl["t"] * 1000
-                and p["t"] - pl["t"] * 1000 < 60000]
+                if i not in used and p.get("seat") == 0 and p.get("t")
+                and abs(p["t"] - pl["t"] * 1000) <= 3000]
         if not cand:
             noget += 1
             continue

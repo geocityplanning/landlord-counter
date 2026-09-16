@@ -135,7 +135,8 @@ class GameLog:
     def plan(self, seat: str, cards, why: str = "", hand_before: int | None = None) -> dict:
         """记一次**决策**(我们打算出的牌) —— 用于"决定 vs 实际打出"的操作准确率对账。"""
         return self.append("plan", seat=seat, cards=[_name(c) for c in cards], why=why,
-                           n=len(list(cards)), hand_before=hand_before)
+                           n=len(list(cards)), hand_before=hand_before,
+                           src=("direct" if "RL" in why or "直选" in why else "hint"))
 
     def verify(self, seat: str, hand_after: int, expected_after: int) -> dict:
         """出牌后的**张数校验**: 实际掉牌数 是否等于 决策张数(抓"自动带上同点数")。"""

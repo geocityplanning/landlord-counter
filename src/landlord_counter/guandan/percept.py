@@ -103,6 +103,36 @@ def read_seat_panels(rec, img) -> dict:
     return {"panels": panels, "level": level, "raw": raw}
 
 
+def hand_x_range(img, y0: int = 0, y1: int = 0, min_white: float = 0.06) -> tuple:
+    """**实测**手牌横范围(左右界): 取"竖直边缘能量高 + 白底"的最长连续 x 段。
+
+    实测(2026-09-16 能量图): 手牌 x≈180..420(9 张 × 24px ≈ 216px ✓), 其余是桌面/按钮。
+    """
+    if not y0 or not y1:
+        y0, y1 = hand_band_measured(img)
+    g = img[y0:y1].mean(axis=2)
+    dx = np.abs(np.diff(g, axis=1)).mean(axis=0)
+    white = (g > 200).mean(axis=0)
+    e_thr = max(1.5, float(np.percentile(dx, 80)))
+    cols = [x for x in range(len(dx)) if dx[x] > e_thr or white[x] > 0.25]
+    if not cols:
+        return 0, img.shape[1]
+    best = (cols[0], cols[0]); s0 = prev = cols[0]
+    for x in cols[1:]:
+        if x - prev <= 12:
+            prev = x
+        else:
+            if prev - s0 > best[1] - best[0]:
+                best = (s0, prev)
+            s0 = prev = x
+    if prev - s0 > best[1] - best[0]:
+        best = (s0, prev)
+    if best[1] - best[0] < 80:                    # 太窄 → 不可信, 不限
+        return 0, img.shape[1]
+    # 最左边那张牌的左上角是"你"字小框(能量低 ✗ 会被排除) → 左边界多留一格牌距
+    return max(0, best[0] - 34), min(img.shape[1] - 1, best[1] + 26)
+
+
 def _tpl_dir() -> str:
     import os as _os
 
@@ -140,7 +170,11 @@ def tm_read_hand(img, tpl: dict | None = None, max_dist: float = 22.0):
     if not tpl:
         return [], info
     y0, y1 = hand_band_measured(img)
+    # 牌位横范围也**实测**: 牌面是"竖直边缘能量高 + 白底"的一段连续 x
+    # (2026-09-16 能量图: 手牌 x≈180..420; 若不限范围, 网格会铺到全屏 → 多出杂位 ✗)
+    x_lo, x_hi = hand_x_range(img, y0, y1)
     peaks = card_edges(img, y0, y1)
+    peaks = [x for x in peaks if x_lo <= x <= x_hi] or peaks
     # 牌位提取(2026-09-16 实测): 手牌带里**同时混着桌上那排牌的边界** ✗
     # 峰形如 [19,91,105,179,220,245,265,289,316,340,364,388,412,498] —— 其中
     # **规整的 24px 等距串**(245…412) 才是我方手牌; 其余是杂峰。
@@ -157,7 +191,19 @@ def tm_read_hand(img, tpl: dict | None = None, max_dist: float = 22.0):
                     best_run = run
             if len(best_run) >= 2:
                 pitch = float(np.median(np.diff(np.asarray(best_run, dtype=float))))
-                peaks = list(best_run) + [int(round(best_run[-1] + pitch))]
+                peaks = list(best_run)
+                while True:                       # 末张右界不是峰 → 按牌距补位
+                    nxt = int(round(peaks[-1] + pitch))
+                    if nxt > x_hi + pitch // 2:
+                        break
+                    peaks.append(nxt)
+                # 同一张牌的重复位(实测会出 3,3 / 9,9 ✗) → 按牌距合并
+                dedup = [peaks[0]]
+                for x in peaks[1:]:
+                    if x - dedup[-1] < 0.7 * pitch:
+                        continue
+                    dedup.append(x)
+                peaks = dedup
     except Exception:                            # noqa: BLE001
         pass
     out = []
@@ -604,47 +650,39 @@ def hand_block(img, thr: int = 150, min_col: int = 6):
     return int(xs.min()), int(xs.max())
 
 
-def hand_band_measured(img, y_lo: int = 620, y_hi: int = 1010) -> tuple:
-    """**实测**手牌带 y 范围(不依赖死常量, 可迁移)。
+def hand_band_measured(img, y_lo: int = 600, y_hi: int = 1120) -> tuple:
+    """**实测**手牌带 y 范围: 找"牌面行"。
 
-    做法: 牌面是"大片白" → 取白占比 >0.45 的最长连续行段。
-    实测(2026-09-16, 720x1280 掼蛋, 真值 27 张): y≈695..825, 白占比 0.62~0.88。
-    (教训: 之前写死 (805,945) → 框在牌下方空白区 → VLM 读牌一直失败。)
+    牌面行的两个特征(2026-09-16 用 ASCII 能量图实证):
+      ① **竖直边缘能量高**(每张牌的左右边界 + 点数花色笔画)
+      ② **白占比高**(牌是白底)
+    实测(720x1280 掼蛋): 牌面 y≈810..935, x≈180..420 —— 而之前写死/取最大白段
+    都圈到了**牌上方约 115px 的空白区** ✗ → 峰全杂 → 读牌全错。
     """
     g = img.mean(axis=2)
+    dx = np.abs(np.diff(g, axis=1))
+    energy = dx.mean(axis=1)
     white = (g > 200).mean(axis=1)
-    rows = [y for y in range(max(0, y_lo), min(len(white), y_hi)) if white[y] > 0.45]
+    lo, hi = max(0, y_lo), min(len(energy), y_hi)
+    if hi - lo < 40:
+        return HAND_BAND
+    seg = energy[lo:hi]
+    e_thr = max(1.5, float(np.percentile(seg, 75)))
+    rows = [y for y in range(lo, hi) if energy[y] > e_thr and white[y] > 0.06]
     if not rows:
         return HAND_BAND
-    # 找出**所有**白段(每排牌的下半是白底) → 取**最下面**那段 = 我方手牌
-    # (实测 2026-09-16: 上面那排是"桌面刚出的牌", 之前取最大白段 → 读到桌上牌 ✗)
-    runs = []
-    s0 = prev = rows[0]
+    best = (rows[0], rows[0]); s0 = prev = rows[0]
     for y in rows[1:]:
-        if y - prev <= 4:
+        if y - prev <= 6:
             prev = y
         else:
-            runs.append((s0, prev))
+            if prev - s0 > best[1] - best[0]:
+                best = (s0, prev)
             s0 = prev = y
-    runs.append((s0, prev))
-    cand = [r for r in runs if r[1] - r[0] >= 40]
-    if not cand:
-        return HAND_BAND
-    best = max(cand, key=lambda r: r[1])          # 最下面那段
-    if best[1] - best[0] < 40:
-        return HAND_BAND
-    # 关键: 白段只是牌的**下半白底**, 点/花色在上半 → 向上扩到"牌的顶边"
-    # (牌的顶边 = 上方 90px 内**横边能量**最大的那一行; 实测该峰很明显)
-    s0, s1 = best
-    y_lo = max(0, s0 - 90)
-    reg = img[y_lo:s0 + 4].mean(axis=2)
-    if reg.shape[0] >= 3:
-        he = np.abs(np.diff(reg, axis=0)).mean(axis=1)      # 逐行横边能量
-        if he.size:
-            k = int(np.argmax(he))
-            if float(he[k]) > 2.0:
-                s0 = y_lo + k
-    return (s0, s1) if s1 - s0 >= 40 else HAND_BAND
+    if prev - s0 > best[1] - best[0]:
+        best = (s0, prev)
+    return best if best[1] - best[0] >= 40 else HAND_BAND
+
 
 
 def band_ink_ratio(img, band=None) -> float:

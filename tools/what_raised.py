@@ -24,7 +24,7 @@ def main() -> int:
     t = c.truth() or {}
     dev = AdbDevice(serial="127.0.0.1:5555", url="http://172.18.0.1:8123/index.html")
     f = dev.snap()
-    cards, info = P.tm_read_hand_with_lift(f)
+    cards, info = P.tm_read_hand(f)
     print(f"放平基线 = {info['base']:.0f}px | 读出 {len(cards)} 张")
     print("\n整手牌(左→右, ↑ = 我判抬起):")
     line = []

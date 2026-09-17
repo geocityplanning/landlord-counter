@@ -67,7 +67,7 @@ def main() -> int:
 
     img = dev.snap()
     y0, y1 = P.hand_band_measured(img)
-    cards, _i = P.tm_read_hand_with_lift(img)
+    cards, _i = P.tm_read_hand(img)
     if idx >= len(cards):
         print(f"✗ 位号 {idx} 超出(共 {len(cards)} 位)")
         return 0

@@ -324,7 +324,7 @@ class GuandanAdapter(GameAdapter):
         try:
             # ★ 滑动版读牌(2026-09-17): 与"量抬起"同一个匹配 → **有牌被抬起时也 100%** ✓
             #   (旧版用固定裁切, 有牌抬起时会掉到 24/27 ✗)
-            _cards, _linfo = P.tm_read_hand_with_lift(frame)
+            _cards, _linfo = P.tm_read_hand(frame)
             _tm_first = [(s_, r_, x_) for s_, r_, x_, _l in _cards]
         except Exception:  # noqa: BLE001
             _tm_first = []
@@ -390,7 +390,7 @@ class GuandanAdapter(GameAdapter):
             except Exception:  # noqa: BLE001
                 tm_reads = _tm_first
         if tm_reads:
-            hand = [R.Card(zhi=z, hua=_TM_HUA2RULES.get(s)) for s, z, _x in tm_reads]
+            hand = [R.Card(zhi=z, hua=_TM_HUA2RULES.get(s)) for s, z, _x, _l in tm_reads]
             self.usage.vlm_read(what="hand_tm", ok=True, n=len(hand))     # 计量: 0 成本路径
         if not hand:
             # ② 兜底: 大模型读(模板库尚未覆盖的牌型/界面改版)

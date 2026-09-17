@@ -27,7 +27,7 @@ SUIT = {1: "♠", 2: "♣", 3: "♥", 4: "♦"}
 
 
 def fmt(reads):
-    return " ".join(f"{SUIT.get(s, '')}{NAME.get(r, r)}" for s, r, _ in reads)
+    return " ".join(f"{SUIT.get(s, '')}{NAME.get(r, r)}" for s, r, _, _l in reads)
 
 
 def main() -> int:
@@ -35,7 +35,7 @@ def main() -> int:
     # ① 标注图
     img = cv2.cvtColor(cv2.imread(REF), cv2.COLOR_BGR2RGB)
     reads, info = P.tm_read_hand(img)
-    got = [f"{s}_{r}" for s, r, _ in reads]
+    got = [f"{s}_{r}" for s, r, _, _l in reads]
     same_n = len(got) == len(LABELS)
     hit = sum(1 for a, b in zip(got, LABELS) if a == b)
     print(f"① 标注图: 张数 {len(got)}/{len(LABELS)} {'✓' if same_n else '✗'} | 逐位对 {hit}/{len(LABELS)}"
@@ -65,7 +65,7 @@ def main() -> int:
             continue
         truth = [int(x) for x in h1]
         rd, _ = P.tm_read_hand(f)
-        rk = [r for _, r, _ in rd]
+        rk = [r for _, r, _, _l in rd]
         hit_n = sum(1 for a, b in zip(rk, truth) if a == b)
         per.append((len(rk), len(truth), hit_n))
         print(f"② 真值({len(truth)}) {NAME.get(truth[0], truth[0])}… | 读取({len(rk)}) {[NAME.get(r, r) for r in rk]}")

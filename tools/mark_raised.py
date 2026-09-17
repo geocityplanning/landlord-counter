@@ -25,7 +25,7 @@ def main() -> int:
     dev = AdbDevice(serial="127.0.0.1:5555", url="http://172.18.0.1:8123/index.html")
     f = dev.snap()
     y0, y1 = P.hand_band_measured(f)
-    cards, info = P.tm_read_hand_with_lift(f)
+    cards, info = P.tm_read_hand(f)
     crop = f[max(0, y0 - 50):y1 + 6, :].copy()
     S = 2
     big = cv2.resize(crop, (crop.shape[1] * S, crop.shape[0] * S), interpolation=cv2.INTER_CUBIC)

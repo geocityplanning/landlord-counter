@@ -26,7 +26,7 @@ SUIT = {1: "♠", 2: "♣", 3: "♥", 4: "♦"}
 
 
 def show(reads):
-    return " ".join(f"{SUIT.get(s, '?')}{NAME.get(r, r)}" for s, r, _ in reads)
+    return " ".join(f"{SUIT.get(s, '?')}{NAME.get(r, r)}" for s, r, _, _l in reads)
 
 
 def main() -> int:
@@ -34,7 +34,7 @@ def main() -> int:
     # ① 参考图
     img = cv2.cvtColor(cv2.imread(REF), cv2.COLOR_BGR2RGB)
     reads, info = P.tm_read_hand(img)
-    got = [f"{s}_{r}" for s, r, _ in reads]
+    got = [f"{s}_{r}" for s, r, _, _l in reads]
     hit = sum(1 for i, k in enumerate(got) if i < len(LABELS) and k == LABELS[i])
     print(f"① 用户标注图: 读 {len(reads)} 张 | 逐位(花色+点数)对: {hit}/{len(LABELS)} = {hit / len(LABELS) * 100:.1f}%")
     print(f"   读取 {show(reads)}")
@@ -62,7 +62,7 @@ def main() -> int:
             continue
         truth = sorted(int(x) for x in t1["hands"]["0"])
         rd, _ = P.tm_read_hand(f)
-        rk = sorted(r for _, r, _ in rd)
+        rk = sorted(r for _, r, _, _l in rd)
         cnt = sum(min(rk.count(z), truth.count(z)) for z in set(truth))
         hits += cnt
         tot += max(len(truth), len(rk))

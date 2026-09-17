@@ -51,10 +51,10 @@ try:
         y0, y1 = P.hand_band_measured(f)
         rd, info = P.tm_read_hand(f)
         truth = sorted((hands.get("0") or []), reverse=True)
-        got = [r for _, r, _ in rd]
+        got = [r for _, r, _, _l in rd]
         hit = sum(1 for a, b in zip(got, truth) if a == b)
         print(f"  手牌带 {(y0, y1)} | 抬起x {P.lifted_xs(f)}")
-        shown = [f"{SUIT.get(s, '')}{NAME.get(r, str(r))}" for s, r, _ in rd]
+        shown = [f"{SUIT.get(s, '')}{NAME.get(r, str(r))}" for s, r, _, _l in rd]
         print(f"  读取({len(got)}张): {shown}")
         print(f"  真值({len(truth)}张): {[NAME.get(r, str(r)) for r in truth]}")
         print(f"  位对位命中: {hit}/{len(truth)} = {hit / max(1, len(truth)) * 100:.1f}%  (模板库 {info['tpl']} 类)")

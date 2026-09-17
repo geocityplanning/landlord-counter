@@ -37,7 +37,7 @@ cv2.imwrite(f"{OUT}/full_now.png", img)
 y0, y1 = P.hand_band_measured(img)
 xs = P.card_slots(img, y0, y1)
 reads, _ = P.tm_read_hand(img)
-shown = [f"{SUIT.get(s, '')}{NAME.get(r, r)}" for s, r, _ in reads]
+shown = [f"{SUIT.get(s, '')}{NAME.get(r, r)}" for s, r, _, _l in reads]
 print(f"带 {(y0, y1)} | 牌位 {len(xs)} | 读取 {shown}")
 
 # 手牌放大 2.5 倍, 并把"真值是选中的那张"用绿框标出

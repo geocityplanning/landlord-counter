@@ -413,7 +413,7 @@ class Executor:
         if img is None:
             return [None] * len(xs)
         try:
-            _cards, _info = _P.tm_read_hand_with_lift(img)
+            _cards, _info = _P.tm_read_hand(img)
         except Exception as e:  # noqa: BLE001
             # 不静默(教训: 一次 NameError 被吞掉, 整条直选链路全废还看不出来 ✗)
             self.log(f"  [servo] ✗ 读抬起失败: {type(e).__name__}: {e}")
@@ -463,7 +463,7 @@ class Executor:
         for r in range(rounds):
             img = self._snap()
             try:
-                cards, _info = _P.tm_read_hand_with_lift(img)
+                cards, _info = _P.tm_read_hand(img)
             except Exception as e:  # noqa: BLE001
                 self.log(f"  [servo] ✗ 读抬起失败: {type(e).__name__}: {e}")
                 return
@@ -476,14 +476,14 @@ class Executor:
                 return True
             for i in extra:                               # ★ 多了回落 ✓
                 if i < len(cards):
-                    fresh, _f = _P.tm_read_hand_with_lift(self._snap())
+                    fresh, _f = _P.tm_read_hand(self._snap())
                     _i = i if i < len(fresh) else None
                     if _i is not None:
                         self._tap_card_at(fresh[_i][2], wait=0.45)
                         self.log(f"  [servo] 回落 第{i}张 x={fresh[_i][2]}")
                     tried_extra.add(i)
             for i in miss:                                # ★ 少了补抬 ✓
-                fresh, _f = _P.tm_read_hand_with_lift(self._snap())
+                fresh, _f = _P.tm_read_hand(self._snap())
                 if i < len(fresh):
                     self._tap_card_at(fresh[i][2], wait=0.5)
                     self.log(f"  [servo] 补点 第{i}张 x={fresh[i][2]}(当帧实量)")
@@ -535,12 +535,18 @@ class Executor:
             # ★ 记录我们**点过哪些张**(用于失败时精确撤销) —— 不猜, 靠记 ✓
             tapped: list = []
             for i in idxs:
-                fresh, _f = _P.tm_read_hand_with_lift(self._snap())
+                fresh, _f = _P.tm_read_hand(self._snap())
                 if i < len(fresh):
                     self.log(f"  [gesture] 点第{i}张 x={fresh[i][2]}(当帧实量)")
                     self._tap_card_at(fresh[i][2], wait=0.35)
                     self._wait_stable()               # ★ 点完等停稳, 下一张的位置才是真的 ✓
                     tapped.append(i)
+            # ★ 点完与按出牌之间要**留够时间**(2026-09-17 实测):
+            #   最小路径在"选完 → 按"之间等 0.9s ⇒ **100% 成功** ✓
+            #   循环里只等了 ~0.3s(_wait_stable 返回太快) ⇒ 游戏还没把"选中"登记上就按 ✗
+            #   ⇒ 按下无效("出牌未生效"), 手牌一直不减 ✓
+            self._wait_stable()
+            time.sleep(0.6)
             pp = self._play_btn() or self.btn("play")     # ★ 立刻按 ✓
             if not pp:
                 self.clear(idxs, n)
@@ -554,7 +560,7 @@ class Executor:
             #   而"点过谁"是我们自己记的 ⇒ 精确、不猜 ✓✓
             self.log("  [gesture] ↻ 出牌未生效 → 精确撤销刚才点的牌")
             for i in reversed(tapped):
-                fresh, _f = _P.tm_read_hand_with_lift(self._snap())
+                fresh, _f = _P.tm_read_hand(self._snap())
                 if i < len(fresh):
                     self._tap_card_at(fresh[i][2], wait=0.45)
             time.sleep(0.3)

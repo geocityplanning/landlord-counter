@@ -10,7 +10,8 @@ import numpy as np
 from .rules import Card, cards_from_tokens
 
 HAND_BAND = (815, 936)   # 实测(2026-09-17, 用户标注图): 手牌牌面 y 815..936 ✓ (旧值 695,825 是"牌上方空白", 会让 card_slots 返回空 ⇒ 读牌静默全废 ✗)
-CARD_W_FULL = 62          # 整张牌宽(实测: 最后一张完整可见 ⇒ 用它从右缘反推它的左缘) ✓
+CARD_W_FULL = 62
+LAST_CARD_W = 88          # 末张的完整宽(源码布局: 整排宽=(n-1)*间距+88) ✓          # 整张牌宽(实测: 最后一张完整可见 ⇒ 用它从右缘反推它的左缘) ✓
 _BAND_LAST: list = [None]   # 上次可信的手牌带(抬起态会把测量带偏 ⇒ 用缓存兜底) ✓
 # 手牌行最左边是"你"字小框(浅绿), 它不是牌 → 读牌时从它右边开始
 # (实测 2026-09-16: 不裁会把"你"读成一张 8 并盖住第一张牌; 裁 20~65px 都能读全)
@@ -143,7 +144,8 @@ def load_templates_sr(d: str | None = None) -> dict:
     return bank
 
 
-def tm_read_hand(img, tpl: dict | None = None, max_dist: float = 0.6, templates_dir: str | None = None):
+def _first_pass_ranks(img, tpl: dict | None = None, max_dist: float = 0.6, templates_dir: str | None = None):
+    """【私有】第一步候选读法: 平放时准且快, 供 tm_read_hand 定候选(不再对外, 避免两套读法混淆) ✓"""
     """**模板匹配**读手牌(纯像素, 不调模型)。
 
     做法: 实测手牌带 → 实测牌位(卡边界+占用范围) → 裁每张牌露出的**整条竖条**(宽24)
@@ -795,7 +797,12 @@ def card_slots(img, y0: int | None = None, y1: int | None = None, pitch_fallback
     #   (公式: 最右那张的左缘 = 右缘 - 牌宽; 牌数 = 跨度/间距 + 1) ✓ 可迁移到别的游戏 ✓
     x_lo = int(_cols[0]) if len(_cols) >= 5 else 0
     hi_left = x_hi - CARD_W_FULL                      # 最右那张的左缘 ✓
-    n = int(round((hi_left - x_lo) / pitch)) + 1
+    n_a = int(round((hi_left - x_lo) / pitch)) + 1    # 尺子①: 最右那张左缘反推 ✓
+    # ★★ 尺子②(2026-09-17 新增): **块宽反推张数** —— 独立于尺子①, 用来校准那个"幽灵位" ✓
+    #   源码布局: 整排宽 = (n-1)*间距 + 末张宽(88) ⇒ n = (块宽-88)/间距 + 1 ✓
+    #   (实测真值 27 张时, 尺子① 报 28 ✗ ⇒ 两把尺子不一致就用② —— 它是纯几何, 不依赖任何检测阈值 ✓)
+    n_b = int(round(((x_hi - x_lo) - LAST_CARD_W) / pitch)) + 1
+    n = n_b if 0 < n_b <= 40 else n_a
     if n <= 0 or n > 40:
         return []
     grid = [int(round(x_lo + i * pitch)) for i in range(n)]
@@ -1222,7 +1229,12 @@ def slide_best(img, x: int, y0: int, tpl, win_up: int = 56, win_dn: int = 130,
     return float(best_dy - (win_up - 3)), best_d
 
 
-def tm_read_hand_with_lift(img, y0: int | None = None, tpl: dict | None = None):
+def tm_read_hand(img, y0: int | None = None, tpl: dict | None = None):
+    """**唯一公开读法**(模板竖直滑动): 一次滑动同时给出 花色/点数/x/抬起量 ✓
+
+    返回 (list[(花色, 点数, x, 抬起量px)], info); 有牌被抬起时也 100% ✓
+    历史: 2026-09-17 起把旧读法降为私有 _first_pass_ranks —— 两套公开读法曾把适配器
+    与工具引向不同路径(适配器还在用旧的 ⇒ 读牌错但看不出来) ✗"""
     """**读牌 + 量抬起**(一次滑动同时得到两件事 ⟶ 有牌被抬起时也稳 ✓)
 
     返回 (cards, info): cards = [(花色, 点数, x, 抬起量px)] ✓
@@ -1235,7 +1247,7 @@ def tm_read_hand_with_lift(img, y0: int | None = None, tpl: dict | None = None):
         return [], {"base": 0.0, "n": 0}
     ridx = {}
     try:
-        rd, _i = tm_read_hand(img)
+        rd, _i = _first_pass_ranks(img)
         for s_, r_, xx in rd:
             k = min(range(len(xs)), key=lambda i: abs(xs[i] - int(xx)))
             ridx[k] = (s_, r_)

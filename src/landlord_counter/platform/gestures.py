@@ -144,6 +144,30 @@ class Executor:
         lo, hi = max(runs, key=lambda ab: band[:, ab[0]:ab[1]].mean())   # 最亮 = 出牌 ✓
         return (int((lo + hi) // 2), int((y_a + y_b) // 2))
 
+    def _wait_stable(self, timeout: float = 1.8, tol: float = 2.0) -> bool:
+        """等画面**停稳**再量 —— 连续两帧像素差 ≤ tol 就算停稳 ✓
+
+        实测(2026-09-17 用户线索): 出牌后的那一帧处于**动画中** ⇒ 此时牌位/抬起量全是错的 ✗
+          (实测出牌后牌位检测从 28 个崩到 1 个 ✗)
+        ⇒ 凡是"动作之后要测量", 先等停稳 ✓ (帧差判据, 零成本, 最多等 timeout)
+        """
+        import numpy as _np
+
+        prev = self._snap()
+        if prev is None:
+            return False
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            time.sleep(0.12)
+            cur = self._snap()
+            if cur is None:
+                return False
+            if cur.shape == prev.shape:
+                if float(_np.abs(cur.astype("int16") - prev.astype("int16")).mean()) <= tol:
+                    return True
+            prev = cur
+        return False
+
     def _tap_card_at(self, x: int, wait: float = 0.45) -> None:
         """点手牌某位置: 优先 CDP(可信事件), 否则 adb tap。
 
@@ -506,13 +530,16 @@ class Executor:
             #   (杀掉旧做法: 用"抬起量"复核 —— 那个读数会误判(实测报"需落=2"其实是误判 ✗),
             #    于是去点"以为多余"的牌 ⇒ 反而把没选的选上 ✗ ⇒ 越修越乱, 成功率只剩 1/3;
             #    对照: 最小路径(只点目标 + 按) = **100%** ✓✓)
+            # ★ 先等画面停稳再量(2026-09-17: 出牌后那一帧在动画中 ⇒ 量啥都错 ✗)
+            self._wait_stable()
             # ★ 记录我们**点过哪些张**(用于失败时精确撤销) —— 不猜, 靠记 ✓
             tapped: list = []
             for i in idxs:
                 fresh, _f = _P.tm_read_hand_with_lift(self._snap())
                 if i < len(fresh):
                     self.log(f"  [gesture] 点第{i}张 x={fresh[i][2]}(当帧实量)")
-                    self._tap_card_at(fresh[i][2], wait=0.55)
+                    self._tap_card_at(fresh[i][2], wait=0.35)
+                    self._wait_stable()               # ★ 点完等停稳, 下一张的位置才是真的 ✓
                     tapped.append(i)
             pp = self._play_btn() or self.btn("play")     # ★ 立刻按 ✓
             if not pp:

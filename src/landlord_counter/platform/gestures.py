@@ -110,6 +110,40 @@ class Executor:
             pass
         return int(getattr(self.L, "hand_y", 875))
 
+    def _play_btn(self):
+        """出牌按钮的坐标: **从当前帧实测**(2026-09-17) —— layout 常量会过期 ✗
+
+        教训: 与"点击手牌用过期 y"完全同一个坑 ✓ —— 按坐标来自 layout ⇒ 按下去没反应 ✗
+        实测(720x1280 掼蛋): 底部 y≈1078..1148 有三段按钮(提示/出牌/不出),
+          **出牌**那段最亮(金色, BGR≈[32,149,186], 另两段≈[18,72,115])
+          ⇒ 取"最亮的那段"的中心, 实测 (360,1112) 与游戏 DOM 真值 (359,1111) 完全吻合 ✓✓
+        """
+        img = self._snap()
+        if img is None:
+            return None
+        y_a, y_b = 1078, 1148
+        band = img[y_a:y_b]
+        if band.size == 0:
+            return None
+        g = band[:, :, 1].astype(int)
+        not_green = ~((g > band[:, :, 2].astype(int) + 12) & (g > band[:, :, 0].astype(int) + 12))
+        col = not_green.mean(axis=0)
+        runs: list = []
+        s = None
+        for x, v in enumerate(col):
+            if v > 0.6 and s is None:
+                s = x
+            elif v <= 0.6 and s is not None:
+                if x - s > 25:
+                    runs.append((s, x))
+                s = None
+        if s is not None and len(col) - s > 25:
+            runs.append((s, len(col)))
+        if len(runs) < 3:
+            return None
+        lo, hi = max(runs, key=lambda ab: band[:, ab[0]:ab[1]].mean())   # 最亮 = 出牌 ✓
+        return (int((lo + hi) // 2), int((y_a + y_b) // 2))
+
     def _tap_card_at(self, x: int, wait: float = 0.45) -> None:
         """点手牌某位置: 优先 CDP(可信事件), 否则 adb tap。
 
@@ -327,7 +361,7 @@ class Executor:
         if want and not follow and abs(est - want) > max(1, want // 2):
             self.pass_turn()                              # 清掉提示选中的牌
             return "mismatch"
-        pp = self.btn("play")
+        pp = self._play_btn() or self.btn("play")
         if not pp:
             return "fail"
         self._press(pp, wait=1.6)
@@ -470,7 +504,7 @@ class Executor:
             else:
                 self.log(f"  [servo] ⚠ 复核未完({st}) → 仍按现状出牌, 由出牌回执终判 ✓")
             time.sleep(0.3)
-            pp = self.btn("play")
+            pp = self._play_btn() or self.btn("play")
             if not pp:
                 self.clear(idxs, n)
                 continue

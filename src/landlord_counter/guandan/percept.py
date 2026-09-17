@@ -10,6 +10,7 @@ import numpy as np
 from .rules import Card, cards_from_tokens
 
 HAND_BAND = (815, 936)   # 实测(2026-09-17, 用户标注图): 手牌牌面 y 815..936 ✓ (旧值 695,825 是"牌上方空白", 会让 card_slots 返回空 ⇒ 读牌静默全废 ✗)
+CARD_W_FULL = 62          # 整张牌宽(实测: 最后一张完整可见 ⇒ 用它从右缘反推它的左缘) ✓
 _BAND_LAST: list = [None]   # 上次可信的手牌带(抬起态会把测量带偏 ⇒ 用缓存兜底) ✓
 # 手牌行最左边是"你"字小框(浅绿), 它不是牌 → 读牌时从它右边开始
 # (实测 2026-09-16: 不裁会把"你"读成一张 8 并盖住第一张牌; 裁 20~65px 都能读全)
@@ -752,64 +753,48 @@ def card_slots(img, y0: int | None = None, y1: int | None = None, pitch_fallback
     peaks = [int(x) for x in card_edges(img, y0, y1)]
     if not peaks:
         return []
-    # 手牌横向占用: 牌面是白的, 桌面/背景不是
-    sub = img[y0 + 6:y1 - 6]
-    white = (sub.min(axis=2) > 150).mean(axis=0)
-    cols = np.where(white > 0.40)[0]
-    if len(cols) < 5:
-        return peaks
-    x_lo, x_hi = int(cols[0]), int(cols[-1])
+
+    # ---- 牌距 ----
     pitch = pitch_fallback
     if len(peaks) >= 3:
         gaps = np.diff(peaks)
         good = gaps[(gaps >= 18) & (gaps <= 32)]
         if len(good):
             pitch = float(np.median(good))
-    # 先找**最长等距串** = 真正的一排牌(实测: 9 张牌给 9 峰, 右侧"打A"等杂峰被排除 ✓)
-    best_chain: list = []
-    for i in range(len(peaks)):
-        chain = [peaks[i]]
-        for j in range(i + 1, len(peaks)):
-            if abs((peaks[j] - chain[-1]) - pitch) <= max(3.0, pitch * 0.18):
-                chain.append(peaks[j])
-        if len(chain) > len(best_chain):
-            best_chain = chain
-    if len(best_chain) < 2:
-        return peaks
-    lo, hi = best_chain[0], best_chain[-1]
-    # 两端按"是不是牌面(白占比高)"补格, 最多各 2 格(实测: 满手图首尾各缺 1 格 ✓)
-    def card_like(x: float) -> bool:
+
+    def _col(x: float):
         x = int(round(x))
         if x < 0 or x + 8 >= img.shape[1]:
-            return False
-        col = img[y0 + 8:y1 - 8, x:x + 8].reshape(-1, 3).astype(int)
-        # 判"是不是牌面"用**亮度**(牌面亮, 桌面绿/底部标签条都暗):
-        # 实测(2026-09-16) 三代判据的教训:
-        #   ①"是否白" → 大小王/黄边级牌不是白的 → 误杀 ✗
-        #   ②"是否桌面绿" → 底部黑色标签条不是绿的 → 漏进 2 格 ✗
-        #   ③ 亮度 → 牌面 ~180, 桌面绿 ~59, 标签条 ~40 → 一刀切 ✓
-        return bool(col.mean() > 120)
-    k = 0
-    _ = (k, card_like)          # 左端锚点已弃用(见下)
-    # ★ 牌位网格改为**从右往左铺**(2026-09-17 实测定案):
-    #   最右那张牌**完整可见** ⇒ 它的左缘必然被峰检测到 ⇒ 是**可靠锚点** ✓
-    #   而最左那张紧挨「你」字框, 亮度低/边缘弱 ⇒ 拿它当锚点会数少一张 ✗
-    #   (实测: 满手 27 张只给出 26 个位 → 采集器一致性闸门拒绝 → 模板库永远采不上 ✗)
-    #   做法: 从最右锚点以 pitch 向左铺, 直到碰到**桌面绿**(说明出界) 或越界 ✓
-    #         "不是桌面绿"同时管住"铺过头"(老毛病: 9 张被推成 21 位 ✗) ✓
+            return None
+        return img[y0 + 8:y1 - 8, x:x + 8].reshape(-1, 3).astype(int)
+
     def extendable(x: float) -> bool:
-        x = int(round(x))
-        if x < 0 or x + 8 >= img.shape[1]:
+        """还在牌排里吗? 判据 = **不是桌面绿**(2026-09-17) —— 桌面色会揭穿空白区,
+        而牌面/「你」字框都能过 ✓ (用亮度会误杀挨着「你」框的最左张 ✗)"""
+        col = _col(x)
+        if col is None:
             return False
-        col = img[y0 + 8:y1 - 8, x:x + 8].reshape(-1, 3).astype(int)
         r, g, b = col[:, 0].mean(), col[:, 1].mean(), col[:, 2].mean()
-        return not (g > r + 15 and g > b + 15)      # 不是桌面绿 ⇒ 还在牌排里 ✓
-    out = [hi]
-    x = hi - pitch
-    while x >= 0 and extendable(x) and len(out) < 40:
-        out.append(int(round(x)))
-        x -= pitch
-    return sorted(out)
+        return not (g > r + 15 and g > b + 15)
+
+    # ---- 手牌横向占用(白占比高的连续段) —— 用来挡住右侧「打A」标签区的假峰 ✓ ----
+    #   教训(2026-09-16): 不加这个边界时, 锚点会取到牌排右边的标签峰 ⇒ 牌位整体右移 ✗
+    sub = img[y0 + 6:y1 - 6]
+    white = (sub.min(axis=2) > 150).mean(axis=0)
+    _cols = np.where(white > 0.40)[0]
+    x_hi = int(_cols[-1]) if len(_cols) >= 5 else int(img.shape[1] - 1)
+
+    # ★★ 唯一出口: 用**实测手牌块的左右缘** + 24px 间距, 铺出严格等距网格(2026-09-17 定案)
+    #   为什么不用"峰"当锚点: ① 抬起态会让部分峰的边界变弱 ⇒ 峰集带洞 ⇒ 从洞里开始全体错位 ✗
+    #   ② 右侧「打A」标签区也有峰 ⇒ 取最右峰会整体右移、多出 3 格 ✗
+    #   ③ 而**白牌面连成的横范围**是稳的: 左缘 = 最左那张的左缘, 右缘 = 最右那张的右缘 ✓
+    #   (公式: 最右那张的左缘 = 右缘 - 牌宽; 牌数 = 跨度/间距 + 1) ✓ 可迁移到别的游戏 ✓
+    x_lo = int(_cols[0]) if len(_cols) >= 5 else 0
+    hi_left = x_hi - CARD_W_FULL                      # 最右那张的左缘 ✓
+    n = int(round((hi_left - x_lo) / pitch)) + 1
+    if n <= 0 or n > 40:
+        return []
+    return [int(round(x_lo + i * pitch)) for i in range(n)]
 
 def card_edges(img, y0: int = 0, y1: int = 0, min_gap: int = 10,
                q: float = 0.93, floor: float = 4.0) -> list:

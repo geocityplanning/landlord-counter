@@ -307,7 +307,15 @@ class GuandanAdapter(GameAdapter):
         self._observe_table_gated(frame)     # 记牌: 每帧都看桌面(别人的出牌也要记 ✓)
         if not P.my_turn(frame):          # 手牌白卡 + 按钮可用(防残局误判)
             return Observation(frame=frame, my_turn=False)
-        if not self._band_looks_like_hand(frame):
+        # ① **先做模板读牌**(纯像素, 实测对真值 100% ✓) —— 读到了就不必再过老结构闸门
+        # 教训(2026-09-16): 老的 hand_is_real/_band_looks_like_hand 是按旧几何估的,
+        # 对残局 9 张手牌会误判(实测它估 15 张 vs 真值 9 张 ✗) → 把托管卡成 0 动作 ✗
+        _tm_first = []
+        try:
+            _tm_first = P.tm_read_hand(frame)[0]
+        except Exception:  # noqa: BLE001
+            _tm_first = []
+        if not _tm_first and not self._band_looks_like_hand(frame):
             return Observation(frame=frame, my_turn=False)   # 假"我回合" → 跳过, 不空转
         # CDP 可用时: 用**游戏真值**复核"是不是我的回合"(像素启发式会被残局/动画骗)
         ex = self._ex
@@ -322,20 +330,32 @@ class GuandanAdapter(GameAdapter):
                         return Observation(frame=frame, my_turn=False)
                 except Exception as e:  # noqa: BLE001
                     print(f"    [真值] 回合探针异常({type(e).__name__}) → 沿用像素判据", flush=True)
-        # 期望张数: 优先"块宽实测真值"(不依赖 VLM/像素分段, 实测比 hand_columns 准)
-        n_vis = P.hand_card_count_est(frame) or P.hand_columns(frame)
+        # 期望张数: **模板读到的张数是权威**(实测真值 9 而老估算器给 12~15 ✗)
+        # 教训(2026-09-16): 老 hand_card_count_est 过期 → 一致性闸门误判"离谱" → 判定不敢用 ✗
+        n_vis = (len(_tm_first) if _tm_first
+                 else (P.hand_card_count_est(frame) or P.hand_columns(frame)))
         if self.rl and self._tap_cal is None and n_vis >= 25:
             self._calibrate_taps(frame)          # 满手时标定一次(本轮只做一次)
         # 优先"实测几何分段读"(整排直读会只读左半排, 实测 27 张只读出 12 张); 失败再回落整排。
         # 整轮重试 2 次: VLM 偶发空返回(服务端排队), 实测同一帧 3 次里 1 次失手 → 重试可兜住。
         hand = None
-        for _try in range(2):
-            hand = P.read_hand_strips_measured(self.vision, frame, n_vis) if n_vis else None
-            if hand:
-                break
+        # ① **模板匹配优先**(纯像素, <5ms, 免费) —— 实测对游戏真值 100% ✓✓
+        #    分层原则(2026-09-16 拍板): 大模型管"冷启动/兜底", 模板管"日常量产"。
+        #    ⚠️ 花色编码要转换: 模板库 1♠2♣3♥4♦ → 牌库 0♠1♥2♣3♦ (不一致就全错 ✗)
+        _TM_HUA2RULES = {1: 0, 2: 2, 3: 1, 4: 3, 0: None}
+        tm_reads = _tm_first          # 上面第一道闸门已读过(模板命中就直接放行 ✓)
+        if tm_reads:
+            hand = [R.Card(zhi=z, hua=_TM_HUA2RULES.get(s)) for s, z, _x in tm_reads]
+            self.usage.vlm_read(what="hand_tm", ok=True, n=len(hand))     # 计量: 0 成本路径
         if not hand:
-            hand = P.read_hand_ordered(self.vision, frame, expected=n_vis)
-        self._meter_vlm("hand", ok=bool(hand), n_est=n_vis)
+            # ② 兜底: 大模型读(模板库尚未覆盖的牌型/界面改版)
+            for _try in range(2):
+                hand = P.read_hand_strips_measured(self.vision, frame, n_vis) if n_vis else None
+                if hand:
+                    break
+            if not hand:
+                hand = P.read_hand_ordered(self.vision, frame, expected=n_vis)
+            self._meter_vlm("hand", ok=bool(hand), n_est=n_vis)
         if not hand:
             self._read_fail_evidence = {"n_est": n_vis, "n_read": None,
                                         "block": list(P.hand_block(frame) or (None, None))}

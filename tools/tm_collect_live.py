@@ -24,7 +24,7 @@ from landlord_counter.guandan import percept as P          # noqa: E402
 from landlord_counter.platform.cdp import CDP              # noqa: E402
 from landlord_counter.platform.device import AdbDevice     # noqa: E402
 
-OUT = "data/templates_sr"
+OUT = "data/templates_rank"   # 点数级(实时真值采集)
 NAME = {11: "J", 12: "Q", 13: "K", 14: "A", 15: "小王", 16: "大王"}
 
 
@@ -36,7 +36,7 @@ def main() -> int:
         print("没有真值钩子")
         return 2
     dev = AdbDevice(serial="127.0.0.1:5555", url="http://172.18.0.1:8123/index.html")
-    os.makedirs(OUT, exist_ok=True)
+    os.makedirs(OUT, exist_ok=True)   # 追加式: 不清空(与花色级分目录)
     got = 0
     seen = {}
     for _ in range(n * 4):
@@ -60,8 +60,13 @@ def main() -> int:
             time.sleep(gap)
             continue
         got += 1
+        card_h = y1 - y0 - 16
         for x, z in zip(xs, truth):
-            patch = img[y0 + 8:y1 - 8, x:x + 24]
+            x0 = int(x)
+            # ★ 与读取端**同一口径**: 逐牌按自身顶边裁(游戏会把某些牌抬高显示 ✗
+            #   若这里用固定带, 抬高的那几张会采到错位内容 → 读的时候永远对不上 ✗)
+            ty = P.card_top_y(img, x0, y0 + 8)
+            patch = img[ty + 8:ty + 8 + card_h, x0:x0 + 24]
             if patch.size == 0 or float(patch.std()) < 10:
                 continue
             seen[z] = seen.get(z, 0) + 1

@@ -53,8 +53,7 @@ def main() -> int:
     img = cv2.cvtColor(cv2.imread(REF), cv2.COLOR_BGR2RGB)
     y0, y1, xs = grid27(img)
     os.makedirs(OUT, exist_ok=True)
-    for f in os.listdir(OUT):
-        os.remove(os.path.join(OUT, f))
+    # 追加式: 不清空(清空会连累别的套件 ✗)
     for i, (x, k) in enumerate(zip(xs, KEY), 1):
         patch = img[y0 + 8:y1 - 8, x:x + 24]
         if patch.size == 0:

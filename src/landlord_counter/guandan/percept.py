@@ -144,13 +144,17 @@ def _tpl_dir() -> str:
 def load_templates_sr(d: str | None = None) -> dict:
     """加载"花色+点数"模板库: 目录下 *.npy, 文件名 <花色>_<点数>_<序号>.npy。"""
     import os as _os
-    if d is None:
-        d = _os.path.join(_os.path.dirname(__file__), "..", "..", "..", "data", "templates_sr")
-    d = _os.path.abspath(d)
+    # 两个目录都读: 花色+点数(参考图标注) + 点数级(实时真值采集) ✓
+    root = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), "..", "..", "..", "data"))
+    dirs = [d] if d else [_os.path.join(root, "templates_sr"), _os.path.join(root, "templates_rank")]
     bank: dict = {}
-    if not _os.path.isdir(d):
-        return bank
-    for fn in _os.listdir(d):
+    files = []
+    for dd in dirs:
+        dd = _os.path.abspath(dd)
+        if _os.path.isdir(dd):
+            files += [_os.path.join(dd, fn) for fn in _os.listdir(dd)]
+    for full in files:
+        fn = _os.path.basename(full)
         if not fn.endswith(".npy"):
             continue
         # key 取**前两段**(花色_点数): 文件名形如 <花色>_<点数>_<序号>.npy
@@ -160,7 +164,7 @@ def load_templates_sr(d: str | None = None) -> dict:
             continue
         k = f"{parts[0]}_{parts[1]}"
         try:
-            bank.setdefault(k, []).append(np.load(_os.path.join(d, fn)))
+            bank.setdefault(k, []).append(np.load(full))
         except Exception:
             continue
     return bank
@@ -175,7 +179,7 @@ def load_templates(tpl_dir: str = "") -> dict:
         for fn in _os.listdir(d):
             if fn.endswith(".npy"):
                 try:
-                    out[int(fn[:-4])] = np.load(_os.path.join(d, fn))
+                    out[int(fn[:-4])] = np.load(full)
                 except Exception:                # noqa: BLE001
                     continue
     return out
@@ -794,10 +798,9 @@ def card_slots(img, y0: int | None = None, y1: int | None = None, pitch_fallback
     while k < 2 and card_like(lo - pitch * (k + 1)) and (lo - pitch * (k + 1)) >= x_lo - pitch:
         k += 1
     lo = lo - pitch * k
-    k = 0
-    while k < 2 and card_like(hi + pitch * (k + 1)) and (hi + pitch * (k + 1)) <= x_hi + pitch:
-        k += 1
-    hi = hi + pitch * k
+    # ★ 右边**不外扩**(2026-09-17 实测): 最右那张牌是**完整可见**的 → 它的左缘必然被峰检测到
+    #   → 再往右扩出来的都是"牌外的亮区"(实测满手 27 张被扩成 29 个位 ✗, 且那两格亮度也够高,
+    #     靠亮度/边缘都筛不掉 ✗) → 干脆不扩 ✓
     n = int(round((hi - lo) / pitch)) + 1
     return [int(round(lo + i * pitch)) for i in range(n)]
 

@@ -469,6 +469,8 @@ class Executor:
     def direct_play(self, idxs: list[int], n: int, rounds: int = 2,
                     ranks: list | None = None) -> bool:
         """直选执行: 点选 → 校验张数 → 出牌 → 回执; 失败清选后再来一轮。"""
+        from ..guandan import percept as _P
+
         first = self._snap()
         before = self.L.white_count(first)
         base_lift = self._lift(first)
@@ -499,9 +501,19 @@ class Executor:
             # ★ 纪律(2026-09-17 实测): 伺服就位后**立刻按出牌** ×
             #   旧流程还多读一次画面 + 等 0.3s ⇒ "读状态"与"按按钮"隔了 ~2 秒
             #   ⇒ 期间牌的抬起动画/可出状态已经变了 ⇒ 按下去落空 ✗(实测成功 1/失败 2~3)
-            ready = self._servo_select(idxs, rounds=3)
-            if not ready:
-                self.log("  [servo] ⚠ 未全部就位 → 仍按现状出牌, 由回执终判 ✓")
+            # ★★ 一次点准(2026-09-17 用户纠正后定案): 游戏**不会**把整组帮点 ✓
+            #   ⇒ 决策要几张就**逐张点**几张, 每张**只点一次**; 不猜、不复核、不回落 ✓
+            #   (杀掉旧做法: 用"抬起量"复核 —— 那个读数会误判(实测报"需落=2"其实是误判 ✗),
+            #    于是去点"以为多余"的牌 ⇒ 反而把没选的选上 ✗ ⇒ 越修越乱, 成功率只剩 1/3;
+            #    对照: 最小路径(只点目标 + 按) = **100%** ✓✓)
+            # ★ 记录我们**点过哪些张**(用于失败时精确撤销) —— 不猜, 靠记 ✓
+            tapped: list = []
+            for i in idxs:
+                fresh, _f = _P.tm_read_hand_with_lift(self._snap())
+                if i < len(fresh):
+                    self.log(f"  [gesture] 点第{i}张 x={fresh[i][2]}(当帧实量)")
+                    self._tap_card_at(fresh[i][2], wait=0.55)
+                    tapped.append(i)
             pp = self._play_btn() or self.btn("play")     # ★ 立刻按 ✓
             if not pp:
                 self.clear(idxs, n)
@@ -509,9 +521,15 @@ class Executor:
             self._press(pp, wait=1.6)
             if self.wait_receipt(before):
                 return True
-            self.log("  [gesture] ↻ 出牌未生效 → 补点一次")
-            self._press(pp, wait=1.6)
-            if self.wait_receipt(before, polls=6):
-                return True
-            self.clear(idxs, n)
+            # ★★ 精确撤销(2026-09-17 实测定案): 失败时把我们**刚点过的每一张原样点回去** ✓
+            #   游戏是开关(点一下选中、再点一下取消) ⇒ 点回原位 = 撤销 ✓
+            #   旧做法靠"读抬起"猜哪些多余 ✗ —— 那个读数会误判 ⇒ 越修越乱(实测 4→6→7 张残留 ✓)
+            #   而"点过谁"是我们自己记的 ⇒ 精确、不猜 ✓✓
+            self.log("  [gesture] ↻ 出牌未生效 → 精确撤销刚才点的牌")
+            for i in reversed(tapped):
+                fresh, _f = _P.tm_read_hand_with_lift(self._snap())
+                if i < len(fresh):
+                    self._tap_card_at(fresh[i][2], wait=0.45)
+            time.sleep(0.3)
+            continue
         return False

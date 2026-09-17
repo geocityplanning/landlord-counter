@@ -168,11 +168,14 @@ def tm_read_hand(img, tpl: dict | None = None, max_dist: float = 0.6, templates_
         patch = img[ty + 8:ty + 8 + card_h, x0:x0 + 24]   # +8 与模板采集时一致 ✓
         if patch.size == 0 or patch.shape[0] < 10:
             continue
+            out.append((0, 0, int(x)))   # 占位(裁不出也算一位) ✓
         if float(patch.std()) < 10.0:            # 纯色块(如"你"字小框)不是牌
             info["unknown"] += 1
+            out.append((0, 0, int(x)))          # ★ 占位(不丢!) ⇒ 索引与牌位一一对应 ✓
             continue
         if float(patch.mean()) < 120:            # 暗的也不是牌(桌面绿 ~59 / 底部标签条 ~40)
             info["unknown"] += 1               # 实测: 右侧"打A"标签区的峰会被误当牌位 ✗
+            out.append((0, 0, int(x)))          # ★ 占位(不丢!) ✓
             continue
         a = norm_patch(patch)
         # ① **点数**: 全场取最小距离(花色级/点数级都参与 —— 本局自采的模板距离≈0.000 天然胜出)
@@ -207,6 +210,7 @@ def tm_read_hand(img, tpl: dict | None = None, max_dist: float = 0.6, templates_
         if best_k is None or best_d > max_dist:  # 不像任何已知牌 → 丢掉该位(不算一张)
             info["unknown"] += 1
             continue
+            out.append((0, 0, int(x)))       # 占位(认不出也算一位) ✓
         suit, rank = (int(v) for v in best_k.split("_"))
         out.append((suit, rank, x0))
         info["max_dist"] = max(info["max_dist"], round(best_d, 3))
@@ -1244,6 +1248,7 @@ def tm_read_hand_with_lift(img, y0: int | None = None, tpl: dict | None = None):
     for (key_, dy, _d), x in zip(raw, xs):
         if key_ is None:
             continue
+            cards.append((0, 0, int(x), 0.0))
         s_, r_ = (int(v) for v in key_.split("_"))
         cards.append((s_, r_, int(x), round(float(base - (dy if dy is not None else base)), 1)))
     return cards, {"base": base, "n": len(cards), "raw": raw}

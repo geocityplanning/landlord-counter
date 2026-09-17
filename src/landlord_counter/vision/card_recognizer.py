@@ -224,6 +224,21 @@ class CardRecognizer:
                 )
             resp.raise_for_status()
             data = resp.json()
+            # ★ 记录**真实 token 用量**(底座计费/成本核算要的数, 不估算 ✓)
+            try:
+                u = data.get("usage") or {}
+                if u:
+                    from ..platform.usage import UsageMeter
+
+                    UsageMeter().record(
+                        "vlm_tokens",
+                        amount=float(u.get("total_tokens") or 0),
+                        prompt=int(u.get("prompt_tokens") or 0),
+                        completion=int(u.get("completion_tokens") or 0),
+                        model=str(getattr(self.cfg, "vlm_model", "")),
+                    )
+            except Exception:  # noqa: BLE001
+                pass
             return data["choices"][0]["message"]["content"]
         except Exception:
             return None

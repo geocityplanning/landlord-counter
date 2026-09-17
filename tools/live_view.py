@@ -128,9 +128,22 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self) -> None:  # noqa: N802
+        # ★ 临时口令(2026-09-17): 公网直连必须带 ?k=<口令> —— 不接受无鉴权直连 ✓
+        tok = os.getenv("LIVE_TOKEN", "")
+        got = ""
+        if "?" in self.path:
+            for kv in self.path.split("?", 1)[1].split("&"):
+                if kv.startswith("k="):
+                    got = kv[2:].split("&")[0]
+        if tok and got != tok:
+            return self._send("需要口令: 请在网址后加 ?k=<口令>", code=403)
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
-            return self._send(PAGE, "text/html; charset=utf-8")
+            html = PAGE
+            if tok:
+                for ep in ("/stream", "/log", "/events", "/meta"):
+                    html = html.replace(f'"{ep}"', f'"{ep}?k={tok}"')
+            return self._send(html, "text/html; charset=utf-8")
         if path == "/stream":
             self.send_response(200)
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")

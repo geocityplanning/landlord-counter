@@ -721,11 +721,21 @@ class GuandanAdapter(GameAdapter):
 
     # ---------- 结算 ----------
     def settle(self, frame) -> SettleInfo | None:
-        """结算解读: 优先无障碍文字(免 VLM), 否则回落 VLM 读弹窗。"""
+        """结算解读: 优先无障碍文字(免 VLM), 否则回落 VLM 读弹窗。
+
+        ⚠️ 防假结算(2026-09-17 实测): a11y 文本会**残留**上一次的"头游" →
+        同一局被反复判成"结算"(10 分钟误记 11 局 ✗, 真局要几分钟) → 去重 + 冷却 ✓
+        """
         try:
             blob = self.a11y.text_blob(force=True)
         except Exception:  # noqa: BLE001
             blob = ""
+        _key = (blob or "").strip()[:200]
+        _now = time.time()
+        if _key and _key == getattr(self, "_last_settle_key", None):
+            return None                       # 同一段文字 = 残留, 不是新结算 ✓
+        if _now - getattr(self, "_last_settle_t", 0.0) < 60.0:
+            return None                       # 冷却: 一局至少几分钟, 1 分钟内不可能结算两次 ✓
         if "头游" in blob:
             head = ""
             m = re.search(r"头游[:：]\s*(\S+)", blob)
@@ -741,6 +751,8 @@ class GuandanAdapter(GameAdapter):
                 self.log.deal_end(raw=raw, win=win)
             except Exception:                    # noqa: BLE001
                 pass
+            self._last_settle_key = _key         # 记住这次文本 + 时间 → 防止残留被反复计数 ✓
+            self._last_settle_t = _now
             return SettleInfo(raw=raw, win=win)
         if self.vision is None:
             return None

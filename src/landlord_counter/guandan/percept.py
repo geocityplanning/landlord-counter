@@ -9,7 +9,8 @@ import numpy as np
 
 from .rules import Card, cards_from_tokens
 
-HAND_BAND = (695, 825)
+HAND_BAND = (815, 936)   # 实测(2026-09-17, 用户标注图): 手牌牌面 y 815..936 ✓ (旧值 695,825 是"牌上方空白", 会让 card_slots 返回空 ⇒ 读牌静默全废 ✗)
+_BAND_LAST: list = [None]   # 上次可信的手牌带(抬起态会把测量带偏 ⇒ 用缓存兜底) ✓
 # 手牌行最左边是"你"字小框(浅绿), 它不是牌 → 读牌时从它右边开始
 # (实测 2026-09-16: 不裁会把"你"读成一张 8 并盖住第一张牌; 裁 20~65px 都能读全)
 HAND_X_PAD = 26   # 实测(2026-09-16 720x1280 掼蛋): 牌面 y≈695..825, 130px 高
@@ -648,7 +649,14 @@ def hand_band_measured(img, y_lo: int = 600, y_hi: int = 1120) -> tuple:
             s0 = prev = y
     if prev - s0 > best[1] - best[0]:
         best = (s0, prev)
-    return best if best[1] - best[0] >= 40 else HAND_BAND
+    # ★ 合理性闸门(2026-09-17 实测): 手牌带必在**屏幕下半**、高约 80~200px。
+    #   牌被抬起时, 行剖面会把"桌面牌堆区"当成长段 ⇒ 实测返回 (7, 713) ✗
+    #   ⇒ 不合理就退回**上次可信的带**(本会话缓存), 别把错误带传给下游 ✓
+    y_a, y_b = int(best[0]), int(best[1])
+    if not (700 <= y_a and 60 <= y_b - y_a <= 220):
+        return _BAND_LAST[0] or HAND_BAND
+    _BAND_LAST[0] = (y_a, y_b)
+    return (y_a, y_b)
 
 
 
@@ -1219,7 +1227,6 @@ def tm_read_hand_with_lift(img, y0: int | None = None, tpl: dict | None = None):
     """
     if y0 is None:
         y0, _y1 = hand_band_measured(img)
-    img = mask_you_label(img, y0)   # 精确版(只遮绿框) ✓   # ★ 暂撤(2026-09-17): 它修了 x=76 假抬起, 但把邻近列的读数也搞坏了 ✗ (19~22/27)
     xs = card_slots(img, y0)
     bank = load_templates_sr() if tpl is None else tpl
     if not xs or not bank:

@@ -325,7 +325,7 @@ class Executor:
         """"牌放平"时的顶边基线(动态实测, 不写死 ✗)。"""
         return float(getattr(self, "_top_flat", 0.0))
 
-    def _raised_state(self, img, xs: list) -> list:
+    def _raised_state(self, img, xs: list, idxs: list | None = None) -> list:
         """逐张判断: "已抬起(True) / 平放(False) / 看不出(None)" ✓
 
         用**滑动匹配**(读牌+量抬起同一机制 ✓): 只依赖牌自己的图案 → 不受邻牌遮挡 ✓
@@ -337,20 +337,42 @@ class Executor:
             return [None] * len(xs)
         try:
             _cards, _info = _P.tm_read_hand_with_lift(img)
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            # 不静默(教训: 一次 NameError 被吞掉, 整条直选链路全废还看不出来 ✗)
+            self.log(f"  [servo] ✗ 读抬起失败: {type(e).__name__}: {e}")
             return [None] * len(xs)
         by_x = {int(x_): l_ for _s, _r, x_, l_ in _cards}
+        # 兜底(2026-09-17): 坐标对不上时(不同来源的牌位/带漂移), 按**顺序对齐** ——
+        #   两侧都是"从左到右", 第 i 个目标天然对应第 i 张读到的牌 ✓ (实测 27 = 27 ✓)
+        rd = sorted((int(x_), l_) for _s, _r, x_, l_ in _cards)
+        tg = sorted((int(x), i) for i, x in enumerate(xs))
+        by_order = {}
+        if len(rd) == len(tg):
+            for (xr, l_), (xt, _i) in zip(rd, tg):
+                by_order[xt] = l_
+        # 最强兜底(2026-09-17): **按手牌索引对齐** —— 伺服本来就是按索引决策的,
+        #   读取的牌也是从左到右 ⇒ 第 idx 张目标 = 读取里第 idx 张 ✓ (不依赖任何坐标来源 ✓)
+        by_idx = {}
+        if idxs is not None and len(_cards) > max(idxs, default=-1):
+            for i, x in enumerate(xs):
+                if i < len(idxs) and 0 <= idxs[i] < len(_cards):
+                    by_idx[int(x)] = _cards[idxs[i]][3]
         out = []
         for x in xs:
-            got = None
-            for xx, ll in by_x.items():
-                if abs(xx - int(x)) <= 10:   # 点击坐标=牌位+6px, 容差要放宽 ✓
-                    got = ll
-                    break
+            got = by_idx.get(int(x))
+            if got is None:
+                got = by_x.get(int(x))
+            if got is None:
+                for xx, ll in by_x.items():
+                    if abs(xx - int(x)) <= 10:   # 点击坐标=牌位+6px, 容差要放宽 ✓
+                        got = ll
+                        break
+            if got is None:
+                got = by_order.get(int(x))
             out.append(None if got is None else bool(got >= 18))
         return out
 
-    def _servo_select(self, want_x: list, rounds: int = 3) -> None:
+    def _servo_select(self, want_x: list, idxs: list | None = None, rounds: int = 3) -> None:
         """伺服: 让 want_x 这些牌位**都抬起**(现状→求差→补抬→复核) ✓
 
         "回落"只针对**我们上一轮自己点过**的位置(可安全反点 ✓);
@@ -361,7 +383,7 @@ class Executor:
             self._tap_card_at(x, wait=0.4)
             self.log(f"  [servo] 回落(x={x}, 上轮我们点过但这次不要)")
         for r in range(rounds):
-            st = self._raised_state(self._snap(), want_x)
+            st = self._raised_state(self._snap(), want_x, idxs)
             missing = [x for x, v in zip(want_x, st) if v is not True]
             self.log(f"  [servo] 第{r + 1}轮 抬起态="
                      f"{['✓' if v else ('✗' if v is False else '?') for v in st]} 需补={len(missing)}")
@@ -401,7 +423,7 @@ class Executor:
             # ★ 伺服: 量现状 → 少了补抬 / 多了回落 → 复核 ✓ (用户算法③④)
             #   用户纠正(2026-09-17): 游戏**不会每次都帮点整组** ✗ → 绝不能靠假设去重 ✓
             #   一切以"量到的抬起状态"为准 ✓ (滑块匹配量抬起, 不受邻牌遮挡 ✓)
-            self._servo_select(want_x, rounds=3)
+            self._servo_select(want_x, idxs, rounds=3)
             t_snap = self._snap()
             st = self._raised_state(t_snap, want_x)
             if all(v is True for v in st):

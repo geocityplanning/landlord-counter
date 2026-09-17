@@ -320,6 +320,7 @@ class GuandanAdapter(GameAdapter):
         # 教训(2026-09-16): 老的 hand_is_real/_band_looks_like_hand 是按旧几何估的,
         # 对残局 9 张手牌会误判(实测它估 15 张 vs 真值 9 张 ✗) → 把托管卡成 0 动作 ✗
         _tm_first = []
+        _frame0 = frame                     # 记下"读牌时那一帧", 闸门换帧后要比对 ✓
         try:
             _tm_first = P.tm_read_hand(frame)[0]
         except Exception:  # noqa: BLE001
@@ -373,7 +374,13 @@ class GuandanAdapter(GameAdapter):
         #    分层原则(2026-09-16 拍板): 大模型管"冷启动/兜底", 模板管"日常量产"。
         #    ⚠️ 花色编码要转换: 模板库 1♠2♣3♥4♦ → 牌库 0♠1♥2♣3♦ (不一致就全错 ✗)
         _TM_HUA2RULES = {1: 0, 2: 2, 3: 1, 4: 3, 0: None}
-        tm_reads = _tm_first          # 上面第一道闸门已读过(模板命中就直接放行 ✓)
+        # ⚠️ 闸门清过抬起并**换了帧** → 必须用新帧重读(否则用的是带遮挡那帧的旧读数 ✗)
+        tm_reads = _tm_first
+        if _tm_first and frame is not _frame0:
+            try:
+                tm_reads = P.tm_read_hand(frame)[0] or _tm_first
+            except Exception:  # noqa: BLE001
+                tm_reads = _tm_first
         if tm_reads:
             hand = [R.Card(zhi=z, hua=_TM_HUA2RULES.get(s)) for s, z, _x in tm_reads]
             self.usage.vlm_read(what="hand_tm", ok=True, n=len(hand))     # 计量: 0 成本路径
@@ -712,15 +719,6 @@ class GuandanAdapter(GameAdapter):
         return ExecResult(False, 1, f"提示执行={r} 且直选未成")
 
 
-def _map_indices(hand, cards):
-    """把组合中的牌映射回手牌索引(用于直选)。"""
-    from ...guandan.agent import map_indices
-
-    try:
-        return map_indices(hand, cards)
-    except Exception:  # noqa: BLE001
-        return None
-
     # ---------- 结算 ----------
     def settle(self, frame) -> SettleInfo | None:
         """结算解读: 优先无障碍文字(免 VLM), 否则回落 VLM 读弹窗。"""
@@ -750,3 +748,14 @@ def _map_indices(hand, cards):
         if "头游" not in txt and "升级" not in txt:
             return None
         return SettleInfo(raw=txt.strip()[:60], win=win)
+
+
+def _map_indices(hand, cards):
+    """把组合中的牌映射回手牌索引(用于直选)。"""
+    from ...guandan.agent import map_indices
+
+    try:
+        return map_indices(hand, cards)
+    except Exception:  # noqa: BLE001
+        return None
+

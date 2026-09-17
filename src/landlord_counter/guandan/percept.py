@@ -103,35 +103,6 @@ def read_seat_panels(rec, img) -> dict:
     return {"panels": panels, "level": level, "raw": raw}
 
 
-def hand_x_range(img, y0: int = 0, y1: int = 0, min_white: float = 0.06) -> tuple:
-    """**实测**手牌横范围(左右界): 取"竖直边缘能量高 + 白底"的最长连续 x 段。
-
-    实测(2026-09-16 能量图): 手牌 x≈180..420(9 张 × 24px ≈ 216px ✓), 其余是桌面/按钮。
-    """
-    if not y0 or not y1:
-        y0, y1 = hand_band_measured(img)
-    g = img[y0:y1].mean(axis=2)
-    dx = np.abs(np.diff(g, axis=1)).mean(axis=0)
-    white = (g > 200).mean(axis=0)
-    e_thr = max(1.5, float(np.percentile(dx, 80)))
-    cols = [x for x in range(len(dx)) if dx[x] > e_thr or white[x] > 0.25]
-    if not cols:
-        return 0, img.shape[1]
-    best = (cols[0], cols[0]); s0 = prev = cols[0]
-    for x in cols[1:]:
-        if x - prev <= 12:
-            prev = x
-        else:
-            if prev - s0 > best[1] - best[0]:
-                best = (s0, prev)
-            s0 = prev = x
-    if prev - s0 > best[1] - best[0]:
-        best = (s0, prev)
-    if best[1] - best[0] < 80:                    # 太窄 → 不可信, 不限
-        return 0, img.shape[1]
-    # 最左边那张牌的左上角是"你"字小框(能量低 ✗ 会被排除) → 左边界多留一格牌距
-    return max(0, best[0] - 34), min(img.shape[1] - 1, best[1] + 26)
-
 
 def _tpl_dir() -> str:
     import os as _os
@@ -169,21 +140,6 @@ def load_templates_sr(d: str | None = None) -> dict:
             continue
     return bank
 
-def load_templates(tpl_dir: str = "") -> dict:
-    """加载模板库: {点数: np.ndarray(竖条图像)}。"""
-    import os as _os
-
-    d = tpl_dir or _tpl_dir()
-    out = {}
-    if _os.path.isdir(d):
-        for fn in _os.listdir(d):
-            if fn.endswith(".npy"):
-                try:
-                    out[int(fn[:-4])] = np.load(full)
-                except Exception:                # noqa: BLE001
-                    continue
-    return out
-
 
 def tm_read_hand(img, tpl: dict | None = None, max_dist: float = 0.6, templates_dir: str | None = None):
     """**模板匹配**读手牌(纯像素, 不调模型)。
@@ -196,7 +152,7 @@ def tm_read_hand(img, tpl: dict | None = None, max_dist: float = 0.6, templates_
 
     返回 (list[(花色1-4, 点数2-16, x)], info); 花色: 1♠ 2♣ 3♥ 4♦; 点数 11=J 12=Q 13=K 14=A 15小王 16大王
     """
-    tpl = load_templates_sr(templates_dir) if tpl is None else tpl
+    tpl = load_templates_norm(templates_dir) if tpl is None else tpl   # 已预归一化 ✓
     info = {"n_slot": 0, "unknown": 0, "max_dist": 0.0, "tpl": len(tpl)}
     if not tpl:
         return [], info
@@ -217,15 +173,35 @@ def tm_read_hand(img, tpl: dict | None = None, max_dist: float = 0.6, templates_
             info["unknown"] += 1               # 实测: 右侧"打A"标签区的峰会被误当牌位 ✗
             continue
         a = norm_patch(patch)
+        # ① **点数**: 全场取最小距离(花色级/点数级都参与 —— 本局自采的模板距离≈0.000 天然胜出)
         best_k, best_d = None, 1e18
         for k, arrs in tpl.items():
-            for t in arrs:
-                b = norm_patch(t)
+            for b in arrs:                      # arrs 已归一化 ✓
                 if b.shape != a.shape:
                     continue
                 d = float(np.mean(np.abs(a - b)))
                 if d < best_d:
                     best_d, best_k = d, k
+        # ② **花色**: 只在"胜出点数"的花色级模板里再确认一次; 无可信候选 → 未知(0) ✓
+        #    (审查员实证: suit=0/hua=None 交给决策层会导致"同花顺误判 + 红桃逢人配认不出")
+        if best_k is not None:
+            _rk = best_k.split("_")[1]
+            if best_k.startswith("0_"):
+                suit, sd = 0, 1e18
+                for k2, arrs in tpl.items():
+                    if k2.startswith("0_") or k2.split("_")[1] != _rk:
+                        continue
+                    for b in arrs:
+                        if b.shape != a.shape:
+                            continue
+                        d = float(np.mean(np.abs(a - b)))
+                        if d < sd:
+                            sd, suit = d, int(k2.split("_")[0])
+                if sd > max_dist:               # 花色级也没有可信候选 → 花色未知, 不瞎猜 ✓
+                    suit = 0
+            else:
+                suit = int(best_k.split("_")[0])
+            best_k = f"{suit}_{_rk}"
         if best_k is None or best_d > max_dist:  # 不像任何已知牌 → 丢掉该位(不算一张)
             info["unknown"] += 1
             continue
@@ -403,21 +379,6 @@ def read_hand_strips_measured(rec, img, n: int, batch: int = 9) -> list[Card] | 
 
 PROMPT_ONE = "这是叠在一起的一小段扑克牌(从左到右1-2张),只输出最左边那张的\"花色+点数\",如 ♠K;点数10写10,大王写大王,小王写小王。不要解释。"
 
-
-def read_hand_by_columns(rec, img, n: int) -> list[Card] | None:
-    """逐列单读(小牌量用): 按 pitch 24 逐张裁露出带 → VLM 单张读 → 汇总。"""
-    y0, y1 = HAND_BAND
-    sx = hand_start_x(n)
-    toks: list[str] = []
-    for i in range(n):
-        x = int(sx + i * 24)
-        x0, x1 = max(0, x - 4), min(img.shape[1], x + 40)
-        txt = _read(rec, img[y0:y1, x0:x1], PROMPT_ONE)
-        t = _split_tokens(txt)
-        if not t:
-            return None
-        toks.append(t[0])
-    return _sanitize(toks)
 
 
 def _looks_cyclic(toks: list[str], max_period: int = 14, min_repeats: int = 3) -> bool:
@@ -728,6 +689,32 @@ def card_top_y(img, x: int, y_guess: int, span: int = 60, need: int = 6,
         if v >= need:
             return y_from + i
     return int(y_guess)
+
+
+_TPL_NORM_CACHE: dict = {}      # 模块级缓存: key → {花色_点数: [归一化后的 ndarray, ...]}
+
+
+def load_templates_norm(d: str | None = None) -> dict:
+    """**归一化后的**模板库(进程内构建一次)。
+
+    为什么: 审查员实测 —— 每帧从磁盘读 459 个 .npy(≈45ms) 且对每个槽位把全部模板
+    重新归一化(12420 次 ≈ 974ms) ✗ → 预归一化后整次读牌 ≈ 33ms(24 倍) ✓
+    采样工具新增模板后需 `clear_templates_cache()` 才能看到新样本 ✓
+    """
+    import os as _os
+    key = _os.path.abspath(d) if d else "__default__"
+    hit = _TPL_NORM_CACHE.get(key)
+    if hit is not None:
+        return hit
+    raw = load_templates_sr(d)
+    norm = {k: [norm_patch(a) for a in arrs] for k, arrs in raw.items()}
+    _TPL_NORM_CACHE[key] = norm
+    return norm
+
+
+def clear_templates_cache() -> None:
+    """清空模板缓存(采集器写盘后调用 ✓)。"""
+    _TPL_NORM_CACHE.clear()
 
 def norm_patch(p: "np.ndarray") -> "np.ndarray":
     """把牌面竖条归一化(灰度 + 去均值/除标准差)。

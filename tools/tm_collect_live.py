@@ -74,6 +74,7 @@ def main() -> int:
         print(f"  样本 {got}: 采 {len(xs)} 张  点数 {[NAME.get(z, z) for z in truth]}")
         time.sleep(gap)
     print(f"✓ 共采 {got} 帧, 覆盖点数 {sorted(seen)}")
+    P.clear_templates_cache()
     bank = P.load_templates_sr()
     print(f"  模板库现在 {len(bank)} 个 key, 其中点数级 {len([k for k in bank if k.startswith('0_')])} 个")
     return 0

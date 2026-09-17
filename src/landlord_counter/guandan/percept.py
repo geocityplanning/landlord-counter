@@ -167,8 +167,8 @@ def tm_read_hand(img, tpl: dict | None = None, max_dist: float = 0.6, templates_
         ty = card_top_y(img, x0, y0 + 8)      # 逐牌对准: 用**该牌自己的顶边** ✓
         patch = img[ty + 8:ty + 8 + card_h, x0:x0 + 24]   # +8 与模板采集时一致 ✓
         if patch.size == 0 or patch.shape[0] < 10:
+            out.append((0, 0, int(x)))   # 占位: 裁不出也算一位 ✓ (必须在 continue **之前** ✗)
             continue
-            out.append((0, 0, int(x)))   # 占位(裁不出也算一位) ✓
         if float(patch.std()) < 10.0:            # 纯色块(如"你"字小框)不是牌
             info["unknown"] += 1
             out.append((0, 0, int(x)))          # ★ 占位(不丢!) ⇒ 索引与牌位一一对应 ✓
@@ -207,10 +207,10 @@ def tm_read_hand(img, tpl: dict | None = None, max_dist: float = 0.6, templates_
             else:
                 suit = int(best_k.split("_")[0])
             best_k = f"{suit}_{_rk}"
-        if best_k is None or best_d > max_dist:  # 不像任何已知牌 → 丢掉该位(不算一张)
+        if best_k is None or best_d > max_dist:  # 不像任何已知牌 → 也算一位(占位, 不丢!) ✓
             info["unknown"] += 1
+            out.append((0, 0, int(x)))       # 必须在 continue **之前** ✗
             continue
-            out.append((0, 0, int(x)))       # 占位(认不出也算一位) ✓
         suit, rank = (int(v) for v in best_k.split("_"))
         out.append((suit, rank, x0))
         info["max_dist"] = max(info["max_dist"], round(best_d, 3))

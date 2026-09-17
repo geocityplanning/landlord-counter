@@ -420,9 +420,16 @@ class Executor:
             if not missing:
                 break
             for i in missing:
-                if i < len(cards):
-                    self._tap_card_at(cards[i][2], wait=0.5)     # ★ 用这份读取给的 x ✓
-                    self._last_picked = list(getattr(self, "_last_picked", [])) + [cards[i][2]]
+                # ★★ 点之前**重新量一次牌位**(2026-09-17 用户指令"先修一件事, 点对"):
+                #   点一张 → 该牌抬起 → 整排的**检测结果会变** ⇒ 上一轮记的 x 已过期 ✗
+                #   (实测: 点完再点同处 = 打到隔壁 → 反复抬起放下, 振荡 ✓)
+                #   ⇒ 每次都从**当前帧**取坐标 ✓ (牌位网格以最右锚点重铺, 稳定 ✓)
+                fresh, _fi = _P.tm_read_hand_with_lift(self._snap())
+                xx = fresh[i][2] if i < len(fresh) else (cards[i][2] if i < len(cards) else None)
+                if xx is not None:
+                    self.log(f"  [servo] 点第{i}张 x={xx}(当帧实量)")
+                    self._tap_card_at(xx, wait=0.6)
+                    self._last_picked = list(getattr(self, "_last_picked", [])) + [xx]
         self._last_picked = list(getattr(self, '_last_picked', []))
 
     def direct_play(self, idxs: list[int], n: int, rounds: int = 2,

@@ -320,6 +320,56 @@ class Executor:
             return "ok"
         return "fail"
 
+    # ---------- 伺服式直选(用户 2026-09-17 设计的算法) ----------
+    def _flat_top(self) -> float:
+        """"牌放平"时的顶边基线(动态实测, 不写死 ✗)。"""
+        return float(getattr(self, "_top_flat", 0.0))
+
+    def _raised_state(self, img, xs: list) -> list:
+        """逐张判断: 这些牌位现在"已抬起(True) / 平放(False) / 看不出(None)" ✓
+
+        只看**状态**(不纠结是谁抬的 ✗ —— 游戏自己的提示高亮也会抬起 ✓)。
+        判据: 该牌位的牌面顶边是否比"放平基线"高 >=20px ✓
+        """
+        from ..guandan import percept as _P
+
+        if img is None:
+            return [None] * len(xs)
+        y0, _y1 = _P.hand_band_measured(img)
+        if not self._flat_top():
+            self._top_flat = float(y0) + 3.0            # 首次: 记下放平基线 ✓
+        out = []
+        for x in xs:
+            try:
+                ty = _P.card_top_y(img, int(x), y0 + 8)
+            except Exception:  # noqa: BLE001
+                out.append(None)
+                continue
+            d = self._flat_top() - ty
+            out.append(True if d >= 20 else (False if d <= 8 else None))
+        return out
+
+    def _servo_select(self, want_x: list, rounds: int = 3) -> None:
+        """伺服: 让 want_x 这些牌位**都抬起**(现状→求差→补抬→复核) ✓
+
+        "回落"只针对**我们上一轮自己点过**的位置(可安全反点 ✓);
+        不碰游戏自己高亮的牌(反点反而会选中它们 ✗)。
+        """
+        stale = [x for x in getattr(self, "_last_picked", []) if x not in want_x]
+        for x in stale:
+            self._tap_card_at(x, wait=0.4)
+            self.log(f"  [servo] 回落(x={x}, 上轮我们点过但这次不要)")
+        for r in range(rounds):
+            st = self._raised_state(self._snap(), want_x)
+            missing = [x for x, v in zip(want_x, st) if v is not True]
+            self.log(f"  [servo] 第{r + 1}轮 抬起态="
+                     f"{['✓' if v else ('✗' if v is False else '?') for v in st]} 需补={len(missing)}")
+            if not missing:
+                break
+            for x in missing:
+                self._tap_card_at(x, wait=0.5)
+        self._last_picked = list(want_x)
+
     def direct_play(self, idxs: list[int], n: int, rounds: int = 2,
                     ranks: list | None = None) -> bool:
         """直选执行: 点选 → 校验张数 → 出牌 → 回执; 失败清选后再来一轮。"""
@@ -339,38 +389,20 @@ class Executor:
         #   提示牌(如打A 时高亮的 A)"就有 ~3000 抬起 ✗ → 被误判成"我们选了牌" ✗ → 直选全部拒绝 ✓
         #   正解: 用本会话**观察到的最小抬起**当基线, 不设上限 ✓
         empty = self._lift_min if self._lift_min is not None else base_lift
-        if base_lift > empty + 400:
-            self.log(f"  [gesture] ⚠ 开局就有残留选中({base_lift:.0f}, 空≈{empty:.0f}) "
-                     f"→ 不盲点清理(会越清越乱 ✗), 本轮放弃 ✓")
-            return False
+        # ★ 不再"开局就放弃"(2026-09-17 用户算法): 有残留/有游戏自带高亮都**没关系** ✓
+        #   伺服循环(_servo_select)会逐张核对我们想要的牌位是否已抬起, 缺的补点 ✓
+        #   最终由"出牌回执"判成败 —— 不在这里做任何臆测 ✗
+        _ = (self._lift_min, empty)          # 保留基线供后续诊断, 不做阻断
         for r in range(rounds):
             if r:
                 self.log("  [gesture] ↻ 直选重试(重新取帧)")
                 time.sleep(1.0)
-            if not self.select(idxs, n, ranks=ranks):
-                self.clear(idxs, n)
-                continue
-            time.sleep(0.5)
-            cur = self._snap()
-            est = self.selected_count(cur, base_lift)
-            # 身份校验(2026-09-15): 抬起的牌位必须与"想点的牌位"吻合, 否则就是点到了邻牌
-            try:
-                from ..guandan import percept as _P
-
-                got = [c for c, _w in _P.lifted_columns(pre_select, cur)]
-                if got:
-                    miss = [x for x in want_x
-                            if not any(abs(x - g) <= 16 for g in got)]
-                    if miss:
-                        self.log(f"  [gesture] ✗ 身份校验失败: 想点{want_x} 实际抬起{got}")
-                        self.clear(idxs, n)
-                        continue
-            except Exception:  # noqa: BLE001
-                pass
-            if est == 0 or abs(est - len(idxs)) > max(1, len(idxs) // 2):
-                self.log(f"  [gesture] ✗ 选牌校验失败(选中≈{est} vs 目标{len(idxs)})")
-                self.clear(idxs, n)
-                continue
+            # ★ 伺服式选牌(用户 2026-09-17 设计): 现状 → 求差(补抬/回落) → 复核 → 通过才出牌 ✓
+            self._servo_select(want_x, rounds=3)
+            time.sleep(0.3)
+            # ★ 删掉中间两段反推校验(2026-09-17 用户点破): 抬起是"出牌的必要前置状态" ✓
+            #   不需要反推"这次抬起是谁造成的" —— 游戏自己的提示高亮会和我们的点选混在一起 ✗
+            #   唯一可信的判据 = **游戏结果**(下面的出牌回执 wait_receipt) ✓
             pp = self.btn("play")
             if not pp:
                 self.clear(idxs, n)

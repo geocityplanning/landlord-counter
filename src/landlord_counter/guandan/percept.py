@@ -782,14 +782,26 @@ def card_slots(img, y0: int | None = None, y1: int | None = None, pitch_fallback
         #   ③ 亮度 → 牌面 ~180, 桌面绿 ~59, 标签条 ~40 → 一刀切 ✓
         return bool(col.mean() > 120)
     k = 0
-    while k < 2 and card_like(lo - pitch * (k + 1)) and (lo - pitch * (k + 1)) >= x_lo - pitch:
-        k += 1
-    lo = lo - pitch * k
-    # ★ 右边**不外扩**(2026-09-17 实测): 最右那张牌是**完整可见**的 → 它的左缘必然被峰检测到
-    #   → 再往右扩出来的都是"牌外的亮区"(实测满手 27 张被扩成 29 个位 ✗, 且那两格亮度也够高,
-    #     靠亮度/边缘都筛不掉 ✗) → 干脆不扩 ✓
-    n = int(round((hi - lo) / pitch)) + 1
-    return [int(round(lo + i * pitch)) for i in range(n)]
+    _ = (k, card_like)          # 左端锚点已弃用(见下)
+    # ★ 牌位网格改为**从右往左铺**(2026-09-17 实测定案):
+    #   最右那张牌**完整可见** ⇒ 它的左缘必然被峰检测到 ⇒ 是**可靠锚点** ✓
+    #   而最左那张紧挨「你」字框, 亮度低/边缘弱 ⇒ 拿它当锚点会数少一张 ✗
+    #   (实测: 满手 27 张只给出 26 个位 → 采集器一致性闸门拒绝 → 模板库永远采不上 ✗)
+    #   做法: 从最右锚点以 pitch 向左铺, 直到碰到**桌面绿**(说明出界) 或越界 ✓
+    #         "不是桌面绿"同时管住"铺过头"(老毛病: 9 张被推成 21 位 ✗) ✓
+    def extendable(x: float) -> bool:
+        x = int(round(x))
+        if x < 0 or x + 8 >= img.shape[1]:
+            return False
+        col = img[y0 + 8:y1 - 8, x:x + 8].reshape(-1, 3).astype(int)
+        r, g, b = col[:, 0].mean(), col[:, 1].mean(), col[:, 2].mean()
+        return not (g > r + 15 and g > b + 15)      # 不是桌面绿 ⇒ 还在牌排里 ✓
+    out = [hi]
+    x = hi - pitch
+    while x >= 0 and extendable(x) and len(out) < 40:
+        out.append(int(round(x)))
+        x -= pitch
+    return sorted(out)
 
 def card_edges(img, y0: int = 0, y1: int = 0, min_gap: int = 10,
                q: float = 0.93, floor: float = 4.0) -> list:

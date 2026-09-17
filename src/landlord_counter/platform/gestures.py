@@ -331,14 +331,18 @@ class Executor:
         pre_select = first
         # ---- 清残留选中(实测: 残留会让"我们选的+残留"变成非法牌型 → 出牌被拒) ----
         # "空"基线估计: 取"见过的最小值"与 250 的更小者(实测空手牌抬起≈196; 脏值会带偏自适应)
-        empty = min(self._lift_min if self._lift_min is not None else 250, 250)
+        # ★ 删除"盲点清残留"(2026-09-17 实测有害 ✗): 游戏"点一张选一整组" → 盲点会把整手牌全选上 ✗
+        #   实测: 从 16837 一路振荡(16837↔5801↔16300) → 越清越乱, 且把牌桌搞脏 ✗
+        #   残留只可能来自"我们自己的选错"; 正确做法是**绝不盲点** —— 宁可本轮放弃 ✓
+        # "空"基线: **动态实测**(2026-09-17 修正 ✗→✓)
+        #   旧写法 min(self._lift_min, 250) 把基线硬压到 250 ✗ —— 但本界面里"游戏自己抬起的
+        #   提示牌(如打A 时高亮的 A)"就有 ~3000 抬起 ✗ → 被误判成"我们选了牌" ✗ → 直选全部拒绝 ✓
+        #   正解: 用本会话**观察到的最小抬起**当基线, 不设上限 ✓
+        empty = self._lift_min if self._lift_min is not None else base_lift
         if base_lift > empty + 400:
-            for k in range(min(n, 30)):
-                cur = self._lift(self._snap())
-                if cur <= empty + 400:
-                    break
-                self._tap_card_at(self._pos(k, n), wait=0.45)
-            self.log(f"  [gesture] 清残留选中: {base_lift} → {self._lift(self._snap())} (空基线≈{empty})")
+            self.log(f"  [gesture] ⚠ 开局就有残留选中({base_lift:.0f}, 空≈{empty:.0f}) "
+                     f"→ 不盲点清理(会越清越乱 ✗), 本轮放弃 ✓")
+            return False
         for r in range(rounds):
             if r:
                 self.log("  [gesture] ↻ 直选重试(重新取帧)")

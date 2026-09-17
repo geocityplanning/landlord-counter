@@ -344,8 +344,9 @@ class GuandanAdapter(GameAdapter):
             if frame2 is not None and not P.lifted_xs(frame2):
                 frame = frame2                     # 清干净了 → 用放平后的帧读 ✓
             else:
-                print(f"  [读牌] 仍有牌被抬起且未清掉 → 本帧先不读(下帧再试)", flush=True)
-                return Observation(frame=frame, my_turn=True, hand=None, extra={"lifted": True})
+                # ★ 不再阻断(2026-09-17): 逐牌顶边裁切 + 两段式匹配已能让"有牌抬起"时照样读对
+                #   (实测 3 张被选中时仍 42/42 = 100% ✓) —— 原来的阻断反而把托管卡成 0 动作 ✗
+                print("  [读牌] 仍有牌抬起(清不净) → 不阻断, 用逐牌对齐照常读 ✓", flush=True)
         except Exception:  # noqa: BLE001
             pass
         # CDP 可用时: 用**游戏真值**复核"是不是我的回合"(像素启发式会被残局/动画骗)
@@ -366,7 +367,11 @@ class GuandanAdapter(GameAdapter):
         n_vis = (len(_tm_first) if _tm_first
                  else (P.hand_card_count_est(frame) or P.hand_columns(frame)))
         if self.rl and self._tap_cal is None and n_vis >= 25:
-            self._calibrate_taps(frame)          # 满手时标定一次(本轮只做一次)
+            # ★ 停用"点选自标定"(2026-09-17): 它靠**试点牌**推点位/张数 ✗ → 会留下残留选中
+            #   (实测: 重置后一跑起来就有 3137 抬起 ✗, 直选随即拒绝出牌 ✓)
+            #   现在点位已是实测(card_slots ✓), 老标定纯属有害 → 不再调用 ✓
+            # self._calibrate_taps(frame)
+            self._tap_cal = {"deprecated": True}
         # 优先"实测几何分段读"(整排直读会只读左半排, 实测 27 张只读出 12 张); 失败再回落整排。
         # 整轮重试 2 次: VLM 偶发空返回(服务端排队), 实测同一帧 3 次里 1 次失手 → 重试可兜住。
         hand = None
@@ -605,14 +610,16 @@ class GuandanAdapter(GameAdapter):
     # ---------- 决策 ----------
     def decide(self, obs: Observation) -> Action:
         if obs.extra.get("read_fail") or not obs.hand:
-            return Action("play", combo=None, meta={"hint": True, "why": "读牌失败→提示驱动"})
+            # 提示臂已禁用(2026-09-17): 读牌失败就**不动作**, 等下一帧重读 —— 绝不让游戏替我们打 ✗
+            return Action("none", meta={"why": "读牌失败→等待重读(不用提示)"})
         cards = obs.table or []
         if cards:
             gl = R.identify(cards, JIPAI)
             if getattr(gl, "is_invalid", False):
-                return Action("play", combo=None, meta={"hint": True, "why": "待压牌非法→提示驱动"})
+                return Action("none", meta={"why": "待压牌非法→等待(不用提示)"})
         if not self.ours:
-            return Action("play", combo=None, meta={"hint": True, "why": "MVP提示驱动"})
+            # ours 未开 = 没启用我们自己的决策 → 不动作(提示臂已禁用, 不许偷偷退回 ✗)
+            return Action("none", meta={"why": "ours 未开(提示臂已禁用)"})
         self.usage.decide(arm=("rl" if self.rl else "ours"), hand=len(obs.hand))
         st = AI.GameState()
         st.jipai = JIPAI
@@ -692,31 +699,23 @@ class GuandanAdapter(GameAdapter):
                     # 执行器规范: 识别/活性不满足 ⇒ 跳过, 不是失败(不计入失败率)
                     return ExecResult(True, 0, f"跳过 · {rpt.reason}", skipped=True)
                 return ExecResult(False, 1, f"直选失败(RL){' · ' + why if why else ''}")
-        want = len(action.combo.cards) if action.combo is not None else None
-        follow = bool(obs.table)
-        r = ex.play_by_hint(want=want, follow=follow)
-        if r == "ok":
-            if want and obs.hand:      # 按我们意图的张数设期望(提示臂 want=决策张数)
-                self._expect_after = max(0, len(obs.hand) - want)
-                if action.combo is not None:
-                    self._log_plan(action.combo, action.meta.get("why", ""))
-            return ExecResult(True, 0, "出牌成功")
-        if r == "none":
-            self._expect_after = None
-            if follow:
-                ex.pass_turn()
-                return ExecResult(True, 0, "提示无可出→不出")
-            if obs.hand:      # 领出却提示为空 → 盲出最小单张(保流程)
-                ex.dev.tap(ex.L.card_tap_x(0, len(obs.hand)), ex.L.hand_y, wait=0.4)
-                ex.dev.tap(*ex.L.btn_play, wait=1.6)
-                return ExecResult(True, 0, "提示空→盲出最小单张")
-            return ExecResult(False, 0, "提示空且无手牌")
-        # mismatch / fail → 直选我们的决策(有组合时), 否则回落失败
+        # ★ 提示臂已禁用(2026-09-17 用户拍板): "点提示=游戏帮我们挑牌", 那不是我们的 AI ✗
+        #   → 出牌只走**直选**(我们自己决定哪几张 → 点那几张), 失败就报失败, 绝不退化到提示 ✓
+        if action.kind == "none":
+            return ExecResult(True, 0, "本帧不动作(等待重读)", skipped=True)
         if action.combo is not None and obs.hand:
             idxs = _map_indices(obs.hand, action.combo.cards)
-            if idxs and ex.direct_play(idxs, len(obs.hand)):
-                return ExecResult(True, 1, "直选成功")
-        return ExecResult(False, 1, f"提示执行={r} 且直选未成")
+            if idxs:
+                ranks = [getattr(obs.hand[i], "zhi", None) for i in idxs if 0 <= i < len(obs.hand)]
+                if ex.direct_play(idxs, len(obs.hand), ranks=ranks):
+                    self._log_plan(action.combo, action.meta.get("why", ""))
+                    self._log_seat_play("南", action.combo.cards,
+                                        hand_left=max(0, len(obs.hand) - len(action.combo.cards)),
+                                        src="own")
+                    self._expect_after = max(0, len(obs.hand) - len(action.combo.cards))
+                    return ExecResult(True, 0, "直选出牌")
+            return ExecResult(False, 1, "直选失败(未出牌)")
+        return ExecResult(False, 1, "无组合可打(未出牌)")
 
 
     # ---------- 结算 ----------

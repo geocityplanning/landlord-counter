@@ -372,26 +372,39 @@ class Executor:
             out.append(None if got is None else bool(got >= 18))
         return out
 
-    def _servo_select(self, want_x: list, idxs: list | None = None, rounds: int = 3) -> None:
+    def _servo_select(self, idxs: list, rounds: int = 3) -> None:
         """伺服: 让 want_x 这些牌位**都抬起**(现状→求差→补抬→复核) ✓
 
         "回落"只针对**我们上一轮自己点过**的位置(可安全反点 ✓);
         不碰游戏自己高亮的牌(反点反而会选中它们 ✗)。
         """
-        stale = [x for x in getattr(self, "_last_picked", []) if x not in want_x]
+        from ..guandan import percept as _P
+
+        stale = [x for x in getattr(self, "_last_picked", [])]   # 本轮改用读取坐标 ⇒ 先不回落(下一轮清) ✓
         for x in stale:
             self._tap_card_at(x, wait=0.4)
             self.log(f"  [servo] 回落(x={x}, 上轮我们点过但这次不要)")
         for r in range(rounds):
-            st = self._raised_state(self._snap(), want_x, idxs)
-            missing = [x for x, v in zip(want_x, st) if v is not True]
+            # ★ 纪律(2026-09-17 用户点破"你抬起了 KQ"): **看和点必须同一个来源** ✓
+            #   早先"看"用读取(按索引对齐)、"点"却用 layout 坐标 ⇒ 看得对、点得偏 ✗
+            #   (实测: 决策单张 ♥3, 抬起却成了 K Q ✗) ⇒ 每轮重读一次, 坐标与状态**都取自这份读取** ✓
+            img = self._snap()
+            try:
+                cards, _info = _P.tm_read_hand_with_lift(img)
+            except Exception as e:  # noqa: BLE001
+                self.log(f"  [servo] ✗ 读抬起失败: {type(e).__name__}: {e}")
+                return
+            st = [(cards[i][3] >= 18) if i < len(cards) else None for i in idxs]
+            missing = [i for i, v in zip(idxs, st) if v is not True]
             self.log(f"  [servo] 第{r + 1}轮 抬起态="
                      f"{['✓' if v else ('✗' if v is False else '?') for v in st]} 需补={len(missing)}")
             if not missing:
                 break
-            for x in missing:
-                self._tap_card_at(x, wait=0.5)
-        self._last_picked = list(want_x)
+            for i in missing:
+                if i < len(cards):
+                    self._tap_card_at(cards[i][2], wait=0.5)     # ★ 用这份读取给的 x ✓
+                    self._last_picked = list(getattr(self, "_last_picked", [])) + [cards[i][2]]
+        self._last_picked = list(getattr(self, '_last_picked', []))
 
     def direct_play(self, idxs: list[int], n: int, rounds: int = 2,
                     ranks: list | None = None) -> bool:
@@ -423,7 +436,7 @@ class Executor:
             # ★ 伺服: 量现状 → 少了补抬 / 多了回落 → 复核 ✓ (用户算法③④)
             #   用户纠正(2026-09-17): 游戏**不会每次都帮点整组** ✗ → 绝不能靠假设去重 ✓
             #   一切以"量到的抬起状态"为准 ✓ (滑块匹配量抬起, 不受邻牌遮挡 ✓)
-            self._servo_select(want_x, idxs, rounds=3)
+            self._servo_select(idxs, rounds=3)
             t_snap = self._snap()
             st = self._raised_state(t_snap, want_x)
             if all(v is True for v in st):

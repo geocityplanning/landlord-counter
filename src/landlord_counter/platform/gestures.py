@@ -490,10 +490,55 @@ class Executor:
         self._last_picked = list(getattr(self, '_last_picked', []))
         return False        # 没在 rounds 内就位 ✓
 
+    def _clear_selection_via_truth(self) -> int:
+        """把牌桌上**已有的选中**全部点掉 —— 用户算法第③步"多了回落"的精确版 ✓
+
+        为什么必须做(2026-09-17 实测): 残留选中会和我们选的牌**混成非法牌型**
+          ⇒ 游戏回『无效的牌型组合』✗(实测 selected=[94,90] + 我们点的 ♦5 = 3 张 ⇒ 被拒 ✓)
+        怎么精确做: 真值给 selIds + handIds ⇒ 算出"是第几个牌位" ⇒ 点它(开关 ⇒ 取消) ✓
+          每次点击前**重新取帧**、重新算位次(牌一抬起, 位置就会变 ✓)
+        没有真值通道时返回 0(不改动, 交给下游的回执归因 ✓)
+        """
+        cdp = getattr(self, "cdp", None)
+        if cdp is None:
+            return 0
+        import landlord_counter.guandan.percept as _P
+
+        cleared = 0
+        for _round in range(4):
+            try:
+                tr = cdp.truth() or {}
+            except Exception:  # noqa: BLE001
+                break
+            ids = tr.get("handIds") or []
+            sel = tr.get("selIds") or tr.get("selected") or []
+            if not ids or not sel:
+                break
+            pos = [ids.index(s) for s in sel if s in ids]
+            if not pos:
+                break
+            img = self._snap()
+            if img is None:
+                break
+            y0, y1 = _P.hand_band_measured(img)
+            cards, _i = _P.tm_read_hand(img)
+            for p in pos:
+                if 0 <= p < len(cards):
+                    self._tap_card_at(cards[p][2], wait=0.45)
+                    cleared += 1
+            self._wait_stable(0.9)
+        if cleared:
+            self.log(f"  [gesture] 回落: 点掉桌上已有的选中 {cleared} 次 ✓")
+        return cleared
+
     def direct_play(self, idxs: list[int], n: int, rounds: int = 2,
                     ranks: list | None = None) -> bool:
         """直选执行: 点选 → 校验张数 → 出牌 → 回执; 失败清选后再来一轮。"""
         from ..guandan import percept as _P
+
+        # ★★ 先"回落"桌上**已有的选中**(用户算法第③步) —— 否则残留会和我们选的牌
+        #   混成非法牌型, 游戏回『无效的牌型组合』✗(2026-09-17 实测踩到)
+        self._clear_selection_via_truth()
 
         first = self._snap()
         before = self.L.white_count(first)

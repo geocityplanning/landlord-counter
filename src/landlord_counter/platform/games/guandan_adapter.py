@@ -389,15 +389,29 @@ class GuandanAdapter(GameAdapter):
         ex = self._ex
         if ex is not None and getattr(ex, "cdp", None) is not None:
             now = time.time()
-            if now - getattr(self, "_turn_checked_at", 0.0) >= 4.0:
+            if now - getattr(self, "_turn_checked_at", 0.0) >= 2.0:
+                self._turn_checked_at = now
+                # ★★ 正解(2026-09-17 实测): **真值能直接回答"该谁出牌"** ⇒ 直接问它 ✓
+                #   旧法用"点一下出牌, 看游戏说不说『请选择要出的牌』" ⇒ 牌桌有残留选中时,
+                #   游戏回的是『无效的牌型组合』⇒ 探针认不出 ⇒ **误判"不是我的回合"** ✗
+                #   ⇒ 整帧跳过、读牌 0(实测踩到 ✓)。探针降级为"没有真值通道时的兜底" ✓
+                _cur = None
                 try:
-                    ok, why = ex.cdp.our_turn_probe(ex.L.btn_play)
-                    self._turn_checked_at = now
-                    if not ok:
-                        print(f"    [真值] {why} → 跳过本帧", flush=True)
+                    _cur = (ex.cdp.truth() or {}).get("current")
+                except Exception:  # noqa: BLE001
+                    _cur = None
+                if _cur is not None:
+                    if _cur != 0:
+                        print(f"    [真值] 轮到 {_cur}(不是我) → 跳过本帧", flush=True)
                         return Observation(frame=frame, my_turn=False)
-                except Exception as e:  # noqa: BLE001
-                    print(f"    [真值] 回合探针异常({type(e).__name__}) → 沿用像素判据", flush=True)
+                else:
+                    try:
+                        ok, why = ex.cdp.our_turn_probe(ex.L.btn_play)
+                        if not ok:
+                            print(f"    [真值] {why} → 跳过本帧", flush=True)
+                            return Observation(frame=frame, my_turn=False)
+                    except Exception:  # noqa: BLE001
+                        pass
         # 期望张数: **模板读到的张数是权威**(实测真值 9 而老估算器给 12~15 ✗)
         # 教训(2026-09-16): 老 hand_card_count_est 过期 → 一致性闸门误判"离谱" → 判定不敢用 ✗
         n_vis = (len(_tm_first) if _tm_first

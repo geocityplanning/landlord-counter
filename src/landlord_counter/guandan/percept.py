@@ -1135,3 +1135,80 @@ def page_looks_ok(img) -> bool:
     except Exception:  # noqa: BLE001
         return True
     return True
+
+
+def card_bottom_y(img, x: int, y_flat_bottom: int, span: int = 60, need: int = 8,
+                  bright: int = 150) -> int:
+    """找某个牌位的**牌面底边**(从下往上扫) —— 判"抬没抬起"用它 ✓
+
+    用户 2026-09-17 点破: 牌抬起时**右上角会多露出一小条白** ✗ → 按"顶边"判会把**右边邻牌**
+    也误判成抬起(实测: 真值 selected=5 却判出 12 个位抬起 ✗);
+    底边干净 ✓: 抬起的整张上移(底边也抬高 ~36px), 没抬的底边在原地, 且**底边不受邻牌遮挡** ✓
+    """
+    x0 = max(0, int(x))
+    x1 = min(img.shape[1], x0 + 24)
+    y_lo = max(0, int(y_flat_bottom) - span)
+    y_hi = min(img.shape[0], int(y_flat_bottom) + span)
+    if x1 <= x0 or y_hi <= y_lo:
+        return int(y_flat_bottom)
+    col = img[y_lo:y_hi, x0:x1]
+    rows = (col.min(axis=2) > bright).sum(axis=1)
+    for i in range(len(rows) - 1, -1, -1):
+        if rows[i] >= need:
+            return y_lo + i
+    return int(y_flat_bottom)
+
+
+def flat_bottom_baseline(img, y0: int | None = None) -> int:
+    """本帧"牌放平"时的底边基线(取所有牌位底边的中位数 → 抗个别抬起/异常 ✓)"""
+    if y0 is None:
+        y0, _y1 = hand_band_measured(img)
+    y1 = y0 + 120                     # 手牌带约 120px 高
+    vals = [card_bottom_y(img, x, y1) for x in card_slots(img)]
+    if not vals:
+        return y1
+    vals.sort()
+    return int(vals[len(vals) // 2])
+
+
+def card_lift_dy(img, x: int, y0: int, tpl_list: list, norm_h: int = 96,
+                 win_up: int = 56, win_dn: int = 130) -> float:
+    """量某张牌"抬起了多少像素"(模板竖直滑动, 不受邻牌遮挡 ✓)。
+
+    做法: 取该牌位竖直窗口 → 对每个候选起始行, 截"模板自身高度"一段 → 各自缩放对齐后比
+          → 最优起始行 - "放平参考行"(win_up-3) = 抬起量(负 = 抬起) ✓
+    实测: 平放 +11 / 抬起 -25 (相差 36px) ✓
+    """
+    import cv2 as _cv
+    gray = _cv.cvtColor(img, _cv.COLOR_RGB2GRAY).astype("float32")
+    gray = _cv.GaussianBlur(gray, (3, 3), 0)
+    x0 = max(0, int(x))
+    win = gray[max(0, int(y0) - win_up): int(y0) + win_dn, x0:x0 + 24]
+    if win.shape[0] < 40 or win.shape[1] < 24:
+        return 0.0
+    best_d, best_dy = 1e9, 0
+    flat_ref = win_up - 3
+    for tpl in (tpl_list or []):
+        h = tpl.shape[0]
+        if win.shape[0] < h + 4:
+            continue
+        tn = _cv.GaussianBlur(_cv.cvtColor(tpl, _cv.COLOR_RGB2GRAY).astype("float32"), (3, 3), 0)
+        tn = _cv.resize(tn, (24, norm_h), interpolation=_cv.INTER_AREA)
+        tn = (tn - tn.mean()) / (tn.std() + 1e-6)
+        for dy in range(0, win.shape[0] - h):
+            seg = _cv.resize(win[dy:dy + h], (24, norm_h), interpolation=_cv.INTER_AREA)
+            seg = (seg - seg.mean()) / (seg.std() + 1e-6)
+            d = float(np.mean(np.abs(seg - tn)))
+            if d < best_d:
+                best_d, best_dy = d, dy
+    return float(best_dy - flat_ref)
+
+
+def lift_baseline(dys: list) -> float:
+    """从一组抬起量里取"放平"基线 = 众数附近的中位数 ✓(抬起是少数)"""
+    vals = sorted(float(v) for v in dys if v is not None)
+    if not vals:
+        return 0.0
+    # 取最大的那一簇(平放占多数) → 用上四分位的中位数
+    hi = vals[int(len(vals) * 0.5):]
+    return float(hi[len(hi) // 2]) if hi else vals[-1]

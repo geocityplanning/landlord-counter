@@ -703,6 +703,20 @@ class GuandanAdapter(GameAdapter):
         #   → 出牌只走**直选**(我们自己决定哪几张 → 点那几张), 失败就报失败, 绝不退化到提示 ✓
         if action.kind == "none":
             return ExecResult(True, 0, "本帧不动作(等待重读)", skipped=True)
+        # ★★ 出牌前自检(2026-09-17 用户实证: 游戏弹"无效的牌型组合" ✗ —— 是我们的决策错了)
+        #    先用**我们自己的规则库**验一次: 牌型合法吗? 压得过桌上吗? 不合法就**不出** ✓
+        #    (宁可不出, 也绝不去点一套游戏不认的牌 —— 后者还会在牌桌上留下残留选中 ✗)
+        if action.combo is not None:
+            try:
+                _g = R.identify(list(action.combo.cards), JIPAI)
+                if getattr(_g, "is_invalid", False):
+                    return ExecResult(False, 0, f"自检: 牌型非法({action.combo!r}) → 不出", skipped=True)
+                if obs.table:
+                    _last = R.identify(list(obs.table), JIPAI)
+                    if not R.can_beat(_g, _last):
+                        return ExecResult(False, 0, "自检: 压不过桌上牌 → 不出", skipped=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"  [自检] 异常({type(e).__name__}) → 放行", flush=True)
         if action.combo is not None and obs.hand:
             idxs = _map_indices(obs.hand, action.combo.cards)
             if idxs:

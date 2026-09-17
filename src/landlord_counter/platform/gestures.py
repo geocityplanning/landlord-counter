@@ -326,27 +326,45 @@ class Executor:
         return float(getattr(self, "_top_flat", 0.0))
 
     def _raised_state(self, img, xs: list) -> list:
-        """逐张判断: 这些牌位现在"已抬起(True) / 平放(False) / 看不出(None)" ✓
+        """逐张判断: "已抬起(True) / 平放(False) / 看不出(None)" ✓
 
-        只看**状态**(不纠结是谁抬的 ✗ —— 游戏自己的提示高亮也会抬起 ✓)。
-        判据: 该牌位的牌面顶边是否比"放平基线"高 >=20px ✓
+        ⚠️ 判据 = **模板竖直滑动量**(用户 2026-09-17 逼出来的正解 ✓):
+           顶边会被"抬起牌右上角露出的一条白"污染 ✗; 底边会被"下方被压的邻牌"污染 ✗;
+           **只有牌面自己的图案跟着牌上移** ✓ → 用该牌点数的模板滑一遍量偏移 ✓
+           实测双峰: 平放 +11px / 抬起 -25px(相差 36px) ✓
         """
         from ..guandan import percept as _P
 
         if img is None:
             return [None] * len(xs)
         y0, _y1 = _P.hand_band_measured(img)
-        if not self._flat_top():
-            self._top_flat = float(y0) + 3.0            # 首次: 记下放平基线 ✓
-        out = []
+        bank = _P.load_templates_sr()
+        # 先整手读**一次**(拿 x → 点数) → 每张只滑它那个点数的模板(快 ✓)
+        by_x = {}
+        try:
+            rd, _i = _P.tm_read_hand(img)
+            by_x = {int(xx): (s_, r_) for s_, r_, xx in rd}
+        except Exception:  # noqa: BLE001
+            pass
+        dys = []
         for x in xs:
-            try:
-                ty = _P.card_top_y(img, int(x), y0 + 8)
-            except Exception:  # noqa: BLE001
-                out.append(None)
-                continue
-            d = self._flat_top() - ty
-            out.append(True if d >= 20 else (False if d <= 8 else None))
+            hit = None
+            for xx, sr in by_x.items():
+                if abs(xx - int(x)) <= 2:
+                    hit = sr
+                    break
+            cands = []
+            if hit:
+                cands = bank.get(f"{hit[0]}_{hit[1]}") or bank.get(f"0_{hit[1]}") or []
+            if not cands:
+                cands = [v[0] for v in bank.values() if v][:6]
+            dys.append(_P.card_lift_dy(img, int(x), y0, cands))
+        base = _P.lift_baseline(dys)
+        self._flat_lift = base
+        out = []
+        for d in dys:
+            rel = base - d
+            out.append(True if rel >= 18 else (False if rel <= 8 else None))
         return out
 
     def _servo_select(self, want_x: list, rounds: int = 3) -> None:

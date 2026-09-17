@@ -1229,3 +1229,78 @@ def lift_baseline(dys: list) -> float:
     # 取最大的那一簇(平放占多数) → 用上四分位的中位数
     hi = vals[int(len(vals) * 0.5):]
     return float(hi[len(hi) // 2]) if hi else vals[-1]
+
+
+def slide_best(img, x: int, y0: int, tpl, win_up: int = 56, win_dn: int = 130,
+               coarse: int = 4) -> tuple:
+    """把**一个**模板在该牌位竖直滑动一次 → 返回 (偏移dy, 距离d)。dy<0 = 比放平位置高 ✓"""
+    import cv2 as _cv
+
+    x0 = max(0, int(x))
+    win = img[max(0, int(y0) - win_up): int(y0) + win_dn, x0:x0 + 24]
+    if tpl is None or win.shape[0] < tpl.shape[0] + 4 or win.shape[1] < 20:
+        return None, 1e9
+    g = _cv.cvtColor(win, _cv.COLOR_RGB2GRAY).astype("float32")
+    g = _cv.GaussianBlur(g, (3, 3), 0)
+    h = tpl.shape[0]
+    t = _cv.GaussianBlur(_cv.cvtColor(tpl, _cv.COLOR_RGB2GRAY).astype("float32"), (3, 3), 0)[:, :24]
+    tn = (t - t.mean()) / (t.std() + 1e-6)
+    best_d, best_dy = 1e9, win_up - 3
+    for dy in range(0, g.shape[0] - h, coarse):          # 粗扫 ✓
+        seg = g[dy:dy + h]
+        seg = (seg - seg.mean()) / (seg.std() + 1e-6)
+        d = float(np.mean(np.abs(seg - tn)))
+        if d < best_d:
+            best_d, best_dy = d, dy
+    lo, hi = max(0, best_dy - coarse), min(g.shape[0] - h, best_dy + coarse + 1)
+    for dy in range(lo, hi):                              # 邻域细化 ✓
+        seg = g[dy:dy + h]
+        seg = (seg - seg.mean()) / (seg.std() + 1e-6)
+        d = float(np.mean(np.abs(seg - tn)))
+        if d < best_d:
+            best_d, best_dy = d, dy
+    return float(best_dy - (win_up - 3)), best_d
+
+
+def tm_read_hand_with_lift(img, y0: int | None = None, tpl: dict | None = None):
+    """**读牌 + 量抬起**(一次滑动同时得到两件事 ⟶ 有牌被抬起时也稳 ✓)
+
+    返回 (cards, info): cards = [(花色, 点数, x, 抬起量px)] ✓
+    """
+    if y0 is None:
+        y0, _y1 = hand_band_measured(img)
+    xs = card_slots(img, y0)
+    bank = load_templates_sr() if tpl is None else tpl
+    if not xs or not bank:
+        return [], {"base": 0.0, "n": 0}
+    ridx = {}
+    try:
+        rd, _i = tm_read_hand(img)
+        for s_, r_, xx in rd:
+            k = min(range(len(xs)), key=lambda i: abs(xs[i] - int(xx)))
+            ridx[k] = (s_, r_)
+    except Exception:  # noqa: BLE001
+        pass
+    raw = []
+    for i, x in enumerate(xs):
+        cands = []
+        if i in ridx:
+            s_, r_ = ridx[i]
+            cands = bank.get(f"{s_}_{r_}") or bank.get(f"0_{r_}") or []
+        items = ([(f"{s_}_{r_}", t) for t in cands] if cands
+                 else [(k2, t) for k2, arrs in bank.items() for t in arrs][:40])
+        best = (1e9, None, None)          # (d, dy, key)
+        for key_, t in items:
+            dy, d = slide_best(img, int(x), y0, t)
+            if dy is not None and d < best[0]:
+                best = (d, dy, key_)
+        raw.append((best[2], best[1], round(best[0], 3)))
+    dys = [dy for _k, dy, _d in raw if dy is not None]
+    base = lift_baseline(dys) if dys else 0.0
+    cards = []
+    for (key_, dy, _d), x in zip(raw, xs):
+        if key_ is None:
+            continue
+        s_, r_ = (int(v) for v in key_.split("_"))
+        cards.append((s_, r_, int(x), round(float(base - (dy if dy is not None else base)), 1)))
+    return cards, {"base": base, "n": len(cards), "raw": raw}

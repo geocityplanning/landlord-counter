@@ -322,7 +322,10 @@ class GuandanAdapter(GameAdapter):
         _tm_first = []
         _frame0 = frame                     # 记下"读牌时那一帧", 闸门换帧后要比对 ✓
         try:
-            _tm_first = P.tm_read_hand(frame)[0]
+            # ★ 滑动版读牌(2026-09-17): 与"量抬起"同一个匹配 → **有牌被抬起时也 100%** ✓
+            #   (旧版用固定裁切, 有牌抬起时会掉到 24/27 ✗)
+            _cards, _linfo = P.tm_read_hand_with_lift(frame)
+            _tm_first = [(s_, r_, x_) for s_, r_, x_, _l in _cards]
         except Exception:  # noqa: BLE001
             _tm_first = []
         if not _tm_first and not self._band_looks_like_hand(frame):

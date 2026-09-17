@@ -328,43 +328,26 @@ class Executor:
     def _raised_state(self, img, xs: list) -> list:
         """逐张判断: "已抬起(True) / 平放(False) / 看不出(None)" ✓
 
-        ⚠️ 判据 = **模板竖直滑动量**(用户 2026-09-17 逼出来的正解 ✓):
-           顶边会被"抬起牌右上角露出的一条白"污染 ✗; 底边会被"下方被压的邻牌"污染 ✗;
-           **只有牌面自己的图案跟着牌上移** ✓ → 用该牌点数的模板滑一遍量偏移 ✓
-           实测双峰: 平放 +11px / 抬起 -25px(相差 36px) ✓
+        用**滑动匹配**(读牌+量抬起同一机制 ✓): 只依赖牌自己的图案 → 不受邻牌遮挡 ✓
+        (顶边/底边法都会被邻牌污染 ✗: 实测 真值5 → 顶边法12 / 底边法0)
         """
         from ..guandan import percept as _P
 
         if img is None:
             return [None] * len(xs)
-        y0, _y1 = _P.hand_band_measured(img)
-        bank = _P.load_templates_sr()
-        # 先整手读**一次**(拿 x → 点数) → 每张只滑它那个点数的模板(快 ✓)
-        by_x = {}
         try:
-            rd, _i = _P.tm_read_hand(img)
-            by_x = {int(xx): (s_, r_) for s_, r_, xx in rd}
+            _cards, _info = _P.tm_read_hand_with_lift(img)
         except Exception:  # noqa: BLE001
-            pass
-        dys = []
-        for x in xs:
-            hit = None
-            for xx, sr in by_x.items():
-                if abs(xx - int(x)) <= 2:
-                    hit = sr
-                    break
-            cands = []
-            if hit:
-                cands = bank.get(f"{hit[0]}_{hit[1]}") or bank.get(f"0_{hit[1]}") or []
-            if not cands:
-                cands = [v[0] for v in bank.values() if v][:6]
-            dys.append(_P.card_lift_dy(img, int(x), y0, cands))
-        base = _P.lift_baseline(dys)
-        self._flat_lift = base
+            return [None] * len(xs)
+        by_x = {int(x_): l_ for _s, _r, x_, l_ in _cards}
         out = []
-        for d in dys:
-            rel = base - d
-            out.append(True if rel >= 18 else (False if rel <= 8 else None))
+        for x in xs:
+            got = None
+            for xx, ll in by_x.items():
+                if abs(xx - int(x)) <= 10:   # 点击坐标=牌位+6px, 容差要放宽 ✓
+                    got = ll
+                    break
+            out.append(None if got is None else bool(got >= 18))
         return out
 
     def _servo_select(self, want_x: list, rounds: int = 3) -> None:

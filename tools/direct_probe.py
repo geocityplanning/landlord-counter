@@ -27,7 +27,6 @@ from landlord_counter.vision.card_recognizer import CardRecognizer     # noqa: E
 
 
 def main() -> int:
-int(sys.argv[1]) if len(sys.argv) > 1 else 1
     dev = AdbDevice(serial="127.0.0.1:5555", url="http://172.18.0.1:8123/index.html")
     vis = CardRecognizer(load_config().vision)
     ad = registry.create("guandan")

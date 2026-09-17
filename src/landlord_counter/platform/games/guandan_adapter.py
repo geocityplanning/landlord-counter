@@ -28,7 +28,9 @@ DUMP_GAP = float(os.getenv("GUANDAN_READ_DUMP_GAP", "15"))   # 两帧最小间�
 
 class GuandanAdapter(GameAdapter):
     name = "guandan"
-    package = None
+    package = "org.bromite.bromite"   # 游戏跑在 Bromite 里(前台闸门用) ✓
+    #   ⚠️ 本机实测: Firefox Focus 会抢前台 ⇒ 不判前台就会对着别的界面读牌/结算 ✗
+    #      (2026-09-17: 浏览器欢迎页被当成结算弹窗 ⇒ 假局假结算的总源头 ✓)
     start_url = "http://172.18.0.1:8123/index.html"
 
     def __init__(self, ours: bool | None = None) -> None:
@@ -670,8 +672,16 @@ class GuandanAdapter(GameAdapter):
         """RL 臂: 预训练权重在"我方全部合法出牌"里选 → 标记 direct(执行层点选直出)。"""
         who = self._last_seat.get("who")
         wi = {"right": 1, "top": 2, "left": 3}.get(who or "", 1)
-        if len(obs.hand) >= 25 and self._rl_hist:    # 手牌回到满手且上局有记录 = 新一局
+        # ★★ 新一局的判据必须是"**从少变多**"(2026-09-17 用户指令: 别留着反复影响 ✗)
+        #   旧写法 `len(hand) >= 25 and self._rl_hist` ⇒ 满手 27 一直满足、历史又不断被写满
+        #   ⇒ **几乎每帧都判"新一局"** ✗ ⇒ 日志/记牌器/统计反复清零 ⇒ 假局、假结算、假统计 ✓
+        #   正解: 上一帧看到的手牌 **< 25**(打过的样子) 且这一帧回到 >= 25 ⇒ 才是新一局 ✓
+        #   注意 `_last_hand_n` 只在**读到牌**时更新, 且读到少牌时不立刻清零(要等回升) ✓
+        _n_now = len(obs.hand)
+        _prev_n = getattr(self, "_last_hand_n", None)
+        if _prev_n is not None and _prev_n < 25 and _n_now >= 25:
             self._new_deal()
+        self._last_hand_n = _n_now
         if last is not None and (not self._rl_hist or self._rl_hist[-1][1] is not last):
             self._rl_hist.append((wi, last))
         self._set_my_hand(obs.hand)                  # 我方手牌(精确) → 日志 + 记牌器
@@ -777,6 +787,15 @@ class GuandanAdapter(GameAdapter):
             blob = self.a11y.text_blob(force=True)
         except Exception:  # noqa: BLE001
             blob = ""
+        # ★★ 决定性闸门(2026-09-17 用户指令: 别留着反复影响 ✗):
+        #   有真值通道时, **真值说还在打牌(playing)就绝不可能是结算** ⇒ 直接否掉 ✓
+        #   (实测 a11y 文本每次都在变 ⇒ 文本去重失效; 60s 冷却也拦不住 ⇒ 200 秒里误记 9 局 ✗)
+        try:
+            _tr = self._ex.cdp.truth() if getattr(self._ex, "cdp", None) is not None else None
+        except Exception:  # noqa: BLE001
+            _tr = None
+        if _tr and _tr.get("phase") == "playing":
+            return None
         _key = (blob or "").strip()[:200]
         _now = time.time()
         if _key and _key == getattr(self, "_last_settle_key", None):

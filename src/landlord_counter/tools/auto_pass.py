@@ -55,7 +55,6 @@ def main() -> None:
     limit = float(sys.argv[1]) if len(sys.argv) > 1 else 300.0
     t0 = time.time()
     n_pass = n_restart = n_play = 0
-    last_action = 0.0
     print("▶ auto_pass v1(色块定位) 启动")
     while time.time() - t0 < limit:
         img = snap()
@@ -86,8 +85,6 @@ def main() -> None:
                 green_play = mask_blobs(img, GREEN, 35, 120, 300, min_w=150, min_h=60)
                 if green_play:
                     n_play += 1
-        if acted:
-            _last_action = time.time()
         time.sleep(1.4)
     print(f"■ 结束: 灰钮(不叫/不出)×{n_pass}  再来一局×{n_restart}  遇必出轮×{n_play}")
 

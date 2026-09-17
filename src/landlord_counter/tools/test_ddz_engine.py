@@ -33,16 +33,6 @@ def random_hand(n=17, seed=None):
 
 def run():
     # ---- 牌型识别 ----
-    _cases = [
-        ([3], "SINGLE"), ([11, 11], "PAIR"), ([12, 12, 12], "TRIPLE"),
-        ([15, 15, 15, 15], "BOMB"), ([16, 17], "ROCKET"),
-        ([3, 3, 3, 9], "TRIPLE_ONE"), ([5, 5, 5, 8, 8], "TRIPLE_TWO"),
-        ([3, 4, 5, 6, 7], "STRAIGHT"), ([3, 3, 4, 4, 5, 5], "STRAIGHT_PAIR"),
-        ([9, 10, 11, 12, 13, 14], "STRAIGHT"),           # 9..A
-        ([10, 10, 10, 11, 11, 11], "PLANE"),            # 飞机2连不带
-        ([8, 8, 8, 9, 9, 9, 3], "PLANE_SINGLE"),        # 2连+1翼?? 翼数需=len=2
-        ([3, 4, 4, 4, 5, 5, 5], "PLANE_SINGLE"),        # 2连+2翼(3,4?) no: 4,5 三张已在飞机里
-    ]
     # 上面的案例里 444555+3 只有1翼 → INVALID; 444555+3+6(3,6=2翼) → PLANE_SINGLE
     check("单张", E.identify([3]).type == E.T.SINGLE)
     check("对子", E.identify([11, 11]).type == E.T.PAIR)

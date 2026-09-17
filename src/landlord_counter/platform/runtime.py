@@ -36,6 +36,28 @@ class Runtime:
         except Exception:  # noqa: BLE001
             pass
 
+    def _foreground_pkg(self) -> str | None:
+        """当前前台的包名(前台闸门用) —— 云手机里**第二个浏览器会抢前台** ✗
+
+        实测(2026-09-17): Firefox Focus 抢走前台后, 读牌/结算/点击全都在对着它的界面做
+          ⇒ 浏览器欢迎页被当成结算弹窗, VLM 老实说"看不清"却被计成一局 ✗(假局假统计的总源头)
+        """
+        import subprocess as _sp
+
+        try:
+            out = _sp.run(["adb", "-s", getattr(self.dev, "serial", "127.0.0.1:5555"),
+                           "shell", "dumpsys", "window"],
+                          capture_output=True, text=True, timeout=8).stdout
+        except Exception:  # noqa: BLE001
+            return None
+        for line in out.splitlines():
+            if "mCurrentFocus" in line and "/" in line:
+                m = line.split()
+                for tok in m:
+                    if "/" in tok:
+                        return tok.split("/")[0]
+        return None
+
     def _log(self, msg: str) -> None:
         print(msg, flush=True)
 
@@ -46,7 +68,21 @@ class Runtime:
         last_signal = None
         last_hb = time.time()
         last_settle = 0.0
+        last_fg = 0.0
         while time.time() < t_end:
+            # ★★ 前台闸门(2026-09-17 用户指令: 发现错就即时堵掉, 别留着反复影响 ✗)
+            #   云手机里常有**第二个浏览器抢前台**(实测 Firefox Focus 就抢过) ⇒
+            #   此时"读牌 / 结算 / 点击"全都在**对着别的界面**做 ⇒ 假局/假结算/假统计的总源头 ✗
+            #   (实测: Firefox 欢迎页被 VLM 当成结算弹窗, 它老实说"看不清", 却被计成一局 ✗)
+            if time.time() - last_fg > 20.0:
+                last_fg = time.time()
+                fg = self._foreground_pkg()
+                if fg and getattr(self.ad, "package", None) and fg != self.ad.package:
+                    self._log(f"[前台] 游戏不在前台(现在是 {fg}) → 拉回来")
+                    self.dev.recover(package=self.ad.package, url=self.ad.start_url)
+                    last_prog = time.time()
+                    last_signal = None
+                    continue
             frame = self.dev.snap()
             if frame is None:
                 time.sleep(1)

@@ -125,7 +125,6 @@ def main() -> int:
             n_dec = None
             if i < len(pn):
                 n_dec = pn[i].get("n")
-(v.get("hand_after") if False else None)
             if v.get("ok"):
                 vok += 1
                 print(f"{gid:<22}{str(n_dec):<10}{str(exp):<10}{str(got):<10}{'0':<8}✓ 一致")

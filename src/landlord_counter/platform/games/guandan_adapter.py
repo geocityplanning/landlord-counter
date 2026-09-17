@@ -586,7 +586,7 @@ class GuandanAdapter(GameAdapter):
         choice = AI.choose_play(obs.hand, last, st)
         if choice is None or getattr(choice, "is_invalid", False):
             return Action("pass", meta={"why": "引擎判不出"})
-        return Action("play", combo=choice, meta={"why": "自研决策", "planned": True})
+        return Action("play", combo=choice, meta={"why": "自研决策(direct)", "direct": True})
 
     def _decide_rl(self, obs: Observation, last, cards: list) -> Action:
         """RL 臂: 预训练权重在"我方全部合法出牌"里选 → 标记 direct(执行层点选直出)。"""

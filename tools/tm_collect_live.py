@@ -46,10 +46,15 @@ def main() -> int:
         img = dev.snap()
         t2 = c.truth()
         if not t1 or t1.get("phase") != "playing":
+            print(f"  跳过: 相位={t1.get('phase') if t1 else None}(需要 playing)")
+            continue
             time.sleep(gap)
             continue
         h1 = t1.get("hands", {}).get("0")
-        if not h1 or h1 != t2.get("hands", {}).get("0"):
+        h2 = t2.get("hands", {}).get("0")
+        if not h1 or h1 != h2:
+            print(f"  跳过: 同刻真值不一致 (第一次 {len(h1) if h1 else 0} 张 / 第二次 {len(h2) if h2 else 0} 张)")
+            continue
             time.sleep(gap)
             continue
         # ★★ 硬条件(2026-09-17): 必须"没有任何牌被选中(抬起)"才采 —— 否则采到的是抬起态样本 ✗

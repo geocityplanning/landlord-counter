@@ -335,6 +335,10 @@
                 phase: gameState.phase,
                 current: gameState.currentChuPaiZhe,
                 selected: gameState.selectedPai.slice(),
+                // ★ 2026-09-17 加: 手牌的 **id 列表**(与 selected 同一编号空间) ⇒ 才判得出"点的是哪张" ✓
+                //   (原来 hands 是点数、selected 是 id, 两者对不上 ⇒ 点对没对无法验证 ✗)
+                handIds: gameState.wanJiaPai.map((c, i) => (c && c.id !== undefined) ? c.id : i),
+                selIds: gameState.selectedPai.map((c) => (c && c.id !== undefined) ? c.id : c),
                 hands: {0: gameState.wanJiaPai.map(c => c.zhi),
                         1: gameState.ai1Pai.map(c => c.zhi),
                         2: gameState.ai2Pai.map(c => c.zhi),

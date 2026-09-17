@@ -91,6 +91,25 @@ class Executor:
             return self.L.btn_resolver(img).get(name)
         return getattr(self.L, f"btn_{name}", None)
 
+    def _card_y(self) -> int:
+        """点击手牌用的 y: 取**实测量到的手牌带**中点 ✓
+
+        实测(2026-09-17): 原来用 layout 的 hand_y, 它已过期 ⇒ 点击**打在牌外** ⇒
+        游戏收不到、`selected` 纹丝不动(视觉上却因动画略变, 把我骗了一整晚 ✗)
+        改用实测带中点(y≈875)后: `tap(628, 875)` → 游戏真值 selected **立刻 +1** ✓✓
+        """
+        try:
+            from ..guandan import percept as _P
+
+            img = self._snap()
+            if img is not None:
+                y0, y1 = _P.hand_band_measured(img)
+                if 60 <= y1 - y0 <= 220:
+                    return int((y0 + y1) // 2)
+        except Exception:  # noqa: BLE001
+            pass
+        return int(getattr(self.L, "hand_y", 875))
+
     def _tap_card_at(self, x: int, wait: float = 0.45) -> None:
         """点手牌某位置: 优先 CDP(可信事件), 否则 adb tap。
 
@@ -99,7 +118,7 @@ class Executor:
         """
         if self.mt is not None:                 # ① 拟人化输入优先
             try:
-                self.mt.tap(x, self.L.hand_y)
+                self.mt.tap(x, self._card_y())
                 return
             except Exception as e:  # noqa: BLE001
                 self.log(f"  [input] MaaTouch 点牌失败({type(e).__name__}) → 回落")

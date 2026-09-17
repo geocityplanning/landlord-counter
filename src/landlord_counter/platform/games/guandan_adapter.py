@@ -247,6 +247,15 @@ class GuandanAdapter(GameAdapter):
                     return [p[0] for p in pts]
             except Exception as e:  # noqa: BLE001
                 print(f"    [真值几何] 失败({type(e).__name__}) → 回落卡边界", flush=True)
+        # ①' **卡位实测(新版)**: card_slots 用"最长等距串 + 亮度判据", 实测对游戏真值 100% ✓✓
+        # 教训(2026-09-17): 旧的 card_positions_by_edges 是过期几何 → 点位偏到邻牌/越界 → 
+        # select() 里 `if not (0 < x < 720): continue` 静默跳过 → 直选永远失败 ✗
+        try:
+            xs = P.card_slots(frame)
+            if xs and len(xs) == n:
+                return [int(x + 6) for x in xs]      # 每张牌露出约 24px, 点其靠左内侧
+        except Exception:                            # noqa: BLE001
+            pass
         pe = P.card_positions_by_edges(frame)
         if pe:
             return pe

@@ -32,7 +32,7 @@ class GestureLayout:
     btn_resolver: Callable[[np.ndarray], dict] | None = None   # → {'hint','play','pass'} 坐标
     lift_diff: Callable[[np.ndarray, np.ndarray], float] | None = None  # 帧差抬起量(可选, 更稳)
     lift_eps: float = 300.0     # "新抬起一张"的最小增量(像素口径≈300, 张数口径≈0.5)
-    lift_one: float = 1260.0    # 单张抬起量(Bromite 实测 3 张=3779 → ≈1260/张; 原 1460 偏大)
+    lift_one: float = 2559.0    # 单张抬起量(2026-09-17 实测: 未选 197 → 选中 2756, 差 2559 ✓)
     lift_min: float = 500.0     # 判定"有选中"的最小抬起量
 
 

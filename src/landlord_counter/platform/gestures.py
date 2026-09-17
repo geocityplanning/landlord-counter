@@ -398,12 +398,23 @@ class Executor:
             if r:
                 self.log("  [gesture] ↻ 直选重试(重新取帧)")
                 time.sleep(1.0)
-            # ★ 伺服式选牌(用户 2026-09-17 设计): 现状 → 求差(补抬/回落) → 复核 → 通过才出牌 ✓
-            self._servo_select(want_x, rounds=3)
-            time.sleep(0.3)
-            # ★ 删掉中间两段反推校验(2026-09-17 用户点破): 抬起是"出牌的必要前置状态" ✓
-            #   不需要反推"这次抬起是谁造成的" —— 游戏自己的提示高亮会和我们的点选混在一起 ✗
-            #   唯一可信的判据 = **游戏结果**(下面的出牌回执 wait_receipt) ✓
+            # ★ 一次点准(用户 2026-09-17 修正): **按决策点那几张, 每个点数只点一次** ✓
+            #   为什么不再"反复补点": 读"抬起"本身有误(UI 元素/分辨率), 边点边补会**滚雪球** ✗
+            #   (实测: 决策打单张 6, 抬起却成了 Q A 8 Q 7 6 ✗)
+            #   游戏里"点一张会选整组" → 同点数重复点等于反复切换 ✗ → 只点一次 ✓
+            _seen = set()
+            _tapped = 0
+            for _i, _x in zip(idxs, want_x):
+                _rk = ranks[_i] if (ranks and _i < len(ranks)) else None
+                if _rk is not None and _rk in _seen:
+                    continue                      # 同点数只点一次 ✓
+                _seen.add(_rk)
+                self._tap_card_at(_x, wait=0.6)
+                _tapped += 1
+            self.log(f"  [gesture] 点准: 目标{len(idxs)}张/{len(_seen)}组 → 实点{_tapped}次 "
+                     f"(每个点数只点一次 ✓)")
+            self._last_picked = list(want_x)
+            time.sleep(0.4)
             pp = self.btn("play")
             if not pp:
                 self.clear(idxs, n)

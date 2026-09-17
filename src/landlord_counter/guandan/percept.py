@@ -1269,7 +1269,7 @@ def tm_read_hand_with_lift(img, y0: int | None = None, tpl: dict | None = None):
     """
     if y0 is None:
         y0, _y1 = hand_band_measured(img)
-    img = mask_you_label(img, y0)        # ★ 先遮掉「你」字绿框(不是牌, 会污染匹配 ✓)
+    # img = mask_you_label(img, y0)   # ★ 暂撤(2026-09-17): 它修了 x=76 假抬起, 但把邻近列的读数也搞坏了 ✗ (19~22/27)
     xs = card_slots(img, y0)
     bank = load_templates_sr() if tpl is None else tpl
     if not xs or not bank:

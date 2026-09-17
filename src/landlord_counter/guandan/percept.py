@@ -1269,6 +1269,7 @@ def tm_read_hand_with_lift(img, y0: int | None = None, tpl: dict | None = None):
     """
     if y0 is None:
         y0, _y1 = hand_band_measured(img)
+    img = mask_you_label(img, y0)        # ★ 先遮掉「你」字绿框(不是牌, 会污染匹配 ✓)
     xs = card_slots(img, y0)
     bank = load_templates_sr() if tpl is None else tpl
     if not xs or not bank:
@@ -1304,3 +1305,27 @@ def tm_read_hand_with_lift(img, y0: int | None = None, tpl: dict | None = None):
         s_, r_ = (int(v) for v in key_.split("_"))
         cards.append((s_, r_, int(x), round(float(base - (dy if dy is not None else base)), 1)))
     return cards, {"base": base, "n": len(cards), "raw": raw}
+
+
+
+def mask_you_label(img, y0: int | None = None):
+    """把「你」字绿框(浅绿, 手牌左上)遮成周围色 —— 它不是牌, 但会污染匹配 ✓
+
+    用户 2026-09-17 指出: x=76 被判"抬起", 那片白其实是**「你」字的人字旁** ✗
+    """
+    out = img.copy()
+    if y0 is None:
+        y0, _y1 = hand_band_measured(img)
+    y_a, y_b = max(0, int(y0) - 46), int(y0) + 6
+    x_a, x_b = 0, 180
+    box = out[y_a:y_b, x_a:x_b]
+    if box.size == 0:
+        return out
+    r, g, b = box[:, :, 0].astype(int), box[:, :, 1].astype(int), box[:, :, 2].astype(int)
+    light_green = (g > 120) & (g - r > 18) & (g - b > 18)
+    if int(light_green.sum()) < 30:
+        return out
+    keep = box[~light_green]
+    if keep.size:
+        box[light_green] = np.median(keep.reshape(-1, 3), axis=0).astype("uint8")
+    return out

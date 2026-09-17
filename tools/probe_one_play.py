@@ -87,7 +87,7 @@ def main() -> int:
         t2 = c.truth() or {}
         n2 = len((t2.get("hands") or {}).get("0") or [])
         print(f"按后: 手牌={n2}张 selected={t2.get('selected')} toast=[{c.toast()}]")
-        print("结论:", "✓✓ 打出去了!" if n2 < n0 else f"✗ 没打出去 (游戏判决见上 toast)")
+        print("结论:", "✓✓ 打出去了!" if n2 < n0 else "✗ 没打出去 (游戏判决见上 toast)")
     return 0
 
 

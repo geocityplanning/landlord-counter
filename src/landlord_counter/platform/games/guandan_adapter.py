@@ -99,14 +99,17 @@ class GuandanAdapter(GameAdapter):
             except Exception as e:  # noqa: BLE001
                 print(f"⚠ MaaTouch 不可用({e}) → 回落", flush=True)
         # 按钮点击走 CDP(可选, 调试用): 实测 adb tap 点"出牌"不生效, CDP 派发可以
-        if os.getenv("GUANDAN_USE_CDP", "0") == "1":
-            try:
-                from ..cdp import CDP
+        # ★ 2026-09-17 修: 原来只在 GUANDAN_USE_CDP=1 时才挂 ⇒ 试跑没设它 ⇒
+        #   **真值通道(自动采模板/读 toast 判决)整个没工作** ✗, 症状是"自动采集不触发、判决读不到"
+        #   ⇒ 改成**总是尝试挂上**(实验室里这是我们的"裁判"; 拿不到就响亮说明并继续, 不静默 ✗)
+        try:
+            from ..cdp import CDP
 
-                self._ex.cdp = CDP(url_filter="8123")
-                print("▶ 按钮输入走 CDP(Bromite 调试口)", flush=True)
-            except Exception as e:  # noqa: BLE001
-                print(f"⚠ CDP 不可用({e}) → 按钮仍走 adb", flush=True)
+            self._ex.cdp = CDP(url_filter="8123")
+            print("▶ 真值/按钮通道: CDP 已挂上 ✓", flush=True)
+        except Exception as e:  # noqa: BLE001
+            self._ex.cdp = None
+            print(f"⚠ CDP 不可用({e}) → 无真值通道(换局不自动采模板, 按钮走实测像素定位 ✓)", flush=True)
 
     # ---------- 感知 ----------
     def start_button(self, frame):
@@ -310,6 +313,34 @@ class GuandanAdapter(GameAdapter):
             return True
         except Exception:  # noqa: BLE001
             return True
+
+    def _maybe_collect_templates(self, frame, frame0) -> None:
+        """**每局只采一次模板**(2026-09-17 用户指令: 换局即时处理, 别留着反复影响 ✗)
+
+        为什么要: 模板=这一局牌长什么样 ⇒ 换局不重采, 读牌会大面积错 ✗
+          (实测: 同局重采后 27 张只差 2~3 张; 换局不采 ⇒ 大面积错 ⇒ 决策指错位 ⇒ 点错牌 ✗)
+        采的时机(全部满足才采): 轮到我 + 无选中(牌全放平) + 牌位数==真值张数 ✓
+        一局只采一次(用真值的牌 id 哈希当"局指纹" ✓)
+        """
+        try:
+            tr = self._ex.cdp.truth() if getattr(self._ex, "cdp", None) is not None else None
+        except Exception:  # noqa: BLE001
+            tr = None
+        if not tr:
+            return                                  # 无真值通道(产品路径) ⇒ 不采, 由自校验兜底 ✓
+        ids = tr.get("handIds") or []
+        if not ids:
+            return
+        fp = hash(tuple(ids))
+        if fp == getattr(self, "_tpl_deal_fp", None):
+            return                                  # 本局已采过 ✓
+        if tr.get("current") != 0 or (tr.get("selected") or []):
+            return                                  # 不是我的回合 / 有选中(会采到抬起态) ⇒ 等下一帧 ✓
+        zhi = (tr.get("hands") or {}).get("0") or []
+        n = P.tm_collect_from_ranks(frame, list(zhi), tag="auto")
+        if n:
+            self._tpl_deal_fp = fp
+            print(f"  [模板] 新一局 → 自动重采 {n} 张 ✓ (这一局的读牌将回到 100%)")
 
     def sense(self, frame) -> Observation:
         self._track_seat(frame)

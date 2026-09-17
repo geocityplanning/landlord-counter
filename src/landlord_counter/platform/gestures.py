@@ -499,8 +499,6 @@ class Executor:
         before = self.L.white_count(first)
         base_lift = self._lift(first)
         self._lift_min = base_lift if self._lift_min is None else min(self._lift_min, base_lift)
-        want_x = [self._pos(i, n) for i in idxs]
-        pre_select = first
         # ---- 清残留选中(实测: 残留会让"我们选的+残留"变成非法牌型 → 出牌被拒) ----
         # "空"基线估计: 取"见过的最小值"与 250 的更小者(实测空手牌抬起≈196; 脏值会带偏自适应)
         # ★ 删除"盲点清残留"(2026-09-17 实测有害 ✗): 游戏"点一张选一整组" → 盲点会把整手牌全选上 ✗

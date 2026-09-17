@@ -218,7 +218,7 @@ class MahjongAdapter(GameAdapter):
         self._fails += 1
         if self._fails >= 2:
             time.sleep(min(6.0, 1.5 * self._fails))
-        return ExecResult(False, 1, f"点击未出手(手牌未变{fails if False else ''})")
+        return ExecResult(False, 1, "点击未出手(手牌未变)")
 
     # ---------- 结算 ----------
     def settle(self, frame):

@@ -1289,3 +1289,34 @@ def tm_read_hand(img, y0: int | None = None, tpl: dict | None = None):
 
 
 
+
+
+def tm_collect_from_ranks(img, ranks, y0: int | None = None, y1: int | None = None,
+                          out_dir: str = "data/templates_rank", tag: str = "auto") -> int:
+    """**唯一的采集实现**: 按游戏真值给每个牌位贴标签, 裁竖条存模板 ✓
+
+    工具(tools/tm_collect_live.py)与适配器(换局自动重采)共用 —— 只此一份, 避免第二套 ✓
+    纪律: 与读取端**同一口径**(逐牌按自身顶边裁) ✓; 采不出/纯色块跳过 ✓
+    返回写入的模板数。
+    """
+    import os as _os
+
+    if y0 is None or y1 is None:
+        y0, y1 = hand_band_measured(img)
+    xs = card_slots(img, y0, y1)
+    if len(xs) != len(ranks):
+        return 0                                   # 牌位数与真值不一致 ⇒ 宁可不采 ✓
+    _os.makedirs(out_dir, exist_ok=True)
+    card_h = y1 - y0 - 16
+    n = 0
+    for x, z in zip(xs, ranks):
+        x0 = int(x)
+        ty = card_top_y(img, x0, y0 + 8)
+        patch = img[ty + 8:ty + 8 + card_h, x0:x0 + 24]
+        if patch.size == 0 or float(patch.std()) < 10:
+            continue
+        np.save(_os.path.join(out_dir, f"0_{int(z)}_{tag}_{x0}.npy"), patch.astype(np.uint8))
+        n += 1
+    if n:
+        clear_templates_cache()
+    return n

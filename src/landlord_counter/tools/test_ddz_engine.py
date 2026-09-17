@@ -33,7 +33,7 @@ def random_hand(n=17, seed=None):
 
 def run():
     # ---- 牌型识别 ----
-    cases = [
+    _cases = [
         ([3], "SINGLE"), ([11, 11], "PAIR"), ([12, 12, 12], "TRIPLE"),
         ([15, 15, 15, 15], "BOMB"), ([16, 17], "ROCKET"),
         ([3, 3, 3, 9], "TRIPLE_ONE"), ([5, 5, 5, 8, 8], "TRIPLE_TWO"),

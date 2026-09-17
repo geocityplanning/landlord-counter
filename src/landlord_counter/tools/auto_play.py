@@ -596,7 +596,7 @@ def main():
     dz = _dz_init()
     hand: list[int] = []  # 当前手牌 belief(升序), 由发牌投票/出牌自减维护
     pending_relandlord = False  # 叫3分可能成地主 → 需按20张重读(含底牌)
-    skip_until = 0.0  # 数牌失真防抖暂停截至时刻
+    _skip_until = 0.0  # 数牌失真防抖暂停截至时刻
     print("▶ auto_play 启动 (完整托管 v1)")
     while True:
         img = snap()
@@ -702,7 +702,7 @@ def main():
             tag = "跟牌(主动:提示自决)"
         # 执行: 领打=DouZero决策(启用时)→引擎直选; 跟牌=提示钮; 失败回落
         if tag == "领打/必出":
-            dz_ok = False
+            _dz_ok = False
             if dz is not None:
                 try:
                     role, counts = _dz_role_counts(ap, hand)

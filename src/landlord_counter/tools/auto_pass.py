@@ -87,7 +87,7 @@ def main() -> None:
                 if green_play:
                     n_play += 1
         if acted:
-            last_action = time.time()
+            _last_action = time.time()
         time.sleep(1.4)
     print(f"■ 结束: 灰钮(不叫/不出)×{n_pass}  再来一局×{n_restart}  遇必出轮×{n_play}")
 

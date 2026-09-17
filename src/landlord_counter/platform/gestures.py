@@ -425,7 +425,7 @@ class Executor:
             out.append(None if got is None else bool(got >= 18))
         return out
 
-    def _servo_select(self, idxs: list, rounds: int = 3) -> None:
+    def _servo_select(self, idxs: list, rounds: int = 3) -> bool:
         """伺服选牌(用户 2026-09-17 设计的算法): **求差 → 多的回落 / 少的补抬 → 复核** ✓
 
         量出的"抬起集合"包含三类: ① 我们要的 ② 上一轮我们点过、这轮不要的 ③ 游戏自己抬的提示牌
@@ -449,7 +449,7 @@ class Executor:
             self.log(f"  [servo] 第{r + 1}轮 需补={len(miss)} 需落={len(extra)}")
             if not miss and not extra:
                 self.log(f"  [servo] ✓ 就位({len(want)}张) → 可以出牌")
-                break
+                return True
             for i in extra:                               # ★ 多了回落 ✓
                 if i < len(cards):
                     fresh, _f = _P.tm_read_hand_with_lift(self._snap())
@@ -464,6 +464,7 @@ class Executor:
                     self._tap_card_at(fresh[i][2], wait=0.5)
                     self.log(f"  [servo] 补点 第{i}张 x={fresh[i][2]}(当帧实量)")
         self._last_picked = list(getattr(self, '_last_picked', []))
+        return False        # 没在 rounds 内就位 ✓
 
     def direct_play(self, idxs: list[int], n: int, rounds: int = 2,
                     ranks: list | None = None) -> bool:
@@ -495,15 +496,13 @@ class Executor:
             # ★ 伺服: 量现状 → 少了补抬 / 多了回落 → 复核 ✓ (用户算法③④)
             #   用户纠正(2026-09-17): 游戏**不会每次都帮点整组** ✗ → 绝不能靠假设去重 ✓
             #   一切以"量到的抬起状态"为准 ✓ (滑块匹配量抬起, 不受邻牌遮挡 ✓)
-            self._servo_select(idxs, rounds=3)
-            t_snap = self._snap()
-            st = self._raised_state(t_snap, want_x)
-            if all(v is True for v in st):
-                self.log(f"  [servo] ✓ 复核通过({len(want_x)}张都抬起)")
-            else:
-                self.log(f"  [servo] ⚠ 复核未完({st}) → 仍按现状出牌, 由出牌回执终判 ✓")
-            time.sleep(0.3)
-            pp = self._play_btn() or self.btn("play")
+            # ★ 纪律(2026-09-17 实测): 伺服就位后**立刻按出牌** ×
+            #   旧流程还多读一次画面 + 等 0.3s ⇒ "读状态"与"按按钮"隔了 ~2 秒
+            #   ⇒ 期间牌的抬起动画/可出状态已经变了 ⇒ 按下去落空 ✗(实测成功 1/失败 2~3)
+            ready = self._servo_select(idxs, rounds=3)
+            if not ready:
+                self.log("  [servo] ⚠ 未全部就位 → 仍按现状出牌, 由回执终判 ✓")
+            pp = self._play_btn() or self.btn("play")     # ★ 立刻按 ✓
             if not pp:
                 self.clear(idxs, n)
                 continue

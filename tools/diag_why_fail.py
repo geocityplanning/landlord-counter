@@ -34,6 +34,14 @@ def main() -> int:
         print(f"(识别器不可用 {type(e).__name__} → vision=None)")
         vision = None
     ad.attach(dev, vision=vision)
+    # ★ 2026-09-17: 把 CDP 挂到执行器上 —— 否则出牌后读不到游戏的 toast(判决书) ✗
+    #   (归因分水岭全靠它: 无效的牌型组合 / 请选择要出的牌 / 静默 ⇒ 三种完全不同的原因 ✓)
+    try:
+        if getattr(ad._ex, "cdp", None) is None:
+            ad._ex.cdp = CDP(url_filter="8123")
+            print("(已把 CDP 挂到执行器 → 可以读 toast ✓)")
+    except Exception as e:  # noqa: BLE001
+        print(f"(CDP 挂载失败 {type(e).__name__}: {e})")
 
     t = c.truth() or {}
     print(f"真值: 阶段={t.get('phase')} 轮到={t.get('current')} "

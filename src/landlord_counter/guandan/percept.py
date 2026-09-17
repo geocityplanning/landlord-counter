@@ -987,6 +987,46 @@ def selected_columns(img, y0: int = 776, y1: int = 802) -> list:
     return [int(x + pitch / 2) for x in keep]
 
 
+
+def lifted_xs(img, y0: int | None = None, up: int = 44, min_px: int = 8,
+              bright: int = 200) -> list:
+    """定位**被抬起的牌** → 返回它们的 x 区间中心列表。
+
+    原理: 选中的牌整张上移(实测约 36px) → 在手牌带**上方**露出该牌面(亮色);
+    未选中的牌不会。逐列统计"带上方亮像素数"即可得到抬起牌的 x 范围 ✓
+    (用途: 读牌前"点掉残留选中"; 也用于身份校验"抬起的 x 是不是我们想点的 x")
+    """
+    if y0 is None:
+        y0, _ = hand_band_measured(img)
+    a = max(0, int(y0) - up)
+    b = max(a + 1, int(y0) - 4)
+    band = img[a:b]
+    if band.size == 0:
+        return []
+    cols = (band.min(axis=2) > bright).sum(axis=0)
+    xs = np.where(cols >= min_px)[0]
+    if len(xs) == 0:
+        return []
+    out, st_, prev = [], int(xs[0]), int(xs[0])
+    for x in xs[1:]:
+        x = int(x)
+        if x - prev > 6:
+            if prev - st_ >= 6:
+                out.append(int((st_ + prev) / 2))
+            st_ = x
+        prev = x
+    if prev - st_ >= 6:
+        out.append(int((st_ + prev) / 2))
+    # 只保留**落在手牌横向范围内**的（实测会混进左侧背景的亮点 ✗）
+    try:
+        xs_all = card_slots(img)
+        if len(xs_all) >= 2:
+            lo, hi = min(xs_all) - 20, max(xs_all) + 60
+            out = [c for c in out if lo <= c <= hi]
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
 def lifted_columns(before, after, y0: int = 776, y1: int = 802,
                    min_px: int = 3, gap: int = 6) -> list:
     """帧差定位"刚被抬起的是哪几张牌" → 返回变化列段中心 x 列表。

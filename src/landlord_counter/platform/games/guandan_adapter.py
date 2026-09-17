@@ -326,6 +326,27 @@ class GuandanAdapter(GameAdapter):
             _tm_first = []
         if not _tm_first and not self._band_looks_like_hand(frame):
             return Observation(frame=frame, my_turn=False)   # 假"我回合" → 跳过, 不空转
+        # ★ 读牌时机闸门(2026-09-17): 有牌被抬起时**读不准** —— 抬起的牌会盖住右侧邻牌的
+        #   竖条(实测 Q J 10 9 里抬起 10 → 只读出 J ✗) → 先点掉抬起的那张, 再重取帧读 ✓
+        try:
+            for _try in range(4):                  # 可能有多张被抬起 → 清到干净(最多 4 轮)
+                lifted = P.lifted_xs(frame)
+                if not lifted:
+                    break
+                if self._ex is not None:
+                    for lx in lifted:
+                        self._ex.dev.tap(int(lx), (self._ex.L.hand_y or 875) + 8, wait=0.35)
+                time.sleep(0.35)
+                frame = self.device.snap()         # ★ 每轮**重新取帧**再判:
+                #   否则同一张被点偶数次(点掉又点回) → 永远清不干净 ✗ (2026-09-17 踩坑)
+            frame2 = self.device.snap()
+            if frame2 is not None and not P.lifted_xs(frame2):
+                frame = frame2                     # 清干净了 → 用放平后的帧读 ✓
+            else:
+                print(f"  [读牌] 仍有牌被抬起且未清掉 → 本帧先不读(下帧再试)", flush=True)
+                return Observation(frame=frame, my_turn=True, hand=None, extra={"lifted": True})
+        except Exception:  # noqa: BLE001
+            pass
         # CDP 可用时: 用**游戏真值**复核"是不是我的回合"(像素启发式会被残局/动画骗)
         ex = self._ex
         if ex is not None and getattr(ex, "cdp", None) is not None:

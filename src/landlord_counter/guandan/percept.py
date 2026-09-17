@@ -798,7 +798,20 @@ def card_slots(img, y0: int | None = None, y1: int | None = None, pitch_fallback
     n = int(round((hi_left - x_lo) / pitch)) + 1
     if n <= 0 or n > 40:
         return []
-    return [int(round(x_lo + i * pitch)) for i in range(n)]
+    grid = [int(round(x_lo + i * pitch)) for i in range(n)]
+    # ★ 收尾(2026-09-17): 白范围右缘可能把右边标签也算进去 ⇒ 末尾多出 1 格 ✗
+    #   判据用"**是不是白牌面**"(与 _cols 同一把尺子 ✓) —— 用"不是桌面绿"会被底部黑标签条骗过 ✗
+    #   注: 手牌从大到小排 ⇒ 右端永远是小牌(白的), 不会误伤大小王/黄边级牌(它们在左端) ✓
+    def face_like(x: float) -> bool:
+        x = int(round(x))
+        if x < 0 or x + 8 >= img.shape[1]:
+            return False
+        col = img[y0 + 6:y1 - 6, x:x + 8]
+        return bool((col.min(axis=2) > 150).mean() > 0.40)
+
+    while len(grid) > 1 and not face_like(grid[-1]):
+        grid.pop()
+    return grid
 
 def card_edges(img, y0: int = 0, y1: int = 0, min_gap: int = 10,
                q: float = 0.93, floor: float = 4.0) -> list:

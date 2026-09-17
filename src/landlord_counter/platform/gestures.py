@@ -426,44 +426,43 @@ class Executor:
         return out
 
     def _servo_select(self, idxs: list, rounds: int = 3) -> None:
-        """伺服: 让 want_x 这些牌位**都抬起**(现状→求差→补抬→复核) ✓
+        """伺服选牌(用户 2026-09-17 设计的算法): **求差 → 多的回落 / 少的补抬 → 复核** ✓
 
-        "回落"只针对**我们上一轮自己点过**的位置(可安全反点 ✓);
-        不碰游戏自己高亮的牌(反点反而会选中它们 ✗)。
+        量出的"抬起集合"包含三类: ① 我们要的 ② 上一轮我们点过、这轮不要的 ③ 游戏自己抬的提示牌
+        ⇒ ②要回落(点掉) ✓; ③**只能点一次**就放过 —— 点它反而会把它选上 ✗(会来回振荡)
+        判据全部来自**同一份读取结果**(看和点同源 ✓); 坐标每次点击前重新量 ✓
         """
         from ..guandan import percept as _P
 
-        stale = [x for x in getattr(self, "_last_picked", [])]   # 本轮改用读取坐标 ⇒ 先不回落(下一轮清) ✓
-        for x in stale:
-            self._tap_card_at(x, wait=0.4)
-            self.log(f"  [servo] 回落(x={x}, 上轮我们点过但这次不要)")
+        want = set(int(i) for i in idxs)
+        tried_extra: set = set()          # 点过的"多余抬起"位 —— 只点一次, 防振荡 ✓
         for r in range(rounds):
-            # ★ 纪律(2026-09-17 用户点破"你抬起了 KQ"): **看和点必须同一个来源** ✓
-            #   早先"看"用读取(按索引对齐)、"点"却用 layout 坐标 ⇒ 看得对、点得偏 ✗
-            #   (实测: 决策单张 ♥3, 抬起却成了 K Q ✗) ⇒ 每轮重读一次, 坐标与状态**都取自这份读取** ✓
             img = self._snap()
             try:
                 cards, _info = _P.tm_read_hand_with_lift(img)
             except Exception as e:  # noqa: BLE001
                 self.log(f"  [servo] ✗ 读抬起失败: {type(e).__name__}: {e}")
                 return
-            st = [(cards[i][3] >= 18) if i < len(cards) else None for i in idxs]
-            missing = [i for i, v in zip(idxs, st) if v is not True]
-            self.log(f"  [servo] 第{r + 1}轮 抬起态="
-                     f"{['✓' if v else ('✗' if v is False else '?') for v in st]} 需补={len(missing)}")
-            if not missing:
+            raised = {i for i, c in enumerate(cards) if c[3] >= 18}
+            miss = sorted(want - raised)                  # 少的 → 补抬 ✓
+            extra = sorted(raised - want - tried_extra)   # 多的 → 回落(每个只试一次) ✓
+            self.log(f"  [servo] 第{r + 1}轮 需补={len(miss)} 需落={len(extra)}")
+            if not miss and not extra:
+                self.log(f"  [servo] ✓ 就位({len(want)}张) → 可以出牌")
                 break
-            for i in missing:
-                # ★★ 点之前**重新量一次牌位**(2026-09-17 用户指令"先修一件事, 点对"):
-                #   点一张 → 该牌抬起 → 整排的**检测结果会变** ⇒ 上一轮记的 x 已过期 ✗
-                #   (实测: 点完再点同处 = 打到隔壁 → 反复抬起放下, 振荡 ✓)
-                #   ⇒ 每次都从**当前帧**取坐标 ✓ (牌位网格以最右锚点重铺, 稳定 ✓)
-                fresh, _fi = _P.tm_read_hand_with_lift(self._snap())
-                xx = fresh[i][2] if i < len(fresh) else (cards[i][2] if i < len(cards) else None)
-                if xx is not None:
-                    self.log(f"  [servo] 点第{i}张 x={xx}(当帧实量)")
-                    self._tap_card_at(xx, wait=0.6)
-                    self._last_picked = list(getattr(self, "_last_picked", [])) + [xx]
+            for i in extra:                               # ★ 多了回落 ✓
+                if i < len(cards):
+                    fresh, _f = _P.tm_read_hand_with_lift(self._snap())
+                    _i = i if i < len(fresh) else None
+                    if _i is not None:
+                        self._tap_card_at(fresh[_i][2], wait=0.45)
+                        self.log(f"  [servo] 回落 第{i}张 x={fresh[_i][2]}")
+                    tried_extra.add(i)
+            for i in miss:                                # ★ 少了补抬 ✓
+                fresh, _f = _P.tm_read_hand_with_lift(self._snap())
+                if i < len(fresh):
+                    self._tap_card_at(fresh[i][2], wait=0.5)
+                    self.log(f"  [servo] 补点 第{i}张 x={fresh[i][2]}(当帧实量)")
         self._last_picked = list(getattr(self, '_last_picked', []))
 
     def direct_play(self, idxs: list[int], n: int, rounds: int = 2,

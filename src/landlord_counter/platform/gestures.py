@@ -398,23 +398,17 @@ class Executor:
             if r:
                 self.log("  [gesture] ↻ 直选重试(重新取帧)")
                 time.sleep(1.0)
-            # ★ 一次点准(用户 2026-09-17 修正): **按决策点那几张, 每个点数只点一次** ✓
-            #   为什么不再"反复补点": 读"抬起"本身有误(UI 元素/分辨率), 边点边补会**滚雪球** ✗
-            #   (实测: 决策打单张 6, 抬起却成了 Q A 8 Q 7 6 ✗)
-            #   游戏里"点一张会选整组" → 同点数重复点等于反复切换 ✗ → 只点一次 ✓
-            _seen = set()
-            _tapped = 0
-            for _i, _x in zip(idxs, want_x):
-                _rk = ranks[_i] if (ranks and _i < len(ranks)) else None
-                if _rk is not None and _rk in _seen:
-                    continue                      # 同点数只点一次 ✓
-                _seen.add(_rk)
-                self._tap_card_at(_x, wait=0.6)
-                _tapped += 1
-            self.log(f"  [gesture] 点准: 目标{len(idxs)}张/{len(_seen)}组 → 实点{_tapped}次 "
-                     f"(每个点数只点一次 ✓)")
-            self._last_picked = list(want_x)
-            time.sleep(0.4)
+            # ★ 伺服: 量现状 → 少了补抬 / 多了回落 → 复核 ✓ (用户算法③④)
+            #   用户纠正(2026-09-17): 游戏**不会每次都帮点整组** ✗ → 绝不能靠假设去重 ✓
+            #   一切以"量到的抬起状态"为准 ✓ (滑块匹配量抬起, 不受邻牌遮挡 ✓)
+            self._servo_select(want_x, rounds=3)
+            t_snap = self._snap()
+            st = self._raised_state(t_snap, want_x)
+            if all(v is True for v in st):
+                self.log(f"  [servo] ✓ 复核通过({len(want_x)}张都抬起)")
+            else:
+                self.log(f"  [servo] ⚠ 复核未完({st}) → 仍按现状出牌, 由出牌回执终判 ✓")
+            time.sleep(0.3)
             pp = self.btn("play")
             if not pp:
                 self.clear(idxs, n)

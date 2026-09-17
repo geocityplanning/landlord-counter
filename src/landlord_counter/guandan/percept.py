@@ -11,7 +11,8 @@ from .rules import Card, cards_from_tokens
 
 HAND_BAND = (815, 936)   # 实测(2026-09-17, 用户标注图): 手牌牌面 y 815..936 ✓ (旧值 695,825 是"牌上方空白", 会让 card_slots 返回空 ⇒ 读牌静默全废 ✗)
 CARD_W_FULL = 62
-LAST_CARD_W = 88          # 末张的完整宽(源码布局: 整排宽=(n-1)*间距+88) ✓          # 整张牌宽(实测: 最后一张完整可见 ⇒ 用它从右缘反推它的左缘) ✓
+LAST_CARD_W = 88
+ALL_TPL_RETRY_DIST = 0.25   # 滑动匹配距离超过它就换**全部模板**重读(好匹配≈0.00~0.15, 坏匹配≈0.9) ✓          # 末张的完整宽(源码布局: 整排宽=(n-1)*间距+88) ✓          # 整张牌宽(实测: 最后一张完整可见 ⇒ 用它从右缘反推它的左缘) ✓
 _BAND_LAST: list = [None]   # 上次可信的手牌带(抬起态会把测量带偏 ⇒ 用缓存兜底) ✓
 # 手牌行最左边是"你"字小框(浅绿), 它不是牌 → 读牌时从它右边开始
 # (实测 2026-09-16: 不裁会把"你"读成一张 8 并盖住第一张牌; 裁 20~65px 都能读全)
@@ -1266,6 +1267,14 @@ def tm_read_hand(img, y0: int | None = None, tpl: dict | None = None):
             dy, d = slide_best(img, int(x), y0, t)
             if dy is not None and d < best[0]:
                 best = (d, dy, key_)
+        # ★★ 候选不可信 ⇒ **用全部模板重读**(2026-09-17): 第一遍读错时, 若还只用"它给的那个点数"
+        #    的模板去滑, 就永远读成那个错的点数 ✗(实测: 游戏自己抬起的位正是这样错 2~3 张 ✗)
+        #    判据: 最佳距离偏大/没滑出结果 ⇒ 换全部模板再滑一次, 谁更像就用谁 ✓
+        if best[2] is None or best[0] > ALL_TPL_RETRY_DIST:
+            for key2, t2 in [(k2, t) for k2, arrs in bank.items() for t in arrs][:60]:
+                dy2, d2 = slide_best(img, int(x), y0, t2)
+                if dy2 is not None and d2 < best[0]:
+                    best = (d2, dy2, key2)
         raw.append((best[2], best[1], round(best[0], 3)))
     dys = [dy for _k, dy, _d in raw if dy is not None]
     base = lift_baseline(dys) if dys else 0.0

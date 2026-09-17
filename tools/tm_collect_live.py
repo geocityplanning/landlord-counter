@@ -52,6 +52,10 @@ def main() -> int:
         if not h1 or h1 != t2.get("hands", {}).get("0"):
             time.sleep(gap)
             continue
+        # ★★ 硬条件(2026-09-17): 必须"没有任何牌被选中(抬起)"才采 —— 否则采到的是抬起态样本 ✗
+        if (t1.get("selected") or []) or (t2.get("selected") or []):
+            time.sleep(gap)
+            continue
         truth = sorted((int(x) for x in h1), reverse=True)      # 从大到小 = 显示顺序
         y0, y1 = P.hand_band_measured(img)
         xs = P.card_slots(img, y0, y1)
@@ -61,11 +65,18 @@ def main() -> int:
             continue
         got += 1
         card_h = y1 - y0 - 16
+        # ★ 跳过"当前正被选中(抬起)"的牌(2026-09-17): 抬起状态的竖条若被当作"放平"存进模板库,
+        #   那张牌的偏移会永远停在 -25 → 之后被判成"一直抬起" ✗(实测 x=172 就是这个误判)
+        sel_ids = set(t1.get("selected") or [])
         for x, z in zip(xs, truth):
             x0 = int(x)
             # ★ 与读取端**同一口径**: 逐牌按自身顶边裁(游戏会把某些牌抬高显示 ✗
             #   若这里用固定带, 抬高的那几张会采到错位内容 → 读的时候永远对不上 ✗)
             ty = P.card_top_y(img, x0, y0 + 8)
+            # 抬起代理: 该列上方 56px 内有成片白 → 当作"正抬起", 不采 ✓
+            _win = img[max(0, y0 - 56):y0 - 4, x0:x0 + 24]
+            if _win.size and (_win.min(axis=2) > 200).mean() > 0.35:
+                continue
             patch = img[ty + 8:ty + 8 + card_h, x0:x0 + 24]
             if patch.size == 0 or float(patch.std()) < 10:
                 continue

@@ -37,11 +37,31 @@ def _zhi(card: Any) -> int:
     return int(getattr(card, "zhi", card))
 
 
+_HUA_MAP = {"♠": 0, "♥": 1, "♣": 2, "♦": 3}
+_ZHI_MAP = {"J": 11, "Q": 12, "K": 13, "A": 14, "小王": 15, "大王": 16}
+
+
+def _parse_name(s) -> tuple:
+    """把牌名反解成 (点, 花色) —— 调用方传字符串时用 ✓ 解不出就 (-1,-1)"""
+    s = str(s).strip()
+    if s in ("小王", "大王"):
+        return (15 if s == "小王" else 16), 4
+    hua = _HUA_MAP.get(s[:1], -1)
+    rest = s[1:] if hua >= 0 else s
+    if rest.isdigit():
+        return int(rest), hua
+    return _ZHI_MAP.get(rest, -1), hua
+
+
 def _cards_raw(cards) -> list:
     """结构化牌(点+花色) —— 给伴随应用落库 ✓ 只做格式转换, 不解析牌型 ✗"""
     out = []
     for c in cards or []:
-        out.append({"zhi": _zhi(c), "hua": int(getattr(c, "hua", -1) or -1)})
+        if isinstance(c, str):          # ★ 现场踩坑: 调用方传的是牌名("♥5") ✗ 不是对象
+            z, h = _parse_name(c)
+        else:
+            z, h = _zhi(c), int(getattr(c, "hua", -1) or -1)
+        out.append({"zhi": z, "hua": h})
     return out
 
 

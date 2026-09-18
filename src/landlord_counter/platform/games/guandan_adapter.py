@@ -44,6 +44,19 @@ class GuandanAdapter(GameAdapter):
         self._rl_hist: list = []
         # 记牌器 + 牌局事件日志(追溯"谁打了什么牌"/"池子里还剩什么"; 见 docs/记牌器_调研.md)
         self.log = GameLog(game_id=f"gd-{time.strftime('%Y%m%d-%H%M')}", game_type="guandan")
+        # ★ 伴随应用 M1 (2026-09-19): 给事件流挂上"旁观者" —— 牌局事件自动进本地库 ✓
+        #   · 只收不发(bridge 只搬字段 ✗ 不算牌); 出事绝不影响牌局(GameLog.append 里兜住 ✓)
+        #   · 任何环节出问题都只是"不记录", 打牌照常 ✓
+        try:
+            from landlord_counter.companion.bridge import make_sink
+            from landlord_counter.companion.store import CompanionStore
+            self._companion = CompanionStore()
+            self.log.sink = make_sink(self.log, self._companion, self.log.game_id)
+            print(f"  [companion] ✓ 伴随应用已挂上(库: {self._companion.path})", flush=True)
+        except Exception as e:                       # noqa: BLE001
+            self._companion = None
+            print(f"  [companion] ⚠ 伴随应用未启用({type(e).__name__}: {e}) → 只打牌不记录 ✓",
+                  flush=True)
         self.tracker = CardTracker()
         # AI 算力计量(伴随包 → 底座计费; 只记消耗, 不带价格)
         self.usage = UsageMeter(game="guandan")

@@ -682,6 +682,31 @@ class GuandanAdapter(GameAdapter):
             return Action("pass", meta={"why": "引擎判不出"})
         return Action("play", combo=choice, meta={"why": "自研决策(direct)", "direct": True})
 
+    def _last_play_from_truth(self):
+        """从**游戏真值**里取"上一手"(2026-09-18 治脑)。
+
+        为什么需要: "桌上压着什么"若为空 ⇒ `last=None` ⇒ 候选 = 全部合法牌型(没按桌面过滤)
+          ⇒ RL 会挑一张压不过的牌 ⇒ 游戏回『牌太小，压不过』✗
+          (实测: 选牌核对一致 ✓ 但出牌被拒 ⇒ 问题在决策层, 不在执行层)
+        取法: 真值 `plays` 里**最后一个"别的座位、且非不出"**的记录 ⇒ 转成规则层的 combo ✓
+        (产品路径没有真值 ⇒ 仍要靠桌面识别; 这条是实验室兜底 + 诊断用 ✓)
+        """
+        cdp = getattr(getattr(self, "_ex", None), "cdp", None)
+        if cdp is None:
+            return None
+        try:
+            plays = (cdp.truth() or {}).get("plays") or []
+        except Exception:  # noqa: BLE001
+            return None
+        for p in reversed(plays):
+            if int(p.get("seat", 0)) != 0 and int(p.get("n") or 0) > 0:
+                zhi = [int(v) for v in (p.get("zhi") or [])]
+                if zhi:
+                    # 真值只给**点数**(没花色) ⇒ 造牌对象时花色取默认(♠); 只用于"按桌上过滤候选",
+                    # 不参与同花顺/逢人配判定, 足够 ✓(2026-09-18: 直接传 int 会 AttributeError ✗)
+                    return R.identify([R.Card(zhi=v) for v in zhi], JIPAI)
+        return None
+
     def _decide_rl(self, obs: Observation, last, cards: list) -> Action:
         """RL 臂: 预训练权重在"我方全部合法出牌"里选 → 标记 direct(执行层点选直出)。"""
         who = self._last_seat.get("who")
@@ -704,6 +729,15 @@ class GuandanAdapter(GameAdapter):
 
             self._rl = RLPolicy()
             print(f"▶ RL 决策器已加载: {os.path.basename(self._rl.path)}", flush=True)
+        # ★★ 治脑(2026-09-18): "桌上压着什么"必须有值, 否则候选不过滤 ⇒ RL 挑压不过的牌 ✗
+        #   实测症状: 选牌核对一致 ✓ 但游戏回『牌太小，压不过』⇒ 是**决策层**没看到桌面 ✗
+        #   兜底: 有真值通道时, 用**游戏记录的上一手**(别的座位、非"不出")当 last ✓
+        if last is None:
+            _t = self._last_play_from_truth()
+            if _t is not None:
+                last = _t
+                print("  [rl] ⚠ 桌面识别为空 ⇒ 用游戏真值的上一手兜底(决策按它过滤) ✓",
+                      flush=True)
         cands = AI.zhao_ke_chu_de_pai(obs.hand, last, JIPAI)
         mine = float(len(obs.hand))
         rem = self.log.seat_remaining()              # 记牌器实测(他方 = 27 − 已出)

@@ -116,7 +116,13 @@ def save_shot(img, slots, n_truth: int, ok: bool, note: str = "") -> str:
     out = np.full((full.shape[0] + band.shape[0] + 8, W, 3), 20, np.uint8)
     out[:full.shape[0], :full.shape[1]] = full
     out[full.shape[0] + 8:, :band.shape[1]] = band
-    p = os.path.join(SHOT_DIR, f"n{n_truth}.png")
+    # ★ 合格才叫 n{张数}.png(**绝不覆盖**已有的合格存档 ✓);
+    #   不合格的另存 n{张数}_fail_{时间}.png —— 留证但不冒充合格存档 ✓
+    #   (2026-09-18: 曾把合格的 n27.png 覆盖成失败帧 ✗ ⇒ 改成这样)
+    if ok:
+        p = os.path.join(SHOT_DIR, f"n{n_truth}.png")
+    else:
+        p = os.path.join(SHOT_DIR, f"n{n_truth}_fail_{time.strftime('%m%d_%H%M%S')}.png")
     _cv.imwrite(p, out)
     return p
 

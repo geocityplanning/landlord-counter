@@ -434,13 +434,22 @@ class GuandanAdapter(GameAdapter):
         if not hf:
             return Observation(frame=frame, my_turn=False)
         hand = [R.Card(zhi=int(c["zhi"]), hua=int(c["hua"])) for c in hf]
-        sj = t.get("shangJia") or []
+        # ★★ 职责分工(2026-09-19 用户定, 避免"一个字段兼职两件事"):
+        #   · "该不该压 / 能不能任意出" ⇒ **只看 needBeat**(一个布尔, 零歧义 ✓)
+        #   · benLunChuPai(本轮各家出了什么) ⇒ **专门给记牌器用**, 不参与判断 ✓
+        #   (教训: 之前 shangJiaPaiXing 兼职 ⇒ 它 null 时被误读成"没人压着" ⇒ 候选给 10 张 ✗)
+        need_beat = bool(t.get("needBeat"))
+        sj = t.get("shangJia") or [] if need_beat else []
         table = [R.Card(zhi=int(c["zhi"]), hua=int(c["hua"])) for c in sj]
         self._set_my_hand(hand)                     # 喂日志/记牌器(它们要"我手里有什么" ✓)
         if table:
-            self._observe_table(table)              # 记牌: 上家那一手 ✓
+            self._observe_table(table)              # 记牌: 我该压的那一手 ✓
+        # 本轮各家已出的牌 ⇒ 交给记牌器(不参与"该不该压"的判断 ✓)
+        bl = t.get("benLunChuPai") or {}
         return Observation(frame=frame, my_turn=True, hand=hand, table=table,
-                           extra={"truth": True})
+                           extra={"truth": True, "need_beat": need_beat,
+                                  "pass_count": int(t.get("passCount") or 0),
+                                  "round_plays": bl})
 
     def sense(self, frame) -> Observation:
         if mode.TRUTH:                     # ★ 真值模式: **纯真值观测**, 视觉整段跳过 ✓
@@ -827,7 +836,8 @@ class GuandanAdapter(GameAdapter):
         self.usage.rl_infer(n_cand=len(cands), hand=len(obs.hand))
         choice, info = self._rl.choose(cands, obs.hand, self._rl_hist[-16:],
                                        [mine] + others + [mine + sum(others)], (wi, last), 0)
-        print(f"  [rl] 手牌{len(obs.hand)} 候选{info['n_cand']}(可映射{info['mapped']}) → "
+        _md = "压" if (obs.extra or {}).get("need_beat") else "领出"
+        print(f"  [rl] 手牌{len(obs.hand)} [{_md}] 候选{info['n_cand']}(可映射{info['mapped']}) → "
               f"{R.group_to_str(choice) if choice is not None else '不出'} | value={info['value']:.3f}",
               flush=True)
         if choice is None:

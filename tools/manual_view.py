@@ -73,6 +73,18 @@ def main() -> int:
 
     hdr = f"turn={'ME' if t.get('current') == 0 else t.get('current')}  cards={n}  " \
           f"slots={len(slots)}{'' if chk.ok else ' (!!zheng-du) '}"
+    # 各家剩几张 + 上一手(末局的决策全靠它 ✓; 用户 2026-09-18: 把这一局打完, 各种情况都碰一遍)
+    hands_all = t.get("hands") or {}
+    seat_txt = "  ".join(
+        f"{'我' if k == '0' else '席' + k}:{len(hands_all.get(k) or [])}"
+        for k in ("0", "1", "2", "3"))
+    plays = t.get("plays") or []
+    last = plays[-1] if isinstance(plays, list) and plays else None
+    last_txt = ""
+    if last:
+        zz = [name_of(int(v)) for v in (last.get("zhi") or [])]
+        last_txt = f"  上一手: 席{last.get('seat')} 出 {' '.join(zz)}"
+    hdr = hdr + "   |   " + seat_txt + last_txt
     head = np.full((34, max(full.shape[1], band.shape[1]), 3), 20, np.uint8)
     cv2.putText(head, hdr, (6, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
 

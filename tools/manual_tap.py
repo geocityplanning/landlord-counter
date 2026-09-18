@@ -121,10 +121,68 @@ def tap_one(dev, c, mt, idx0: int) -> tuple:
     return (x, len(slots), hand[idx0] if idx0 < len(hand) else 0)
 
 
+def bottom_buttons(img) -> list:
+    """量底部按钮行里的**各段按钮**中心(2026-09-18)。
+
+    实测: y≈1113 那一行有三段(出牌=中间那段最亮/金色 [32,149,186] BGR) ⇒
+    按"亮段"分段、返回各段中心 x。顺序 = 屏幕从左到右 ✓
+    """
+    y0, y1 = 1085, 1145
+    strip = img[y0:y1].astype("int16")
+    # 判据 = "**和桌面绿不一样**"(2026-09-18 两次猜颜色都错 ✗: "最亮20%"只挑到出牌那段,
+    #        "蓝>绿"一段都挑不到 ⇒ 改为与**按钮行上方那条桌面**的均色比差异, 实测三段全出 ✓)
+    ref = img[1030:1060].reshape(-1, 3).mean(axis=0)
+    on = (np.abs(strip - ref.reshape(1, 1, 3)).sum(axis=2) > 90).mean(axis=0) > 0.5
+    segs, start = [], None
+    for i, v in enumerate(on):
+        if v and start is None:
+            start = i
+        elif not v and start is not None:
+            if i - start > 30:                       # 太窄的当噪声 ✓
+                segs.append((start + i) // 2)
+            start = None
+    if start is not None and len(on) - start > 30:
+        segs.append((start + len(on)) // 2)
+    return [(int(x), (y0 + y1) // 2) for x in segs]
+
+
+def do_pass(dev, c, mt) -> bool:
+    """按"不出" —— 三格里中间是出牌(已知 ✓) ⇒ 先试最右、再试最左, 以真值为准 ✓"""
+    t0 = c.truth() or {}
+    before_cur = t0.get("current")
+    btns = bottom_buttons(dev.snap())
+    print(f"  底部按钮段: {btns}")
+    order = [b for b in btns if abs(b[0] - 360) > 60]     # 排除中间(出牌) ✓
+    order.sort(key=lambda b: -b[0])                        # 先右后左 ✓
+    for x, y in order:
+        mt.tap(x, y)
+        time.sleep(1.2)
+        t = c.truth() or {}
+        sel = t.get("selected") or []
+        if sel:
+            print(f"  ✗ x={x} 是「提示」(选中了 {len(sel)} 张) ⇒ 清掉换另一侧")
+            for sid in list(sel):
+                ids = list(t.get("handIds") or [])
+                if sid in ids:
+                    ix = ids.index(sid)
+                    img = dev.snap()
+                    slots, _ = L.locate(img, len(ids))
+                    if ix < len(slots):
+                        mt.tap(int(slots[ix]) + 6, L.geom().hand_y())
+                        time.sleep(0.5)
+            continue
+        if t.get("current") != before_cur:
+            print(f"  ✓ x={x} 就是「不出」(轮到 {before_cur} → {t.get('current')})")
+            return True
+    print("  ✗ 两个候选都没让回合变化")
+    return False
+
+
 def main() -> int:
     args = [a for a in sys.argv[1:]]
     do_play = "--play" in args
     do_clear = "--clear" in args
+    want_pass = "--pass" in args
     nums = [int(a) for a in args if a.isdigit()]
 
     dev = AdbDevice(serial="127.0.0.1:5555", url="http://172.18.0.1:8123/index.html")
@@ -145,6 +203,13 @@ def main() -> int:
         hand, _i, s2, _p = shot(dev, c, mt, "清理后")
         print(f"✓ 清理: {len(sel)} → selected={len(s2)}")
         return 0
+
+    if want_pass:
+        ok = do_pass(dev, c, mt)
+        wait_stable(dev)
+        shot(dev, c, mt, "不出后")
+        print(f"✓ 不出 {'成功' if ok else '失败 ✗'} | 图: {OUT}")
+        return 0 if ok else 1
 
     hand0 = [int(v) for v in ((c.truth() or {}).get("hands") or {}).get("0") or []]
     for n in nums:

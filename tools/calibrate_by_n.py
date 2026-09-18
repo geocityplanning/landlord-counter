@@ -44,6 +44,7 @@ def wait_static(dev, tol=1.5, timeout=6.0):
 
 
 LAST_W = 88          # 末张完整宽度(源码布局常量 ✓)
+SHOT_DIR = "data/calib/shots"      # 每档截图存档(供以后复核 ✓; 不进仓库 ✗)
 
 
 def measure_row(img, n_truth: int, geom: G.GuandanGeom):
@@ -87,6 +88,39 @@ def measure_row(img, n_truth: int, geom: G.GuandanGeom):
     return lefts, True, (f"峰 {len(peaks)} 个 → 左缘 {lefts[:3]}…{lefts[-1]}, 间距中位 {pitch:.1f}")
 
 
+def save_shot(img, slots, n_truth: int, ok: bool, note: str = "") -> str:
+    """**存档每档的截图** ✓(用户 2026-09-18 要求: "方便以后复核")
+
+    内容: 上=整帧(带牌位竖线 + 编号), 下=手牌带放大 2 倍(能看清每张牌是什么) ✓
+    路径: data/calib/shots/n{张数}.png —— **不进仓库**(牌局画面属敏感数据, 公开仓不可入库 ✗)
+    """
+    import cv2 as _cv
+
+    os.makedirs(SHOT_DIR, exist_ok=True)
+    y0, y1 = 790, 950                                  # 手牌及周边(含上方干扰区, 便于复核 ✓)
+    full = img.copy()
+    for i, x in enumerate(slots):
+        x0 = int(x)
+        _cv.line(full, (x0, y0), (x0, y1), (0, 255, 0), 1)
+        _cv.putText(full, str(i), (x0, y0 - 4), _cv.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 255), 1)
+    band = img[y0 - 25:y1]
+    band = _cv.resize(band, (band.shape[1] * 2, band.shape[0] * 2), interpolation=_cv.INTER_NEAREST)
+    for i, x in enumerate(slots):
+        xb = int(x) * 2
+        _cv.line(band, (xb, 0), (xb, band.shape[0]), (0, 255, 0), 1)
+        _cv.putText(band, str(i), (xb + 2, 14), _cv.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+    tag = f"{n_truth} 张  实测 {len(slots)} 位  {'✓ 合格' if ok else '✗ 不合格'}"
+    _cv.putText(band, tag, (4, band.shape[0] - 6), _cv.FONT_HERSHEY_SIMPLEX, 0.5,
+                (0, 255, 0) if ok else (0, 0, 255), 1)
+    W = max(full.shape[1], band.shape[1])
+    out = np.full((full.shape[0] + band.shape[0] + 8, W, 3), 20, np.uint8)
+    out[:full.shape[0], :full.shape[1]] = full
+    out[full.shape[0] + 8:, :band.shape[1]] = band
+    p = os.path.join(SHOT_DIR, f"n{n_truth}.png")
+    _cv.imwrite(p, out)
+    return p
+
+
 def main() -> int:
     geom = L.geom()
     if "--show" in sys.argv:
@@ -120,6 +154,8 @@ def main() -> int:
         img = wait_static(dev)
         slots, ok, note = measure_row(img, n, geom)
         print(f"[{n} 张] {note}")
+        shot = save_shot(img, slots if slots else [], n, ok)     # ★ 每档存档 ✓
+        print(f"  ✓ 截图存档: {shot}")
         if ok:
             geom.slots_by_n[str(n)] = slots
             G.save(geom)
@@ -139,8 +175,10 @@ def main() -> int:
             break
         x = slots[-1]
         import numpy as _np
+        del _np
 
-        mt.tap(int(x), geom.hand_y())
+        # ★ 点击 = 牌位 + 6px(2026-09-18 实测): 点在牌的**左缘**上 ⇒ 游戏判给左边那张 ✗
+        mt.tap(int(x) + 6, geom.hand_y())
         time.sleep(0.5)
         y0, y1 = geom.hand_y0, geom.hand_y1
         bb = img[y0:y1]

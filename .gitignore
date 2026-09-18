@@ -27,3 +27,5 @@ data/
 data/rec/
 data/_polluted/
 !data/calib/
+# 标定截图存档(牌局画面属敏感数据 ⇒ 绝不入库 ✗; 用户 2026-09-18 要求保留供复核 ✓)
+data/calib/shots/

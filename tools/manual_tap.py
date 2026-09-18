@@ -37,8 +37,29 @@ def nm(v: int) -> str:
     return NAME.get(v, str(v))
 
 
+def wait_stable(dev, timeout: float = 2.5, tol: float = 2.0) -> bool:
+    """等画面**停稳**再测量/截屏(用户 2026-09-18 指出: 刚出完牌有个**小火箭动画**,
+    那一刻**牌是暂时消失的** ⇒ 此时截的图/量的数全是错的 ✗)
+
+    做法: 连续两帧像素差 ≤ tol 即认为停稳(帧差判据零成本 ✓)
+    """
+    prev = dev.snap()
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        time.sleep(0.35)
+        cur = dev.snap()
+        if prev.shape != cur.shape:
+            prev = cur
+            continue
+        if float(np.mean(np.abs(cur.astype("int16") - prev.astype("int16")))) <= tol:
+            return True
+        prev = cur
+    return False
+
+
 def shot(dev, c, mt, note: str = "") -> tuple:
-    """截一张"给用户看"的图: 整屏 + 手牌放大 + 编号 + 选中标记 ✓"""
+    """截一张"给用户看"的图: 整屏 + 手牌放大 + 编号 + 选中标记 ✓(先等画面停稳 ✓)"""
+    wait_stable(dev)
     t = c.truth() or {}
     hand = [int(v) for v in ((t.get("hands") or {}).get("0") or [])]
     ids = list(t.get("handIds") or [])
@@ -85,18 +106,19 @@ def shot(dev, c, mt, note: str = "") -> tuple:
     return hand, ids, sel, pos_sel
 
 
-def tap_one(dev, c, mt, idx0: int) -> bool:
-    """点第 idx0(0 起) 张 —— 点前重新实量牌位 ✓"""
+def tap_one(dev, c, mt, idx0: int) -> tuple:
+    """点第 idx0(0 起) 张 —— 点前重新实量牌位 ✓; 返回 (x, 当帧牌位数, 该位读到的点数)"""
     t = c.truth() or {}
     hand = [int(v) for v in ((t.get("hands") or {}).get("0") or [])]
+    wait_stable(dev)                 # ★ 点之前先等停稳: 动画期间量到的牌位是错的 ✗
     img = dev.snap()
     slots, _ = L.locate(img, len(hand))
     if idx0 >= len(slots):
         print(f"✗ 第 {idx0 + 1} 号越界(当前 {len(slots)} 位)")
-        return False
+        return (0, len(slots), 0)
     x = int(slots[idx0])
     mt.tap(x + 6, L.geom().hand_y())          # ★ +6px: 点在左缘上会被判给左邻 ✗
-    return True
+    return (x, len(slots), hand[idx0] if idx0 < len(hand) else 0)
 
 
 def main() -> int:
@@ -124,25 +146,33 @@ def main() -> int:
         print(f"✓ 清理: {len(sel)} → selected={len(s2)}")
         return 0
 
+    hand0 = [int(v) for v in ((c.truth() or {}).get("hands") or {}).get("0") or []]
     for n in nums:
-        ok = tap_one(dev, c, mt, n - 1)
-        print(f"  点第 {n} 号 {'✓' if ok else '✗'}")
+        x, ns, v = tap_one(dev, c, mt, n - 1)
+        print(f"  点第 {n} 号 → x={x} (当帧 {ns} 位, 该位应是 {nm(v)})")
         time.sleep(0.55)
 
     time.sleep(0.9)
     hand, ids, sel, pos_sel = shot(dev, c, mt, f"点了 {' '.join(str(n) for n in nums)}")
-    want = [nm(hand[n - 1]) for n in nums if 0 < n <= len(hand)]
-    got = [nm(hand[i]) for i in sorted(pos_sel)]
-    print(f"✓ 你想出: {' '.join(want)} | 游戏实际选中: {' '.join(got) or '无'} "
-          f"| {'✓ 一致' if want == got else '✗ 不一致'}")
+    # ★ 判定必须比**位置**(2026-09-18: 曾比"名字"且用点后的手牌 ⇒ 明明偏位却报'一致' ✗)
+    want_pos = [n - 1 for n in nums]
+    got_pos = sorted(pos_sel)
+    want = [nm(hand0[p]) for p in want_pos if p < len(hand0)]
+    got = [nm(hand0[p]) for p in got_pos if p < len(hand0)]
+    same = want_pos == got_pos
+    print(f"✓ 你要的位: {[p + 1 for p in want_pos]}({' '.join(want)}) | "
+          f"实际选中位: {[p + 1 for p in got_pos]}({' '.join(got) or '无'}) "
+          f"| {'✓ 一致' if same else '✗ 不一致 —— 有偏移!'}")
 
-    if do_play and want == got and got:
+    if do_play and same and got_pos:
         pb = L.play_button(dev.snap())
         mt.tap(int(pb[0]), int(pb[1]))
         time.sleep(1.6)
         hand2, _i, _s, _p = shot(dev, c, mt, "出牌后")
         print(f"✓ 已按出牌 | 手牌 {len(hand)} → {len(hand2)}"
               f" | {'✓ 打出去了' if len(hand2) < len(hand) else '✗ 没打出去'}")
+    elif do_play:
+        print("✗ 选中与要求不一致 ⇒ **不出牌**(避免把脏牌打出去)")
     print(f"图: {OUT}")
     return 0
 

@@ -38,7 +38,10 @@ def main() -> int:
     if "--out" in sys.argv:
         out = sys.argv[sys.argv.index("--out") + 1]
 
+    from manual_tap import wait_stable           # 同一份实现 ✓(别再写第二套 ✗)
+
     dev = AdbDevice(serial="127.0.0.1:5555", url="http://172.18.0.1:8123/index.html")
+    wait_stable(dev)
     c = CDP()
     c.find_truth()
     t = c.truth() or {}

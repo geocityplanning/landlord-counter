@@ -36,6 +36,12 @@ def main() -> int:
     mt = MaaTouch("127.0.0.1:5555")
     mt.start()
 
+    # ★ 等我的回合 + 牌桌干净(否则测的是脏状态) ✓
+    for _ in range(40):
+        _t = c.truth() or {}
+        if _t.get("phase") == "playing" and _t.get("current") == 0 and not (_t.get("selected") or []):
+            break
+        time.sleep(3)
     f = dev.snap()
     y0, y1 = P.hand_band_measured(f)
     xs = P.card_slots(f, y0, y1)

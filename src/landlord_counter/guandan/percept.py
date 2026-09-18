@@ -797,30 +797,24 @@ def card_slots(img, y0: int | None = None, y1: int | None = None, pitch_fallback
     #   ③ 而**白牌面连成的横范围**是稳的: 左缘 = 最左那张的左缘, 右缘 = 最右那张的右缘 ✓
     #   (公式: 最右那张的左缘 = 右缘 - 牌宽; 牌数 = 跨度/间距 + 1) ✓ 可迁移到别的游戏 ✓
     x_lo = int(_cols[0]) if len(_cols) >= 5 else 0
-    hi_left = x_hi - CARD_W_FULL                      # 最右那张的左缘 ✓
-    n_a = int(round((hi_left - x_lo) / pitch)) + 1    # 尺子①: 最右那张左缘反推 ✓
-    # ★★ 尺子②(2026-09-17 新增): **块宽反推张数** —— 独立于尺子①, 用来校准那个"幽灵位" ✓
-    #   源码布局: 整排宽 = (n-1)*间距 + 末张宽(88) ⇒ n = (块宽-88)/间距 + 1 ✓
-    #   (实测真值 27 张时, 尺子① 报 28 ✗ ⇒ 两把尺子不一致就用② —— 它是纯几何, 不依赖任何检测阈值 ✓)
-    n_b = int(round(((x_hi - x_lo) - LAST_CARD_W) / pitch)) + 1
+    # ★★★ 最右那张的**左缘**: 白范围右缘 − **末张完整宽度 88**(不是普通牌宽 62 ✗)
+    #   2026-09-17 用真值逐位实测定的案: 减 62 会让整排偏右**一张牌的距离** ✗
+    #   证据: 点第13位→选中第14张 ✗ / 点第3位→第4张 ✗ / 点第0位→第1张 ✗
+    #         而点**最后一位**→选中最后一位 ✓(它没有"下一张", 所以偏不出来 ✓)
+    #   ⇒ 源码布局"整排宽=(n-1)*间距+88"里的 88 就是末张宽度 ✓
+    hi_left = x_hi - LAST_CARD_W
+    n_a = int(round((hi_left - x_lo) / pitch)) + 1    # 尺子① ✓
+    n_b = int(round(((x_hi - x_lo) - LAST_CARD_W) / pitch)) + 1   # 尺子②: 块宽反推 ✓
     n = n_b if 0 < n_b <= 40 else n_a
     if n <= 0 or n > 40:
         return []
-    grid = [int(round(x_lo + i * pitch)) for i in range(n)]
-    # ★ 收尾(2026-09-17): 白范围右缘可能把右边标签也算进去 ⇒ 末尾多出 1 格 ✗
-    #   判据用"**是不是白牌面**"(与 _cols 同一把尺子 ✓) —— 用"不是桌面绿"会被底部黑标签条骗过 ✗
-    #   注: 手牌从大到小排 ⇒ 右端永远是小牌(白的), 不会误伤大小王/黄边级牌(它们在左端) ✓
-    def face_like(x: float) -> bool:
-        x = int(round(x))
-        if x < 0 or x + 8 >= img.shape[1]:
-            return False
-        col = img[y0 + 6:y1 - 6, x:x + 8]
-        return bool((col.min(axis=2) > 150).mean() > 0.40)
-
-    while len(grid) > 1 and not face_like(grid[-1]):
-        grid.pop()
-    return grid
-
+    # ★★★ 网格必须**从右往左铺**(2026-09-17 用真值逐位实测定的案):
+    #   点第25位(最右) → 精准 ✓✓; 点第13位 → 选中第12张 ✗; 点第0位 → 没选中 ✗
+    #   ⇒ **左端锚点不可靠**(最左那张挨着「你」框, 边缘弱/相位偏) ⇒ 左半整体偏一位 ✗
+    #   ⇒ 改回"以最右那张的左缘为锚点、向左铺 24px" ✓ (它完整可见, 必被检测到 ⇒ 天生可靠 ✓)
+    grid = [int(round(hi_left - i * pitch)) for i in range(n)]
+    grid = [g for g in grid if g >= 0]
+    return sorted(grid)
 def card_edges(img, y0: int = 0, y1: int = 0, min_gap: int = 10,
                q: float = 0.93, floor: float = 4.0) -> list:
     """手牌带里所有**竖直边界线**的 x(卡与卡的分界)。

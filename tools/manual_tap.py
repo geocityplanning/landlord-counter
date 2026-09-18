@@ -57,9 +57,31 @@ def wait_stable(dev, timeout: float = 2.5, tol: float = 2.0) -> bool:
     return False
 
 
+def wait_ready(dev, c, timeout: float = 5.0) -> tuple:
+    """等到"**画面停稳 且 牌真的在**"为止(2026-09-18 用户两次指出: 出牌瞬间有小火箭动画,
+    牌面会**短暂全没** ✗)。
+
+    为什么要两条: 只看"停稳"会漏 —— 动画期间牌全没了 ⇒ **连续两帧都是空的** ⇒ 像素差≈0
+    ⇒ 误判"停稳"通过 ✗✓。所以还要**牌位数量 == 真值张数**这个硬条件 ✓。
+    返回 (ok, 帧)。
+    """
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        wait_stable(dev, timeout=1.2)
+        t = c.truth() or {}
+        n = len((t.get("hands") or {}).get("0") or [])
+        img = dev.snap()
+        if n:
+            slots, _ = L.locate(img, n)
+            if len(slots) == n:
+                return True, img
+        time.sleep(0.3)
+    return False, dev.snap()
+
+
 def shot(dev, c, mt, note: str = "") -> tuple:
-    """截一张"给用户看"的图: 整屏 + 手牌放大 + 编号 + 选中标记 ✓(先等画面停稳 ✓)"""
-    wait_stable(dev)
+    """截一张"给用户看"的图: 整屏 + 手牌放大 + 编号 + 选中标记 ✓(先等"停稳且牌在" ✓)"""
+    wait_ready(dev, c)
     t = c.truth() or {}
     hand = [int(v) for v in ((t.get("hands") or {}).get("0") or [])]
     ids = list(t.get("handIds") or [])
@@ -118,7 +140,7 @@ def tap_one(dev, c, mt, idx0: int) -> tuple:
     """点第 idx0(0 起) 张 —— 点前重新实量牌位 ✓; 返回 (x, 当帧牌位数, 该位读到的点数)"""
     t = c.truth() or {}
     hand = [int(v) for v in ((t.get("hands") or {}).get("0") or [])]
-    wait_stable(dev)                 # ★ 点之前先等停稳: 动画期间量到的牌位是错的 ✗
+    wait_ready(dev, c)               # ★ 点之前等到"停稳且牌在": 动画期间量到的牌位是错的 ✗
     img = dev.snap()
     slots, _ = L.locate(img, len(hand))
     if idx0 >= len(slots):
@@ -191,6 +213,7 @@ def main() -> int:
     do_play = "--play" in args
     do_clear = "--clear" in args
     want_pass = "--pass" in args
+    want_press = "--press" in args
     nums = [int(a) for a in args if a.isdigit()]
 
     dev = AdbDevice(serial="127.0.0.1:5555", url="http://172.18.0.1:8123/index.html")
@@ -210,6 +233,21 @@ def main() -> int:
         time.sleep(0.8)
         hand, _i, s2, _p = shot(dev, c, mt, "清理后")
         print(f"✓ 清理: {len(sel)} → selected={len(s2)}")
+        return 0
+
+    if want_press:                       # 只按"出牌"(桌上已有选中时用 ✓, 不重复点牌)
+        t = c.truth() or {}
+        n0 = len((t.get("hands") or {}).get("0") or [])
+        if not (t.get("selected") or []):
+            print("✗ 桌上没有选中的牌 ⇒ 不按")
+            return 1
+        wait_stable(dev)
+        pb = L.play_button(dev.snap())
+        mt.tap(int(pb[0]), int(pb[1]))
+        time.sleep(1.8)
+        _h, _i, _s, _p = shot(dev, c, mt, "出牌后")
+        print(f"✓ 已按出牌 | 手牌 {n0} → {len(_h)} | "
+              f"{'✓ 打出去了' if len(_h) < n0 else '✗ 没打出去'}")
         return 0
 
     if want_pass:
@@ -232,7 +270,10 @@ def main() -> int:
     got_pos = sorted(pos_sel)
     want = [nm(hand0[p]) for p in want_pos if p < len(hand0)]
     got = [nm(hand0[p]) for p in got_pos if p < len(hand0)]
-    same = want_pos == got_pos
+    # ★ 判定必须比**集合**而不是顺序(2026-09-18: 用序列比较 ⇒ 用户报"5551010"时
+    #   我按 17,18,19,5,6 的顺序传, 实际选中的是排序后的 5,6,17,18,19 ⇒ 明明全对却报"不一致" ✗,
+    #   白拦了一手好牌 —— 选牌本来就不分先后 ✓)
+    same = sorted(want_pos) == got_pos
     print(f"✓ 你要的位: {[p + 1 for p in want_pos]}({' '.join(want)}) | "
           f"实际选中位: {[p + 1 for p in got_pos]}({' '.join(got) or '无'}) "
           f"| {'✓ 一致' if same else '✗ 不一致 —— 有偏移!'}")

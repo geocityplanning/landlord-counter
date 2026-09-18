@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 import sys
 
+import numpy as np
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
 from landlord_counter.guandan import locate as L          # noqa: E402
@@ -34,6 +36,19 @@ def main() -> int:
     hands = (t.get("hands") or {}).get("0") or []
     ids = list(t.get("handIds") or [])
     img = dev.snap()
+    # ★ 先过"停稳 + 牌位==张数"闸门(2026-09-18: 之前 13/23 很可能撞在出牌动画的空档上 ✗)
+    import time as _t
+    _t0 = _t.time()
+    from landlord_counter.guandan import locate as _L2
+    while _t.time() - _t0 < 6:
+        _a = dev.snap()
+        _t.sleep(0.4)
+        _b = dev.snap()
+        if _a.shape == _b.shape and float(np.abs(_b.astype("int16") - _a.astype("int16")).mean()) <= 2:
+            if len(_L2.locate(_b, len((t.get("hands") or {}).get("0") or []))[0]) == len(
+                    (t.get("hands") or {}).get("0") or []):
+                img = _b
+                break
     slots, _ = L.locate(img, len(hands))
     reads = [a[1] for a in P.tm_read_hand(img, y0=L.geom().hand_y0, slots=slots)[0]]
 

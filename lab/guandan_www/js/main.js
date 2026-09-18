@@ -343,6 +343,20 @@
                         1: gameState.ai1Pai.map(c => c.zhi),
                         2: gameState.ai2Pai.map(c => c.zhi),
                         3: gameState.ai3Pai.map(c => c.zhi)},
+                // ★ 2026-09-18 加: **带花色**的手牌 —— RL 决策要区分"♣J ≠ ♥J"，
+                //   只给点数不够 ✗（此前只能拿点数去猜花色 ⇒ 定位串位）。
+                //   hua 编码与 Python 侧一致: 0♠ 1♥ 2♣ 3♦ 4王 ✓
+                handsFull: {
+                    0: gameState.wanJiaPai.map(c => ({zhi: c.zhi, hua: c.hua, id: c.id})),
+                    1: gameState.ai1Pai.map(c => ({zhi: c.zhi, hua: c.hua, id: c.id})),
+                    2: gameState.ai2Pai.map(c => ({zhi: c.zhi, hua: c.hua, id: c.id})),
+                    3: gameState.ai3Pai.map(c => ({zhi: c.zhi, hua: c.hua, id: c.id}))
+                },
+                jiPai: gameState.jiPai,
+                // 桌上"待压"的那一手: 上家最近出的牌(带花色) ⇒ 决策不用再靠视觉认桌面 ✓
+                shangJia: (gameState.shangJiaPaiXing && gameState.shangJiaPaiXing.cards)
+                    ? gameState.shangJiaPaiXing.cards.map(c => ({zhi: c.zhi, hua: c.hua, id: c.id}))
+                    : null,
                 plays: (window.__plays || []).slice(-30)
             };
         } catch (e) { return {err: String(e)}; }
@@ -383,7 +397,10 @@
         try {
             window.__plays = window.__plays || [];
             window.__plays.push({t: Date.now(), seat: playerIndex,
-                                 zhi: cards.map(c => c.zhi), n: cards.length});
+                                 zhi: cards.map(c => c.zhi),
+                                 hua: cards.map(c => c.hua),      // ★ 花色也记(用于分辨 ♣J/♥J ✓)
+                                 ids: cards.map(c => c.id),
+                                 n: cards.length});
         } catch (e) {}
         // ==== 插桩结束 ====
         const handKey = ['wanJiaPai', 'ai1Pai', 'ai2Pai', 'ai3Pai'][playerIndex];

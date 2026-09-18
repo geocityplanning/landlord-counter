@@ -371,7 +371,84 @@ class GuandanAdapter(GameAdapter):
         except Exception:  # noqa: BLE001
             return {}
 
+    def _verify_identity(self, combo, why: str = "") -> None:
+        """**即时对账**(2026-09-18 用户第一步): 出完一手, 立刻问游戏"你刚记的是哪几张",
+        当场与我们的决策逐张比对 ⇒ **每一手都是铁证** ✓
+
+        为什么必须"即时": 真值 `plays` 是**累积**的 ⇒ 事后按时间/序号配对容易错位 ✗
+          (今天就被它坑过一次: 报告里三次都显示"出 J" ✗)
+        判据: **点数 + 花色** 多重集一致(能分清 ♣J vs ♥J ✓); 拿不到花色就只比点数 ✓
+        """
+        if not mode.TRUTH:
+            return
+        cdp = getattr(getattr(self, "_ex", None), "cdp", None)
+        if cdp is None:
+            return
+        cards = list(combo.cards) if combo is not None else []
+        want_z = sorted(int(getattr(c, "zhi", 0)) for c in cards)
+        want_h = sorted(int(getattr(c, "hua", 0) or 0) for c in cards)
+        for _ in range(6):
+            try:
+                plays = (cdp.truth() or {}).get("plays") or []
+            except Exception:  # noqa: BLE001
+                return
+            # ★ 不能只看最后一条(2026-09-18: 我们出完 2 秒内别人就接上了 ✗) ⇒
+            #   往前找**最近的、座位 0 的、且 20 秒内**的那一条 = 刚打出的那一手 ✓
+            last = None
+            for p in reversed(plays):
+                if int(p.get("seat", -1)) == 0:
+                    if time.time() * 1000 - int(p.get("t") or 0) < 20000:
+                        last = p
+                    break
+            if last is not None:
+                z = sorted(int(v) for v in (last.get("zhi") or []))
+                h = sorted(int(v) for v in (last.get("hua") or []))
+                ok = (z == want_z) and (not h or h == want_h)
+                extra = "" if ok or not h else f" 花色 期望{want_h} 实际{h}"
+                print(f"  [对账] {'✓ 一致' if ok else '✗ 不一致!!'} "
+                      f"决策={R.group_to_str(combo) if combo is not None else '-'} "
+                      f"实出={' '.join(str(v) for v in z)}{extra}", flush=True)
+                return
+            time.sleep(0.4)
+        print("  [对账] ? 真值里没看到这一手(还没写入?)", flush=True)
+
+    def _sense_by_truth(self, frame):
+        """**纯真值观测**(2026-09-18 用户拍板: "如果真值就直接全部都用真值, 视觉去掉") ✓
+
+        为什么要把视觉整段拿掉: 旧真值模式是"视觉为主 + 真值兜漏" ✗ —— 手牌还是视觉读的
+          (~70% 准 ✗) ⇒ RL 可能拿错手牌做决策 ✗; 桌面视觉为空 ⇒ 靠真值兜 ✓ ……
+          **每漏一处补一处, 永远在追漏** ✗
+        现在: 手牌 / 轮到谁 / 是不是我 / 待压牌 **全部来自 `__truth()`** ✓(带花色 ✓),
+          一行视觉都不用 ✓; 一次读取, 内部自洽 ✓
+        拿不到真值 ⇒ 返回 None, 让调用方**响亮退回视觉**(绝不静默降级 ✗)
+        """
+        t = self._truth_now()
+        if not t or t.get("err") or t.get("phase") is None:
+            return None
+        phase = t.get("phase")
+        if phase != "playing":                      # 结算/等待: 不动作, 交给 settle ✓
+            return Observation(frame=frame, my_turn=False, extra={"truth_phase": phase})
+        if int(t.get("current", -1)) != 0:           # 别人回合: 只看不动 ✓
+            return Observation(frame=frame, my_turn=False)
+        hf = (t.get("handsFull") or {}).get("0") or []
+        if not hf:
+            return Observation(frame=frame, my_turn=False)
+        hand = [R.Card(zhi=int(c["zhi"]), hua=int(c["hua"])) for c in hf]
+        sj = t.get("shangJia") or []
+        table = [R.Card(zhi=int(c["zhi"]), hua=int(c["hua"])) for c in sj]
+        self._set_my_hand(hand)                     # 喂日志/记牌器(它们要"我手里有什么" ✓)
+        if table:
+            self._observe_table(table)              # 记牌: 上家那一手 ✓
+        return Observation(frame=frame, my_turn=True, hand=hand, table=table,
+                           extra={"truth": True})
+
     def sense(self, frame) -> Observation:
+        if mode.TRUTH:                     # ★ 真值模式: **纯真值观测**, 视觉整段跳过 ✓
+            _obs = self._sense_by_truth(frame)
+            if _obs is not None:
+                return _obs
+            print("  [truth] ⚠ 真值读不到 ⇒ 本帧退回视觉(不该发生; 查 CDP/插桩/版本号) ✗",
+                  flush=True)
         self._track_seat(frame)
         self._observe_table_gated(frame)     # 记牌: 每帧都看桌面(别人的出牌也要记 ✓)
         if not P.my_turn(frame):          # 手牌白卡 + 按钮可用(防残局误判)
@@ -802,6 +879,7 @@ class GuandanAdapter(GameAdapter):
                          if 0 <= i < len(obs.hand)]
                 if ex.direct_play(idxs, len(obs.hand), ranks=ranks):
                     self._log_plan(action.combo, action.meta.get("why", ""))   # 打出去了才记决策
+                    self._verify_identity(action.combo, action.meta.get("why", ""))  # ★ 即时对账 ✓
                     self._log_seat_play("南", action.combo.cards,
                                         hand_left=max(0, len(obs.hand) - len(action.combo.cards)),
                                         src="own")
@@ -844,6 +922,7 @@ class GuandanAdapter(GameAdapter):
             if idxs:
                 ranks = [getattr(obs.hand[i], "zhi", None) for i in idxs if 0 <= i < len(obs.hand)]
                 if ex.direct_play(idxs, len(obs.hand), ranks=ranks):
+                    self._verify_identity(action.combo, action.meta.get("why", ""))  # ★ 即时对账 ✓
                     self._log_plan(action.combo, action.meta.get("why", ""))
                     self._log_seat_play("南", action.combo.cards,
                                         hand_left=max(0, len(obs.hand) - len(action.combo.cards)),

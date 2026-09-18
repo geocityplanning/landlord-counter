@@ -64,7 +64,20 @@ def main() -> int:
     c = CDP()
     c.find_truth()
     t = c.truth() or {}
-    plays = [p for p in (t.get("plays") or []) if int(p.get("n") or 0) > 0]
+    # ★ 只取**本次运行**的真值记录(2026-09-18: 页面不重载时 plays 是跨运行累积的 ✗,
+    #   不过滤会把上一次的行拿来配对 ⇒ 结论全是假 ✗)
+    t_start = None
+    try:
+        txt = open(log, encoding="utf-8", errors="replace").read()
+        m = re.search(r"\[HB\] t=(\d+)", txt)
+        if m:
+            t_start = int(m.group(1)) * 1000 - 5000      # 第一条心跳的秒级时间戳 ⇒ 运行起点 ✓
+        else:
+            t_start = int(os.stat(log).st_mtime * 1000) - 1000 * 60 * 20
+    except OSError:
+        pass
+    plays = [p for p in (t.get("plays") or [])
+             if int(p.get("n") or 0) > 0 and (t_start is None or int(p.get("t") or 0) >= t_start)]
     acts = parse_log(log)
 
     print(f"== 模式: 见日志开头 | 真值里记录的手数: {len(plays)} | 日志里的动作: {len(acts)} ==\n")

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>掼蛋伴随 · 记牌助手</title>
+<style>
+  :root { --bg:#151a21; --card:#1e2530; --line:#2c3746; --fg:#e6edf3; --dim:#8b98a9;
+          --ok:#3fb950; --warn:#d29922; --mine:#2f81f7; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:#0d1117; color:var(--fg); font:13px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+
+  /* ---------- 悬浮球(收起态) ---------- */
+  #ball { position:fixed; right:16px; bottom:16px; width:52px; height:52px; border-radius:50%;
+          background:linear-gradient(145deg,#2f81f7,#1f6feb); display:none; align-items:center;
+          justify-content:center; cursor:pointer; box-shadow:0 6px 20px rgba(0,0,0,.5); z-index:99;
+          font-size:22px; user-select:none; }
+  #ball .badge { position:absolute; top:-4px; right:-4px; background:var(--warn); color:#000;
+                 font-size:11px; font-weight:700; border-radius:10px; padding:1px 6px; }
+  body.collapsed #ball { display:flex; }
+
+  /* ---------- 主面板 ---------- */
+  #panel { position:fixed; right:16px; bottom:16px; width:340px; max-height:88vh; background:var(--bg);
+           border:1px solid var(--line); border-radius:12px; display:flex; flex-direction:column;
+           box-shadow:0 10px 40px rgba(0,0,0,.6); z-index:98; overflow:hidden; }
+  body.collapsed #panel { display:none; }
+  header { display:flex; align-items:center; gap:8px; padding:10px 12px; background:var(--card);
+           border-bottom:1px solid var(--line); cursor:move; }
+  header b { font-size:14px; }
+  header .tag { background:#21262d; color:var(--dim); border-radius:6px; padding:1px 6px; font-size:11px; }
+  header .sp { flex:1; }
+  header button { background:#21262d; color:var(--fg); border:0; border-radius:6px; padding:3px 8px;
+                  cursor:pointer; font-size:12px; }
+  .body { overflow-y:auto; padding:10px 12px; display:flex; flex-direction:column; gap:12px; }
+  section h3 { font-size:12px; color:var(--dim); font-weight:600; margin-bottom:6px;
+               display:flex; justify-content:space-between; }
+
+  /* 出牌记录 */
+  .rec { display:flex; gap:6px; align-items:baseline; padding:3px 0; border-bottom:1px dashed #222c38; }
+  .rec .who { color:var(--dim); min-width:26px; }
+  .rec.mine .who { color:var(--mine); font-weight:700; }
+  .rec .cs { display:flex; gap:3px; flex-wrap:wrap; }
+  .c { background:var(--card); border:1px solid var(--line); border-radius:4px; padding:0 4px;
+       font-family:ui-monospace,monospace; }
+  .c.pass { color:var(--dim); border-style:dashed; }
+
+  /* 牌池 */
+  .pool { display:grid; grid-template-columns:repeat(5,1fr); gap:4px; }
+  .pcell { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:4px;
+           text-align:center; font-family:ui-monospace,monospace; }
+  .pcell .k { color:var(--dim); font-size:11px; }
+  .pcell .v { font-size:15px; font-weight:700; }
+  .pcell.z .v { color:var(--ok); }        /* 剩0 = 打完了 ✓ */
+
+  /* 推荐 / 托管 */
+  .rec-row { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:6px 8px;
+             display:flex; justify-content:space-between; align-items:center; }
+  .rec-row .n { color:var(--dim); font-size:11px; }
+  #host { width:100%; padding:9px; border:0; border-radius:8px; font-size:14px; font-weight:700;
+          cursor:pointer; background:#21262d; color:var(--fg); }
+  #host.on { background:var(--ok); color:#04140a; }
+  footer { padding:8px 12px; border-top:1px solid var(--line); color:var(--dim); font-size:11px;
+           display:flex; justify-content:space-between; }
+</style>
+</head>
+<body>
+
+<!-- 悬浮球 -->
+<div id="ball" onclick="toggleBall()">🃏<span class="badge" id="ballBadge">–</span></div>
+
+<!-- 主面板 -->
+<div id="panel">
+  <header>
+    <b>记牌助手</b>
+    <span class="tag" id="gid">–</span>
+    <span class="tag" id="ji">级牌 –</span>
+    <span class="sp"></span>
+    <button onclick="toggleBall()" title="收起成悬浮球">—</button>
+  </header>
+
+  <div class="body">
+    <section><h3>出牌记录 <span id="playCount"></span></h3><div id="plays"></div></section>
+    <section><h3>牌池 <span id="poolHint">剩余张数</span></h3><div class="pool" id="pool"></div></section>
+    <section><h3>出牌推荐 <span id="recHint"></span></h3><div id="recs"></div></section>
+    <section><button id="host" onclick="toggleHost()">AI 托管：关</button></section>
+  </div>
+  <footer><span id="acc">准确率 –</span><span id="updated">–</span></footer>
+</div>
+
+<script>
+const ZHI = {11:'J',12:'Q',13:'K',14:'A',15:'小王',16:'大王'};
+const HUA = {0:'♠',1:'♥',2:'♣',3:'♦',4:''};
+const cname = c => (c.hua===4 ? '' : (HUA[c.hua]||'')) + (ZHI[c.zhi] || c.zhi);
+
+function toggleBall(){
+  document.body.classList.toggle('collapsed');
+  localStorage.setItem('ball', document.body.classList.contains('collapsed') ? '1' : '0');
+}
+if (localStorage.getItem('ball') === '1') document.body.classList.add('collapsed');
+
+/* ---------- 拉数据(2 秒一次; 悬浮球收起时也拉, 让角标还活着 ✓) ---------- */
+async function tick(){
+  try {
+    const j = await (await fetch('/api/live')).json();
+    if (j.empty) { document.getElementById('gid').textContent = '等待牌局'; return; }
+    render(j);
+    const a = await (await fetch('/api/accuracy')).json();
+    document.getElementById('acc').textContent =
+      a.verified ? `准确率 ${a.agree}/${a.verified} = ${(a.accuracy*100).toFixed(1)}%` : '准确率 暂无数据';
+  } catch (e) { document.getElementById('updated').textContent = '连接失败'; }
+}
+
+function render(j){
+  document.getElementById('gid').textContent = j.gid;
+  document.getElementById('ji').textContent  = '级牌 ' + (ZHI[j.ji_pai] || (j.ji_pai||'–'));
+  document.getElementById('ballBadge').textContent = (j.hand||[]).length;
+  document.getElementById('updated').textContent = new Date().toLocaleTimeString();
+
+  // ① 出牌记录(最近 12 手)
+  const ps = (j.plays||[]).slice(-12);
+  document.getElementById('playCount').textContent = `${(j.plays||[]).length} 手`;
+  document.getElementById('plays').innerHTML = ps.map(p => `
+    <div class="rec ${p.mine?'mine':''}">
+      <span class="who">${p.mine ? '我' : p.seat}</span>
+      <span class="cs">${p.kind==='pass'
+        ? '<span class="c pass">不出</span>'
+        : (p.cards||[]).map(c => `<span class="c">${cname(c)}</span>`).join('')}</span>
+    </div>`).join('') || '<div class="n" style="color:#8b98a9">还没有记录</div>';
+
+  // ② 牌池(取最新一张快照 ✓ 数据来自 CardTracker.remaining_counts, 前端只显示 ✓)
+  const rem = (j.remains && j.remains[0]) ? j.remains[0].counts : {};
+  const order = [16,15,14,13,12,11,10,9,8,7,6,5,4,3,2];
+  document.getElementById('pool').innerHTML = order.map(k => {
+    const v = rem[k] ?? rem[String(k)];
+    if (v === undefined) return '';
+    return `<div class="pcell ${v===0?'z':''}"><div class="k">${ZHI[k]||k}</div><div class="v">${v}</div></div>`;
+  }).join('') || '<div style="color:#8b98a9">还没有快照</div>';
+
+  // ③ 出牌推荐: 显示最近 3 次决策(候选数 + 压/领出 + 是否对账一致 ✓)
+  const ds = (j.decisions||[]).slice(0,3);
+  document.getElementById('recHint').textContent = `候选数 / ${ds.some(d=>d.need_beat)?'需压':'领出'}`;
+  document.getElementById('recs').innerHTML = ds.map((d,i) => `
+    <div class="rec-row">
+      <span>方案${i+1}：${(d.chosen||[]).map(c=>cname(c)).join(' ') || '不出'}</span>
+      <span class="n">${d.need_beat?'压':'领'} · ${d.cand_n}候选 · ${d.agree===1?'✓一致':(d.agree===0?'✗不一致':'未验')}</span>
+    </div>`).join('') || '<div style="color:#8b98a9">还没有决策</div>';
+
+  // ④ 托管按钮(只写"意图" ✓ 执行归现有托管循环 ✓)
+  const b = document.getElementById('host');
+  b.textContent = j.host ? 'AI 托管：开' : 'AI 托管：关';
+  b.classList.toggle('on', !!j.host);
+}
+
+async function toggleHost(){
+  const b = document.getElementById('host');
+  const want = !b.classList.contains('on');
+  await fetch('/api/host', {method:'POST', headers:{'Content-Type':'application/json'},
+                            body: JSON.stringify({on: want})});
+  tick();
+}
+
+tick();
+setInterval(tick, 2000);
+</script>
+</body>
+</html>

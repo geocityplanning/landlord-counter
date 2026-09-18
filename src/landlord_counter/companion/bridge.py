@@ -21,7 +21,8 @@ def make_sink(log: Any, store: Any, gid: str):
 
     def sink(ev: dict) -> None:
         t = ev.get("type")
-        cards = ev.get("cards")          # 事件里通常已带牌(点+花色字符串或对象)
+        # ★ 优先用结构化牌(`cards_raw` = [{zhi,hua}]) ✓ 取不到才退回字符串名
+        cards = ev.get("cards_raw") or ev.get("cards")
 
         if t == "deal_start":
             store.record_deal(gid, list(getattr(log, "my_hand", []) or []), seat="南")

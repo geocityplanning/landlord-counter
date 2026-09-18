@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
@@ -66,6 +67,11 @@ CREATE TABLE IF NOT EXISTS remains (
     counts_json TEXT                   -- {点数: 剩余张数}  ← 来自 CardTracker.remaining_counts() ✓
 );
 CREATE INDEX IF NOT EXISTS idx_rem_gid ON remains(gid, ts);
+CREATE TABLE IF NOT EXISTS control (
+    k           TEXT PRIMARY KEY,      -- 目前只有 "host"
+    v           TEXT,                  -- "1"=想开托管 / "0"=想关
+    ts          REAL
+);
 """
 
 
@@ -75,7 +81,10 @@ class CompanionStore:
     def __init__(self, path: str | Path = DEFAULT_DB) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(str(self.path))
+        # ★ 服务是多线程的(ThreadingHTTPServer) ⇒ 连接必须允许跨线程 ✗ 否则一读就崩
+        #   写操作再加锁(读多写少, 锁开销可忽略 ✓)
+        self.db = sqlite3.connect(str(self.path), check_same_thread=False)
+        self._lock = threading.Lock()
         self.db.executescript(_SCHEMA)
         self.db.commit()
         self._seq: dict[str, int] = {}          # 局内手数计数
@@ -130,6 +139,33 @@ class CompanionStore:
         self.db.commit()
 
     # ---------------- 读出口 (给前端 / 给"记忆") ----------------
+    def remains_of(self, gid: str, last_only: bool = False) -> list[dict]:
+        """牌池快照历史(前端"牌池"面板 / 回放用 ✓)"""
+        sql = "SELECT ts, hand_n, counts_json FROM remains WHERE gid=? ORDER BY id"
+        if last_only:
+            sql += " DESC LIMIT 1"
+        return [{"ts": r[0], "hand_n": r[1], "counts": json.loads(r[2] or "{}")}
+                for r in self.db.execute(sql, (gid,))]
+
+    def decisions_of(self, gid: str, limit: int = 50) -> list[dict]:
+        """每次决策 + 是否对账一致(前端"推荐/准确率"用 ✓)"""
+        cur = self.db.execute(
+            "SELECT ts, hand_n, need_beat, cand_n, chosen_json, agree, note FROM decision"
+            " WHERE gid=? ORDER BY id DESC LIMIT ?", (gid, limit))
+        return [{"ts": r[0], "hand_n": r[1], "need_beat": bool(r[2]), "cand_n": r[3],
+                 "chosen": json.loads(r[4] or "[]"), "agree": r[5], "note": r[6]}
+                for r in cur.fetchall()]
+
+    def set_host_intent(self, on: bool) -> None:
+        """只记"我想开/关托管"的意图 ✓ 真正执行的是现有托管循环(它来读 ✓)"""
+        self.db.execute("INSERT OR REPLACE INTO control(k, v, ts) VALUES('host',?,?)",
+                        ("1" if on else "0", time.time()))
+        self.db.commit()
+
+    def host_intent(self) -> bool:
+        row = self.db.execute("SELECT v FROM control WHERE k='host'").fetchone()
+        return bool(row and row[0] == "1")
+
     def recent_deals(self, limit: int = 20) -> list[dict]:
         cur = self.db.execute(
             "SELECT gid, ts, seat, hand_json, ji_pai FROM deal ORDER BY ts DESC LIMIT ?", (limit,))

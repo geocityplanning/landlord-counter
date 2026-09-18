@@ -37,6 +37,14 @@ def _zhi(card: Any) -> int:
     return int(getattr(card, "zhi", card))
 
 
+def _cards_raw(cards) -> list:
+    """结构化牌(点+花色) —— 给伴随应用落库 ✓ 只做格式转换, 不解析牌型 ✗"""
+    out = []
+    for c in cards or []:
+        out.append({"zhi": _zhi(c), "hua": int(getattr(c, "hua", -1) or -1)})
+    return out
+
+
 def _name(card: Any) -> str:
     if isinstance(card, str):
         return card
@@ -139,14 +147,15 @@ class GameLog:
         """记一手出牌。src: table=从画面读回(实测) / own=我们自己发起的。"""
         cards = list(cards)
         ev = self.append("play", seat=seat, action="play",
-                         cards=[_name(c) for c in cards], hand_left=hand_left, src=src)
+                         cards=[_name(c) for c in cards], cards_raw=_cards_raw(cards),
+                           hand_left=hand_left, src=src)
         return ev
 
     def plan(self, seat: str, cards, why: str = "", hand_before: int | None = None,
              **extra) -> dict:
         """记一次**决策**(我们打算出的牌) —— 用于"决定 vs 实际打出"的操作准确率对账。"""
         return self.append("plan", seat=seat, cards=[_name(c) for c in cards], why=why,
-                           n=len(list(cards)), hand_before=hand_before, **extra,
+                           n=len(list(cards)), hand_before=hand_before, cards_raw=_cards_raw(cards), **extra,
                            src=("direct" if "RL" in why or "直选" in why else "hint"))
 
     def verify(self, seat: str, hand_after: int, expected_after: int) -> dict:

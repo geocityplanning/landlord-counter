@@ -134,24 +134,33 @@ class CDP:
     #  chuPai(): phase!=='playing' 或 currentChuPaiZhe!==0(南=玩家) → 静默返回
     #            选中为空 → showToast('请选择要出的牌'); 牌型非法 → showToast(reason)
     def find_truth(self, max_pages: int = 8) -> bool:
-        """在 8123 的页面里找到**带量测钩子**(window.__truth)的那个并连上去。
+        """在 8123 页面里找到**真正活着、且钩子能用**的那个并锁上(2026-09-19 加固 ✓)。
 
-        背景: 设备上有几十个僵尸页(prep/重开都会留一个) ✗ →
-        盲连 pages[0] 经常连到没钩子的旧页 → 读真值读到 None。
-        做法: 只扫同源(172.18.0.1:8123)的最新若干页, 命中 __truth 就锁定。
+        旧版只探 `typeof window.__truth === 'function'` ✗ —— **僵尸页也带着这个钩子**
+        (脚本文件在, 但它那次会话的游戏上下文早没了) ⇒ 探针通过、锁上去、真值却回 `{err:...}`
+        ⇒ 实测整轮 24 次"真值读不到"✗(设备页面堆里躺着 8+ 个历史副本 ✗)
+        加固三条件: ① 钩子是函数 ✓ ② 它**真能返回带 phase 的真值** ✓ ③ 页面 visible ✓
         """
         try:
             pages = [x for x in self._list() if "8123" in (x.get("url") or "")][:max_pages]
         except Exception:                            # noqa: BLE001
             return False
+        best: str | None = None
         for pg in pages:
             try:
                 self._ws_url = pg.get("webSocketDebuggerUrl")
-                if self.eval_js("typeof window.__truth === 'function' ? 1 : 0") == 1:
+                ok = self.eval_js(
+                    "(() => { try { const t = window.__truth && window.__truth();"
+                    " return (t && t.phase && document.visibilityState === 'visible') ? 1 : 0; }"
+                    " catch (e) { return 0; } })()")
+                if ok == 1:
+                    self._ws_url = pg.get("webSocketDebuggerUrl")
                     return True
+                if best is None:                     # 备胎: 钩子至少在(真值模式不会用它 ✗)
+                    best = pg.get("webSocketDebuggerUrl")
             except Exception:                        # noqa: BLE001
                 continue
-        self._ws_url = None
+        self._ws_url = best
         return False
 
     def truth(self) -> dict:

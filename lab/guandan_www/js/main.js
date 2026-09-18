@@ -368,7 +368,12 @@
                     const src = gameState.benLunChuPai || {};
                     Object.keys(src).forEach(function (k) {
                         const v = src[k];
-                        o[k] = v ? v.map(c => ({zhi: c.zhi, hua: c.hua})) : null;
+                        // ★ 2026-09-19 修: 必须判数组 —— 实测它不是数组 ✗,
+                        //   直接 v.map() 抛 TypeError ⇒ 整个 __truth() 被 try/catch 兜成
+                        //   {err:...} ⇒ 所有页面都"读不到真值"(白白排查了半天 ✗✗)
+                        o[k] = Array.isArray(v)
+                            ? v.map(c => ({zhi: c.zhi, hua: c.hua}))
+                            : null;
                     });
                     return o;
                 })(),

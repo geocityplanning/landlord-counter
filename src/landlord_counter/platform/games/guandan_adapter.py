@@ -456,8 +456,11 @@ class GuandanAdapter(GameAdapter):
             _obs = self._sense_by_truth(frame)
             if _obs is not None:
                 return _obs
-            print("  [truth] ⚠ 真值读不到 ⇒ 本帧退回视觉(不该发生; 查 CDP/插桩/版本号) ✗",
-                  flush=True)
+            # ★ 用户 2026-09-19 定: 真值模式**不用视觉兜底** ✓
+            #   理由: 视觉读牌只有 ~70% ✗, 兜进去只会把脏数据带进决策
+            #   ⇒ 读不到就**这帧什么都不做**(CDP 已带自动重连 ✓, 下一帧大概率就好了 ✓)
+            print("  [truth] ⚠ 真值读不到 → **跳过本帧**(真值模式不走视觉兜底 ✓)", flush=True)
+            return Observation(frame=frame, my_turn=False, extra={"truth_miss": True})
         self._track_seat(frame)
         self._observe_table_gated(frame)     # 记牌: 每帧都看桌面(别人的出牌也要记 ✓)
         if not P.my_turn(frame):          # 手牌白卡 + 按钮可用(防残局误判)

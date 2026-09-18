@@ -61,6 +61,33 @@ class CDP:
 
     # ---------------- 基础调用 ----------------
     def _call(self, method: str, params: dict | None = None, timeout: float = 12.0) -> Any:
+        """调用一次; **失败自动重连一次**(2026-09-19 用户要求 ✓)。
+
+        为什么要重连: 旧实现把 `_ws_url` 缓存下来 ✗ —— 页面一重载/浏览器一重启,
+        缓存的地址就**永久失效** ⇒ 之后每次调用都打在死地址上(实测"真值偶发掉线"的真机制 ✗)
+        重连 = 丢掉缓存 + 重新发现目标 + 必要时补一次 adb forward ✓
+        """
+        try:
+            return self._call_once(method, params, timeout)
+        except Exception as e:  # noqa: BLE001
+            print(f"  [cdp] ↻ 调用失败({type(e).__name__}) → 自动重连一次", flush=True)
+            self._ws_url = None
+            self._ensure_forward()
+            return self._call_once(method, params, timeout)
+
+    def _ensure_forward(self) -> None:
+        """补一次 adb forward(端口转发可能随 adb 掉线消失 ✓)"""
+        serial = os.getenv("GUANDAN_CDP_SERIAL", "127.0.0.1:5555")
+        try:
+            import subprocess
+
+            subprocess.run(["adb", "-s", serial, "forward", f"tcp:{self.port}",
+                            "localabstract:chrome_devtools_remote"],
+                           capture_output=True, timeout=8)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _call_once(self, method: str, params: dict | None = None, timeout: float = 12.0) -> Any:
         async def run() -> Any:
             url = self._ws_url or self._connect()
             async with websockets.connect(url, max_size=8 << 20, open_timeout=8) as ws:

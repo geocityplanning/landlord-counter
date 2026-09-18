@@ -353,15 +353,15 @@
                     3: gameState.ai3Pai.map(c => ({zhi: c.zhi, hua: c.hua, id: c.id}))
                 },
                 jiPai: gameState.jiPai,
-                // 桌上"待压"那一手: **只有真有人领出、且我还得压时**才有值 ✓
-                //   (2026-09-18 踩坑: 单看 shangJiaPaiXing 会漏 —— 它可能是 null 而桌上仍压着牌 ✗
-                //    ⇒ 判据必须带 shangJiaChuPai(用户口述规则 + 源码 xiaYiGeChuPai 印证) ✓)
-                shangJia: (gameState.shangJiaChuPai && gameState.shangJiaPaiXing
-                           && gameState.shangJiaPaiXing.cards)
-                    ? gameState.shangJiaPaiXing.cards.map(c => ({zhi: c.zhi, hua: c.hua, id: c.id}))
-                    : null,
-                // ★ 2026-09-18 加: 判"该不该压/我能不能任意出"的三个权威字段 ✓
-                shangJiaChuPai: gameState.shangJiaChuPai,   // 本手牌谁领出(null=没人领 ⇒ 我任意出)
+                // ★★ 2026-09-19 定案: "该压谁"的权威 = `shangJiaChuPai` —— **它存的是牌数组**!
+                //   (字段名骗人 ✗: 名字像"谁领出", 实际源码 430 行 `shangJiaChuPai = cards` ✓)
+                //   而 `shangJiaPaiXing.cards` **是空的** ✗ ⇒ 之前一直读到"没人压着" ⇒
+                //   候选给 10 张"随便出"、游戏却回『牌太小，压不过』✗(实测矛盾就出在这)
+                shangJia: (gameState.shangJiaChuPai
+                    ? gameState.shangJiaChuPai.map(c => ({zhi: c.zhi, hua: c.hua, id: c.id}))
+                    : null),
+                // 真有人压着吗(布尔, 给 Python 一个不用猜的判据 ✓)
+                needBeat: !!gameState.shangJiaChuPai,
                 passCount: gameState.passCount,             // 连续几家不出(3 ⇒ 该新一轮)
                 benLunChuPai: (function () {                // 本轮各座位已出的牌(带花色)
                     const o = {};

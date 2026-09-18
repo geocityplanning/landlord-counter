@@ -38,12 +38,18 @@ _last_sig: tuple = ()
 
 
 def _wipe_auto_templates() -> int:
-    """清掉本工具/适配器采的自动模板(文件名含 _auto_) ✓ —— 保留手工/参考模板 ✓"""
+    """清掉**全部点数级模板**(键形如 0_xx) —— 只留本局现采的 ✓
+
+    用户 2026-09-18: "再遇到这种旧的直接删了省得弄混淆" ✓
+    为什么必须全清: 不同局采的点数模板混在一起 ⇒ **距离会互相打平**(实测 0.000~0.003) ✗
+      ⇒ 谁先被遍历谁赢 ⇒ 读牌乱(把 K 读成 A 等) ✗
+    保留: 花色级模板(<花色>_<点数>, 来自人工标注) —— 它们参与"两段式"的花色确认 ✓
+    """
     d = Path(TPL_RANK_DIR)
     if not d.exists():
         return 0
     k = 0
-    for f in d.glob("*_auto_*.npy"):
+    for f in d.glob("0_*.npy"):
         try:
             f.unlink()
             k += 1
@@ -98,7 +104,11 @@ def read(img, *, expect: int | None = None, hand_ids: list | None = None,
         if res.collected:
             res.deal_fp = deal_fingerprint(hand_ids)
     # ★ 读取也用**同一份 slots**(查表来的 ✓) ⇒ 与采集完全同源 ✓
-    cards, _info = P.tm_read_hand(img, slots=slots)
+    # ★ 纵坐标也用**标定值**(2026-09-18): 读取内部"现算"手牌带 ⇒ 与定位用的标定带不一致
+    #   ⇒ 滑动窗口不同 ⇒ 匹配结果不同 ✗(实测: 诊断用标定值 26/26 ✓, 读取现算 53.8% ✗)
+    #   ⇒ **位置三件套(横坐标 slots / 纵坐标 y0 / 高度)全部来自标定** ✓
+    _g = L.geom()
+    cards, _info = P.tm_read_hand(img, y0=_g.hand_y0, slots=slots)
     res.cards = list(cards)
     res.n = len(cards)
     if expect and abs(res.n - expect) > 1:

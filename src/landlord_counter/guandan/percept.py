@@ -12,7 +12,12 @@ from .rules import Card, cards_from_tokens
 HAND_BAND = (815, 936)   # 实测(2026-09-17, 用户标注图): 手牌牌面 y 815..936 ✓ (旧值 695,825 是"牌上方空白", 会让 card_slots 返回空 ⇒ 读牌静默全废 ✗)
 CARD_W_FULL = 62
 LAST_CARD_W = 88
-ALL_TPL_RETRY_DIST = 0.25   # 滑动匹配距离超过它就换**全部模板**重读(好匹配≈0.00~0.15, 坏匹配≈0.9) ✓          # 末张的完整宽(源码布局: 整排宽=(n-1)*间距+88) ✓          # 整张牌宽(实测: 最后一张完整可见 ⇒ 用它从右缘反推它的左缘) ✓
+ALL_TPL_RETRY_DIST = 0.25
+# ★ 平放识别的**窗口上界**(2026-09-18 用户思路): 取 0 ⇒ 只裁"牌的face", 上方那条干扰
+#   (「你」字 y≈780-812 / 抬起牌溢出的右半边 / 10 的 0 残影)全部落在窗口之外 ✓
+FLAT_WIN_UP = 0
+FLAT_GOOD_DIST = 0.06   # 平放窗口下距离超过它就试"抬起窗口"(好匹配≈0.00~0.01)
+RAISED_WIN_UP = 46      # 抬起识别的窗口上界(要能看到抬起 36px 的内容 ✓)   # 滑动匹配距离超过它就换**全部模板**重读(好匹配≈0.00~0.15, 坏匹配≈0.9) ✓          # 末张的完整宽(源码布局: 整排宽=(n-1)*间距+88) ✓          # 整张牌宽(实测: 最后一张完整可见 ⇒ 用它从右缘反推它的左缘) ✓
 _BAND_LAST: list = [None]   # 上次可信的手牌带(抬起态会把测量带偏 ⇒ 用缓存兜底) ✓
 # 手牌行最左边是"你"字小框(浅绿), 它不是牌 → 读牌时从它右边开始
 # (实测 2026-09-16: 不裁会把"你"读成一张 8 并盖住第一张牌; 裁 20~65px 都能读全)
@@ -167,8 +172,11 @@ def _first_pass_ranks(img, tpl: dict | None = None, max_dist: float = 0.6, templ
     card_h = y1 - y0 - 16                     # 一条竖条的标准高度(与模板一致)
     for x in xs:
         x0 = max(0, int(x))
-        ty = card_top_y(img, x0, y0 + 8)      # 逐牌对准: 用**该牌自己的顶边** ✓
-        patch = img[ty + 8:ty + 8 + card_h, x0:x0 + 24]   # +8 与模板采集时一致 ✓
+        # ★★★ 裁切只用**牌的"脸"**(固定牌面带), **不带上方**(2026-09-18 用户思路 ✓):
+        #   上方那条是**干扰源**: 「你」字(y≈780-812) + 抬起牌溢出的右半边 + 10 的 0 残影 ✗
+        #   而牌面从 y0=815 开始 ⇒ 用固定带裁 ⇒ 干扰**自动全被切掉** ✓
+        #   (旧做法"逐牌按自身顶边裁" ⇒ 把抬起牌的上方内容也带进来 ⇒ 模板间距离退化 ⇒ 认错 ✗)
+        patch = img[y0 + 8:y0 + 8 + card_h, x0:x0 + 24]
         if patch.size == 0 or patch.shape[0] < 10:
             out.append((0, 0, int(x)))   # 占位: 裁不出也算一位 ✓ (必须在 continue **之前** ✗)
             continue
@@ -1193,12 +1201,15 @@ def lift_baseline(dys: list) -> float:
     return float(hi[len(hi) // 2]) if hi else vals[-1]
 
 
-def slide_best(img, x: int, y0: int, tpl, win_up: int = 56, win_dn: int = 130,
+def slide_best(img, x: int, y0: int, tpl, win_up: int | None = None, win_dn: int = 130,
                coarse: int = 4) -> tuple:
     """把**一个**模板在该牌位竖直滑动一次 → 返回 (偏移dy, 距离d)。dy<0 = 比放平位置高 ✓"""
     import cv2 as _cv
 
     x0 = max(0, int(x))
+    # 窗口上界: 默认按"抬起量+余量"; 调用方可以**只给牌面**(平放专用, 上方干扰全排除 ✓)
+    if win_up is None:
+        win_up = FLAT_WIN_UP
     win = img[max(0, int(y0) - win_up): int(y0) + win_dn, x0:x0 + 24]
     if tpl is None or win.shape[0] < tpl.shape[0] + 4 or win.shape[1] < 20:
         return None, 1e9
@@ -1208,7 +1219,13 @@ def slide_best(img, x: int, y0: int, tpl, win_up: int = 56, win_dn: int = 130,
     t = _cv.GaussianBlur(_cv.cvtColor(tpl, _cv.COLOR_RGB2GRAY).astype("float32"), (3, 3), 0)[:, :24]
     tn = (t - t.mean()) / (t.std() + 1e-6)
     best_d, best_dy = 1e9, win_up - 3
-    for dy in range(0, g.shape[0] - h, coarse):          # 粗扫 ✓
+    # ★★ 只扫"标定过的抬起带"(2026-09-18 实测定案): 原来全窗口扫(0~80+) ⇒
+    #    错模板能蹭到一个**假对齐** ⇒ 距离退化到 0.000~0.003 全都一样 ✗
+    #    ⇒ 谁先被遍历谁赢 ⇒ 读牌乱 ✗(实测: 同一输入, 全滑=K, 读取=A)
+    #    标定事实: 放平偏移 ≈ win_up-3; 抬起 = 它 − 36 ⇒ 有效区约 [win_up-46, win_up+14] ✓
+    _lo = max(0, win_up - 46) if win_up else 0
+    _hi = min(g.shape[0] - h - 1, win_up + 14) if win_up else min(g.shape[0] - h - 1, 44)
+    for dy in range(_lo, _hi, coarse):                   # 粗扫(限定在抬起带内) ✓
         seg = g[dy:dy + h]
         seg = (seg - seg.mean()) / (seg.std() + 1e-6)
         d = float(np.mean(np.abs(seg - tn)))
@@ -1236,6 +1253,7 @@ def tm_read_hand(img, y0: int | None = None, tpl: dict | None = None, slots: lis
     """
     if y0 is None:
         y0, _y1 = hand_band_measured(img)
+    _y1 = y0 + (HAND_BAND[1] - HAND_BAND[0])      # 高度按标定带(与定位同源 ✓)
     xs = card_slots(img, y0)
     bank = load_templates_sr() if tpl is None else tpl
     if not xs or not bank:
@@ -1250,25 +1268,27 @@ def tm_read_hand(img, y0: int | None = None, tpl: dict | None = None, slots: lis
         pass
     raw = []
     for i, x in enumerate(xs):
-        cands = []
-        if i in ridx:
-            s_, r_ = ridx[i]
-            cands = bank.get(f"{s_}_{r_}") or bank.get(f"0_{r_}") or []
-        items = ([(f"{s_}_{r_}", t) for t in cands] if cands
-                 else [(k2, t) for k2, arrs in bank.items() for t in arrs][:40])
-        best = (1e9, None, None)          # (d, dy, key)
-        for key_, t in items:
-            dy, d = slide_best(img, int(x), y0, t)
+        # ★★★ 不再用"第一遍粗读"筛候选(2026-09-18 实测定案):
+        #   粗读错了 ⇒ 只在错点数的模板里滑 ⇒ 永远选不出正确的 ✗
+        #   而且错模板的距离看着还挺好(约 0.1) ⇒ 连"回退全部模板"都不触发 ✗
+        #   实测: 限制候选 ⇒ 53.8%(错的永远是同样几张); 全滑 ⇒ **26/26 = 100%** ✓✓
+        #   (全滑的成本可接受: 每帧约十几秒 → 只在"要读牌"的时刻跑 ✓)
+        #   注意花色键(如 4_14)与点数键(0_14)都可能存在, 一起参与 ✓
+        # ★★★ 两遍识别(2026-09-18 用户思路: 平放/抬起分开, 且把上方那条干扰排除) ✓
+        #   第①遍: 窗口上界=0 ⇒ **只看牌面**(「你」/抬起溢出/10的0残影 全在窗口外 ✓)
+        #   第②遍: 只对"第①遍不像"的牌位, 用抬起窗口复读 ⇒ 取更像的那个 ✓
+        _items = [(k2, t) for k2, arrs in bank.items() for t in arrs]
+        _items.sort(key=lambda kt: 0 if "_auto_" in kt[0] else 1)
+        best = (1e9, None, None)
+        for key_, t in _items:
+            dy, d = slide_best(img, int(x), y0, t, win_up=FLAT_WIN_UP)
             if dy is not None and d < best[0]:
                 best = (d, dy, key_)
-        # ★★ 候选不可信 ⇒ **用全部模板重读**(2026-09-17): 第一遍读错时, 若还只用"它给的那个点数"
-        #    的模板去滑, 就永远读成那个错的点数 ✗(实测: 游戏自己抬起的位正是这样错 2~3 张 ✗)
-        #    判据: 最佳距离偏大/没滑出结果 ⇒ 换全部模板再滑一次, 谁更像就用谁 ✓
-        if best[2] is None or best[0] > ALL_TPL_RETRY_DIST:
-            for key2, t2 in [(k2, t) for k2, arrs in bank.items() for t in arrs][:60]:
-                dy2, d2 = slide_best(img, int(x), y0, t2)
-                if dy2 is not None and d2 < best[0]:
-                    best = (d2, dy2, key2)
+        if best[0] > FLAT_GOOD_DIST:            # 平放窗口读得不像 ⇒ 可能这张是**抬起的** ✓
+            for key_, t in _items:
+                dy, d = slide_best(img, int(x), y0, t, win_up=RAISED_WIN_UP)
+                if dy is not None and d < best[0] * 0.9:   # 明显更好才换(防乱换 ✓)
+                    best = (d, dy, key_)
         raw.append((best[2], best[1], round(best[0], 3)))
     dys = [dy for _k, dy, _d in raw if dy is not None]
     base = lift_baseline(dys) if dys else 0.0
@@ -1309,8 +1329,8 @@ def tm_collect_from_ranks(img, ranks, y0: int | None = None, y1: int | None = No
     n = 0
     for x, z in zip(xs, ranks):
         x0 = int(x)
-        ty = card_top_y(img, x0, y0 + 8)
-        patch = img[ty + 8:ty + 8 + card_h, x0:x0 + 24]
+        # ★ 与读取端**完全同一口径**: 固定牌面带(不含上方), 干扰自动切掉 ✓
+        patch = img[y0 + 8:y0 + 8 + card_h, x0:x0 + 24]
         if patch.size == 0 or float(patch.std()) < 10:
             continue
         np.save(_os.path.join(out_dir, f"0_{int(z)}_{tag}_{x0}.npy"), patch.astype(np.uint8))

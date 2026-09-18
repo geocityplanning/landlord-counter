@@ -18,7 +18,7 @@ from ...guandan.tracker import CardTracker
 from ...guandan import ai as AI
 from ...guandan import percept as P
 from ...guandan import rules as R
-from ...guandan.agent import BTN_HINT, BTN_PASS, BTN_PLAY, JIPAI, WHITE_MIN, gold_button
+from ...guandan.agent import BTN_HINT, BTN_PASS, BTN_PLAY, JIPAI, gold_button
 
 # 读牌帧留证目录(读牌与"块宽真值"分歧时存帧, 供离线判定谁对)
 READ_DUMP_DIR = os.getenv("GUANDAN_READ_DUMP_DIR", "/tmp/guandan_read_dumps")

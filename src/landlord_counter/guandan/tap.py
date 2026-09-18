@@ -109,13 +109,11 @@ def select_and_play(idxs: list[int], img_fn, tap_fn, read_truth,
     # ③ 出牌 + 结果校验
     before_ids, _ = _cards_snapshot(read_truth)
     n_before = len(before_ids)
-    ok_press, toast = False, ""
+    toast = ""                     # 只留游戏的回话用于诊断 ✓(成败由下面"手牌张数是否减少"判 ✓)
     try:
         r = press_play()
         if isinstance(r, tuple):
-            ok_press, toast = bool(r[0]), str(r[1] or "")
-        else:
-            ok_press = bool(r)
+            toast = str(r[1] or "")
     except Exception as e:  # noqa: BLE001
         res.reasons.append(f"按出牌异常: {type(e).__name__}")
         return res

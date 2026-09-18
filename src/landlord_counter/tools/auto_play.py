@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import os
-import re
 import time
 
 import cv2
@@ -127,7 +126,6 @@ class AutoPlay:
 
     # ---------- 牌堆区跟踪 ----------
     def _color_blocks(self, img, colors, tol, y0=120, y1=300, min_w=80, min_h=50):
-        import numpy as np
 
         band = img[y0:y1, :]
         m = np.zeros(band.shape[:2], np.uint8)
@@ -163,7 +161,6 @@ class AutoPlay:
 
     def _zone_card_rect(self, img, zone):
         """牌堆白卡内容感知定位: 亮白(卡面)像素 bbox; 无卡返回 None。"""
-        import numpy as np
 
         x0, y0, x1, y1 = TABLE_CROP[zone]
         band = img[y0:y1, x0:x1]

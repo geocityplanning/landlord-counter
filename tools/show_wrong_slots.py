@@ -38,7 +38,7 @@ def main() -> int:
     f = dev.snap()                       # 采集后重取一帧(与读数同刻更好)
     rr = R.read(f, expect=n, hand_ids=t.get("handIds"), ranks=zhi)
     bank = P.load_templates_sr()
-    y0, card_h = g.hand_y0, g.hand_y1 - g.hand_y0 - 16
+    y0 = g.hand_y0
 
     rows = []
     for i, x in enumerate(slots):

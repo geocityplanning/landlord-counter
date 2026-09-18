@@ -1,10 +1,9 @@
 """通用托管运行时: 主循环 + 看门狗 + 统计 + 心跳(与游戏无关)。"""
 from __future__ import annotations
 
-import os
 import time
 
-from .types import Action, GameAdapter, Observation
+from .types import GameAdapter
 
 
 class Runtime:

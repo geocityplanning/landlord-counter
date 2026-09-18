@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from landlord_counter.guandan import rules as R      # noqa: E402
-from landlord_counter.guandan.tracker import CardTracker, TOTAL_PER_RANK  # noqa: E402
+from landlord_counter.guandan.tracker import CardTracker  # noqa: E402
 
 PASS = FAIL = 0
 MSGS: list = []

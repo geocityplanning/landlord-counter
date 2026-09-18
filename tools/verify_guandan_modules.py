@@ -16,7 +16,6 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
 from landlord_counter.guandan import locate as L                 # noqa: E402
-from landlord_counter.guandan import percept as P                # noqa: E402
 from landlord_counter.guandan import read as R                  # noqa: E402
 from landlord_counter.guandan import tap as T                    # noqa: E402
 from landlord_counter.platform.cdp import CDP                    # noqa: E402
@@ -67,7 +66,7 @@ def main() -> int:
     ids = t.get("handIds") or []
     zhi = (t.get("hands") or {}).get("0") or []
     n = len(ids)
-    print(f"\n===== ① 定位 =====")
+    print("\n===== ① 定位 =====")
     print(f"真值手牌 {n} 张")
     if (t.get("selected") or []):
         n_clear = T.clear_residue(tap_fn, truth_fn, img_fn)
@@ -80,7 +79,7 @@ def main() -> int:
     print(f"  牌位 {len(slots)} 个 vs 真值 {n} 张  {'✓' if len(slots) == n else '✗'}")
 
     # ---------- ② 读牌 ----------
-    print(f"\n===== ② 读牌 =====")
+    print("\n===== ② 读牌 =====")
     rr = R.read(f, expect=n, hand_ids=ids, ranks=zhi)     # ★ 走专有读牌(含按局自动重采 ✓)
     if rr.collected:
         print(f"  [按局重采] 新一局 → 自动采了 {rr.collected} 张模板 ✓")
@@ -93,7 +92,7 @@ def main() -> int:
     print("  真值: " + " ".join(str(NAME.get(b, b)) for b in zhi[:14]))
 
     # ---------- ③ 点牌 ----------
-    print(f"\n===== ③ 点牌 =====")
+    print("\n===== ③ 点牌 =====")
     hit = 0
     tests = [n - 1, n // 2, 2]
     for i in tests:

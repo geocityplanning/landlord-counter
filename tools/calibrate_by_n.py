@@ -180,8 +180,6 @@ def main() -> int:
         # ★ 点击 = 牌位 + 6px(2026-09-18 实测): 点在牌的**左缘**上 ⇒ 游戏判给左边那张 ✗
         mt.tap(int(x) + 6, geom.hand_y())
         time.sleep(0.5)
-        y0, y1 = geom.hand_y0, geom.hand_y1
-        bb = img[y0:y1]
         # 按出牌按钮(实测最亮那段)
         pb = L.play_button(dev.snap())
         if not pb:

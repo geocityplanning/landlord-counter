@@ -1253,7 +1253,6 @@ def tm_read_hand(img, y0: int | None = None, tpl: dict | None = None, slots: lis
     """
     if y0 is None:
         y0, _y1 = hand_band_measured(img)
-    _y1 = y0 + (HAND_BAND[1] - HAND_BAND[0])      # 高度按标定带(与定位同源 ✓)
     xs = card_slots(img, y0)
     bank = load_templates_sr() if tpl is None else tpl
     if not xs or not bank:

@@ -160,7 +160,7 @@ def main() -> int:
         print(f"\n✓ 已写入 {p}")
     else:
         print("\n(未加 --write ⇒ 仅试运行, 不落盘)")
-        print(json_dumps := __import__("json").dumps(
+        print(__import__("json").dumps(
             {k: v for k, v in geom.__dict__.items()}, ensure_ascii=False, indent=2))
     return 0
 

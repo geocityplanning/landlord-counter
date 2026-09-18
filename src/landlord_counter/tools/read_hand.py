@@ -21,7 +21,7 @@ def main() -> None:
     args = sys.argv[1:]
     expected = int(args[1]) if len(args) > 1 and args[1].isdigit() else 0
 
-    from landlord_counter.config import VisionConfig, load_config
+    from landlord_counter.config import load_config
     from landlord_counter.vision.card_recognizer import CardRecognizer
 
     cfg = load_config()

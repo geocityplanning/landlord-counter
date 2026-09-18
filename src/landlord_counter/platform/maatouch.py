@@ -18,7 +18,6 @@ MaaTouch(openstax/minitouch 协议的安卓原生实现, Apache-2.0)通过 Input
 """
 from __future__ import annotations
 
-import os
 import random
 import subprocess
 import time

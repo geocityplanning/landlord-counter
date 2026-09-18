@@ -174,6 +174,9 @@ class Executor:
         实测教训(2026-09-15): adb 的 touch 能让牌视觉上抬起, 但**游戏内部不认这手牌**
         (点"出牌"毫无反应); 改用 CDP 派发的鼠标事件后, "选牌→出牌"一次成功 ✓。
         """
+        # ★ 点击 = 牌位 + 6px(2026-09-18 实测): 点在牌的**左缘**上, 游戏会判给**左边那张**
+        #   (实测: 点 x=326(第13位左缘) → 游戏选中显示位置[12] ✗; 点 x=14(左缘−2) → [0] ✓)
+        x = int(x) + 6
         if self.mt is not None:                 # ① 拟人化输入优先
             try:
                 self.mt.tap(x, self._card_y())
@@ -182,11 +185,11 @@ class Executor:
                 self.log(f"  [input] MaaTouch 点牌失败({type(e).__name__}) → 回落")
         if self.cdp is not None:
             try:
-                self.cdp.click_screen(x, self.L.hand_y, settle=wait)
+                self.cdp.click_screen(x, self._card_y(), settle=wait)
                 return
             except Exception as e:  # noqa: BLE001
                 self.log(f"  [input] CDP 点牌失败({type(e).__name__}) → 回落 adb")
-        self.dev.tap(x, self.L.hand_y, wait=wait)
+        self.dev.tap(x, self._card_y(), wait=wait)
 
     def tap_card(self, idx: int, n: int) -> bool:
         """点选第 idx 张并验证抬起; 失败则左右扫点(小牌量牌位漂移)。
@@ -449,6 +452,73 @@ class Executor:
             out.append(None if got is None else bool(got >= 18))
         return out
 
+    def _wait_ready(self, n: int, timeout: float = 5.0) -> bool:
+        """等到"**画面停稳 且 牌位数量 == n**"为止(2026-09-18 用户两次指出的坑)。
+
+        只看"停稳"会被出牌动画骗 ✗ —— 动画期间牌面**会短暂全没** ⇒ 连续两帧都是空的
+        ⇒ 像素差≈0 ⇒ 误判"停稳"通过 ✓(人工模式实测: 档案里混进一张空帧 ✗)
+        """
+        from ..guandan import locate as L
+
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            self._wait_stable(1.2)
+            img = self._snap()
+            if img is not None and n > 0 and len(L.locate(img, n)[0]) == n:
+                return True
+            time.sleep(0.3)
+        return False
+
+    def _select_cards(self, idxs: list, n: int, rounds: int = 3) -> bool:
+        """**选牌到"游戏真值 = 目标"为止** —— 把人工托管那套搬进自动路径(2026-09-18 用户拍板)。
+
+        人工模式(同一套定位/点击, 但每步过真值)27 张全出完、**零失误** ✓;
+        旧自动路径用 `tm_read_hand` 的 x + "读抬起"核对 ✗ ⇒ 读数一错就点偏、越修越乱(1/3 成功) ✗
+        ⇒ 差别只在**校验方式** ✓
+
+        · 坐标: 一律来自 `locate.locate()`(按张数的标定表 ✓), 不用读牌结果 ✗
+        · 有真值: 逐位核对 `selIds` ⇒ 缺的补点、多的点掉, 一致才返回 ✓
+        · 无真值(产品路径): 逐张点一次, 成败交给"出牌回执 + 手牌张数下降" ✓
+        """
+        from ..guandan import locate as L
+
+        cdp = getattr(self, "cdp", None)
+        want = sorted(int(i) for i in idxs)
+        for r in range(rounds):
+            if not self._wait_ready(n):
+                self.log(f"  [sel] ✗ 画面未就绪(牌位数≠{n}) ⇒ 本轮不点")
+                return False
+            slots, _chk = L.locate(self._snap(), n)
+            ids, sel = [], set()
+            if cdp is not None:
+                try:
+                    t = cdp.truth() or {}
+                    ids = list(t.get("handIds") or [])
+                    sel = set(int(v) for v in (t.get("selIds") or t.get("selected") or []))
+                except Exception:  # noqa: BLE001
+                    ids = []
+            if not ids:                      # 产品路径: 没有真值 ⇒ 只按目标逐张点一次 ✓
+                for i in want:
+                    if 0 <= i < len(slots):
+                        self._tap_card_at(slots[i], wait=0.35)
+                self._wait_stable(1.2)
+                return True
+            got = sorted(i for i, x in enumerate(ids) if x in sel)
+            miss = [i for i in want if i not in got]
+            extra = [i for i in got if i not in want]
+            self.log(f"  [sel] 第{r + 1}轮 真值选中={[i + 1 for i in got]} "
+                     f"目标={[i + 1 for i in want]} 缺={[i + 1 for i in miss]} "
+                     f"多={[i + 1 for i in extra]}")
+            if not miss and not extra:
+                self.log(f"  [sel] ✓ 真值核对一致({len(want)} 张)")
+                return True
+            for i in extra + miss:           # 多的点掉、缺的补点(游戏是开关 ✓)
+                cur, _c = L.locate(self._snap(), n)
+                if 0 <= i < len(cur):
+                    self._tap_card_at(cur[i], wait=0.4)
+            self._wait_stable(1.0)
+        return False
+
     def _servo_select(self, idxs: list, rounds: int = 3) -> bool:
         """伺服选牌(用户 2026-09-17 设计的算法): **求差 → 多的回落 / 少的补抬 → 复核** ✓
 
@@ -534,8 +604,8 @@ class Executor:
     def direct_play(self, idxs: list[int], n: int, rounds: int = 2,
                     ranks: list | None = None) -> bool:
         """直选执行: 点选 → 校验张数 → 出牌 → 回执; 失败清选后再来一轮。"""
-        from ..guandan import percept as _P
-
+        # ★ 选牌与核对已统一到 _select_cards(坐标走 locate 标定表 / 核对走真值 ✓)
+        _ = ranks                      # 保留签名兼容(调用方仍在传 ✓)
         # ★★ 先"回落"桌上**已有的选中**(用户算法第③步) —— 否则残留会和我们选的牌
         #   混成非法牌型, 游戏回『无效的牌型组合』✗(2026-09-17 实测踩到)
         self._clear_selection_via_truth()
@@ -562,34 +632,17 @@ class Executor:
             if r:
                 self.log("  [gesture] ↻ 直选重试(重新取帧)")
                 time.sleep(1.0)
-            # ★ 伺服: 量现状 → 少了补抬 / 多了回落 → 复核 ✓ (用户算法③④)
-            #   用户纠正(2026-09-17): 游戏**不会每次都帮点整组** ✗ → 绝不能靠假设去重 ✓
-            #   一切以"量到的抬起状态"为准 ✓ (滑块匹配量抬起, 不受邻牌遮挡 ✓)
-            # ★ 纪律(2026-09-17 实测): 伺服就位后**立刻按出牌** ×
-            #   旧流程还多读一次画面 + 等 0.3s ⇒ "读状态"与"按按钮"隔了 ~2 秒
-            #   ⇒ 期间牌的抬起动画/可出状态已经变了 ⇒ 按下去落空 ✗(实测成功 1/失败 2~3)
-            # ★★ 一次点准(2026-09-17 用户纠正后定案): 游戏**不会**把整组帮点 ✓
-            #   ⇒ 决策要几张就**逐张点**几张, 每张**只点一次**; 不猜、不复核、不回落 ✓
-            #   (杀掉旧做法: 用"抬起量"复核 —— 那个读数会误判(实测报"需落=2"其实是误判 ✗),
-            #    于是去点"以为多余"的牌 ⇒ 反而把没选的选上 ✗ ⇒ 越修越乱, 成功率只剩 1/3;
-            #    对照: 最小路径(只点目标 + 按) = **100%** ✓✓)
-            # ★ 先等画面停稳再量(2026-09-17: 出牌后那一帧在动画中 ⇒ 量啥都错 ✗)
+            # ★★ 选牌 = "**选到真值一致为止**"(2026-09-18 用户拍板, 人工托管那套搬进来 ✓)
+            #   坐标一律来自 locate(按张数的标定表 ✓), 不用读牌结果 ✗;
+            #   有真值就逐位核对 selIds ✓ ⇒ 缺的补点、多的点掉, 一致才往下走 ✓
+            #   旧做法(用 tm_read_hand 的 x + "读抬起"核对)会被读错带偏 ⇒ 实测只有 1/3 成功 ✗
+            if not self._select_cards(idxs, n):
+                self.log("  [gesture] ✗ 选牌未与真值一致 ⇒ 本轮不按出牌(不猜、不硬按)")
+                self.clear(idxs, n)
+                continue
+            # ★ 点完与按出牌之间要**留够时间**(2026-09-17 实测): 最小路径等 0.9s ⇒ 100% ✓
             self._wait_stable()
-            # ★ 记录我们**点过哪些张**(用于失败时精确撤销) —— 不猜, 靠记 ✓
-            tapped: list = []
-            for i in idxs:
-                fresh, _f = _P.tm_read_hand(self._snap())
-                if i < len(fresh):
-                    self.log(f"  [gesture] 点第{i}张 x={fresh[i][2]}(当帧实量)")
-                    self._tap_card_at(fresh[i][2], wait=0.35)
-                    self._wait_stable()               # ★ 点完等停稳, 下一张的位置才是真的 ✓
-                    tapped.append(i)
-            # ★ 点完与按出牌之间要**留够时间**(2026-09-17 实测):
-            #   最小路径在"选完 → 按"之间等 0.9s ⇒ **100% 成功** ✓
-            #   循环里只等了 ~0.3s(_wait_stable 返回太快) ⇒ 游戏还没把"选中"登记上就按 ✗
-            #   ⇒ 按下无效("出牌未生效"), 手牌一直不减 ✓
-            self._wait_stable()
-            time.sleep(0.6)
+            time.sleep(0.5)
             pp = self._play_btn() or self.btn("play")     # ★ 立刻按 ✓
             if not pp:
                 self.clear(idxs, n)
@@ -597,15 +650,10 @@ class Executor:
             self._press(pp, wait=1.6)
             if self.wait_receipt(before):
                 return True
-            # ★★ 精确撤销(2026-09-17 实测定案): 失败时把我们**刚点过的每一张原样点回去** ✓
-            #   游戏是开关(点一下选中、再点一下取消) ⇒ 点回原位 = 撤销 ✓
-            #   旧做法靠"读抬起"猜哪些多余 ✗ —— 那个读数会误判 ⇒ 越修越乱(实测 4→6→7 张残留 ✓)
-            #   而"点过谁"是我们自己记的 ⇒ 精确、不猜 ✓✓
-            self.log("  [gesture] ↻ 出牌未生效 → 精确撤销刚才点的牌")
-            for i in reversed(tapped):
-                fresh, _f = _P.tm_read_hand(self._snap())
-                if i < len(fresh):
-                    self._tap_card_at(fresh[i][2], wait=0.45)
+            # ★★ 失败回滚: 优先"真值精确回落"(2026-09-18), 没真值就用老办法 ✓
+            self.log("  [gesture] ↻ 出牌未生效 → 精确回落")
+            if not self._clear_selection_via_truth():
+                self.clear(idxs, n)
             time.sleep(0.3)
             continue
         return False

@@ -103,6 +103,14 @@ def shot(dev, c, mt, note: str = "") -> tuple:
     def pad(p):
         return p if p.shape[1] == W else np.pad(p, ((0, 0), (0, W - p.shape[1]), (0, 0)))
     cv2.imwrite(OUT, np.vstack([pad(p) for p in (head, full, sep, band, sep, bank)]))
+    # ★ 同时存进"按张数"的标定档案(用户 2026-09-18: "每种情况…方便以后复核")
+    #   纪律: 合格才叫 n{张数}.png(**绝不覆盖**已有的合格档案 ✗); 牌位≠手牌张数属不合格
+    _n, _ok = len(hand), (len(slots) == len(hand) and len(hand) > 0)
+    _dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "calib", "shots")
+    os.makedirs(_dir, exist_ok=True)
+    _p = os.path.join(_dir, f"n{_n}.png" if _ok else f"n{_n}_fail.png")
+    if _ok or not os.path.exists(_p):
+        cv2.imwrite(_p, np.vstack([pad(p) for p in (head, full, sep, band, sep, bank)]))
     return hand, ids, sel, pos_sel
 
 

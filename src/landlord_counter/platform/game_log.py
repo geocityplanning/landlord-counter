@@ -61,6 +61,10 @@ class GameLog:
     my_hand: Counter = field(default_factory=Counter)
     _seq: int = 0
     _fh: Any = None
+    # ★ 旁观者插座 (2026-09-19 伴随应用 M1 ✓): 每写一条事件就**广播一份**给旁观者
+    #   · 只收不发: 旁观者只许"收数据/存数据" ✗ 不许回写/改牌局
+    #   · **旁观者出事绝不影响牌局** —— 下面用 try/except 全兜住 ✓(牌局 > 记录 ✓)
+    sink: Any = None
 
     # ---------------- 生命周期 ----------------
     def __post_init__(self) -> None:
@@ -109,6 +113,12 @@ class GameLog:
         self._seq += 1
         ev = {"t": round(time.time(), 3), "seq": self._seq, "type": type_, **kw}
         self.events.append(ev)
+        if self.sink is not None:      # ★ 广播给旁观者(伴随应用) —— 出事绝不影响牌局 ✓
+            try:
+                self.sink(ev)
+            except Exception as e:     # noqa: BLE001
+                print(f"  [sink] ⚠ 旁观者出错({type(e).__name__}: {e}) → 已忽略, 牌局继续 ✓",
+                      flush=True)
         try:
             fh = self._fh_open()
             fh.write(json.dumps(ev, ensure_ascii=False) + "\n")
@@ -132,10 +142,11 @@ class GameLog:
                          cards=[_name(c) for c in cards], hand_left=hand_left, src=src)
         return ev
 
-    def plan(self, seat: str, cards, why: str = "", hand_before: int | None = None) -> dict:
+    def plan(self, seat: str, cards, why: str = "", hand_before: int | None = None,
+             **extra) -> dict:
         """记一次**决策**(我们打算出的牌) —— 用于"决定 vs 实际打出"的操作准确率对账。"""
         return self.append("plan", seat=seat, cards=[_name(c) for c in cards], why=why,
-                           n=len(list(cards)), hand_before=hand_before,
+                           n=len(list(cards)), hand_before=hand_before, **extra,
                            src=("direct" if "RL" in why or "直选" in why else "hint"))
 
     def verify(self, seat: str, hand_after: int, expected_after: int) -> dict:

@@ -116,6 +116,19 @@ class CompanionStore:
             (gid, time.time(), hand_n, json.dumps(counts, ensure_ascii=False)))
         self.db.commit()
 
+    def mark_last_decision(self, gid: str, agree: bool | None = None,
+                           note: str | None = None) -> None:
+        """给**本局最后一次决策**补对账结果 ✓ (出牌后自检回填, 不是新写一条 ✗)"""
+        row = self.db.execute("SELECT id FROM decision WHERE gid=? ORDER BY id DESC LIMIT 1",
+                              (gid,)).fetchone()
+        if not row:
+            return
+        if agree is not None:
+            self.db.execute("UPDATE decision SET agree=? WHERE id=?", (int(agree), row[0]))
+        if note:
+            self.db.execute("UPDATE decision SET note=? WHERE id=?", (note, row[0]))
+        self.db.commit()
+
     # ---------------- 读出口 (给前端 / 给"记忆") ----------------
     def recent_deals(self, limit: int = 20) -> list[dict]:
         cur = self.db.execute(

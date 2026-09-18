@@ -71,12 +71,15 @@ def main() -> int:
             lab = f"{k} {d:.3f}"
             cv2.putText(bt, lab, (1, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 255, 0), 1)
             row.append(bt)
-        gap = np.full((max(r.shape[0] for r in row), 6, 3), 40, np.uint8)
+        hh = max(r.shape[0] for r in row)          # ★ 高度补齐(裁切条高度不一 ✗)
+        row = [np.pad(r, ((0, hh - r.shape[0]), (0, 0), (0, 0)), constant_values=25) for r in row]
+        gap = np.full((hh, 6, 3), 40, np.uint8)
         merged = []
         for r in row:
             merged.append(r)
             merged.append(gap)
-        rows.append(np.hstack(merged[:-1]))
+        merged.pop()
+        rows.append(np.hstack(merged))
     if not rows:
         print("✓ 没有读错的牌位")
         return 0

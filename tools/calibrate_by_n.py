@@ -43,6 +43,9 @@ def wait_static(dev, tol=1.5, timeout=6.0):
     return prev
 
 
+LAST_W = 88          # 末张完整宽度(源码布局常量 ✓)
+
+
 def measure_row(img, n_truth: int, geom: G.GuandanGeom):
     """实测这一排的**真实左缘序列**(峰) —— 不是推导 ✓
 
@@ -73,7 +76,15 @@ def measure_row(img, n_truth: int, geom: G.GuandanGeom):
     gg = np.diff(peaks)
     if len(gg) and (gg.min() < 18 or gg.max() > 32):
         return [], False, f"间距不规整(min {gg.min()}, max {gg.max()}) ✗"
-    return [int(x) for x in peaks], True, f"峰 {len(peaks)} 个, 间距中位 {pitch:.1f}"
+    # ★★★ 关键修正(2026-09-18 由"点牌实验"反推出来):
+    #   竖直边界峰测到的是每张牌的**右边界**(= 下一张牌的左缘) ✗
+    #   证据: 点第0位→选中第1张 ✗, 点第13位→选中第12张 ✗, 而点**最后一位**→选中最后一位 ✓
+    #         (最后一张没有后继 ⇒ 它的右边界不是牌间边界 ⇒ 对上了 ✓)
+    #   ⇒ 真正的**左缘序列** = 每个峰左移一个牌距; 最后一张的左缘 = 右锚点(见下) ✓
+    # 峰 = 牌的左缘(与"居中布局公式"互相印证: 26 张 ⇒ 首张 16 ✓ 实测也是 16 ✓)
+    #   (2026-09-18 曾试过"峰=下一张左缘 ⇒ 整体减 24", 但那会得到 -8 这种越界值 ⇒ 已回退 ✗)
+    lefts = [int(p) for p in peaks]
+    return lefts, True, (f"峰 {len(peaks)} 个 → 左缘 {lefts[:3]}…{lefts[-1]}, 间距中位 {pitch:.1f}")
 
 
 def main() -> int:

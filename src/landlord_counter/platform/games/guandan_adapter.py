@@ -345,6 +345,32 @@ class GuandanAdapter(GameAdapter):
             self._tpl_deal_fp = fp
             print(f"  [模板] 新一局 → 自动重采 {n} 张 ✓ (这一局的读牌将回到 100%)")
 
+    def _hand_for_map(self, obs):
+        """**决定"哪张牌是第几个位"用的手牌顺序**(2026-09-18 实测踩坑后定案)。
+
+        坑: 旧实现用 `obs.hand`(读牌结果 ✗, 实测只有 ~70% 准) 去算位置 ⇒
+          **打出去的牌 ≠ 决策的牌**(实测: 想打 ♥5, 真值记录里出的是 J ✗),
+          而"位置级核对"还会给假 OK ✗(位置对上了, 但那张牌不是要打的牌)
+        ⇒ 真值模式用**游戏真值的手牌顺序**(`hands['0']` 就是屏幕顺序 ✓, 与 handIds 同序) ✓
+          产品模式仍用读牌结果(那是产品路径的唯一来源 ✓)
+        """
+        if mode.TRUTH:
+            t = self._truth_now()
+            hh = (t.get("hands") or {}).get("0") or []
+            if hh:
+                return [R.Card(zhi=int(v)) for v in hh]
+        return obs.hand
+
+    def _truth_now(self) -> dict:
+        """读一次游戏真值(拿不到就空 dict ✓)"""
+        cdp = getattr(getattr(self, "_ex", None), "cdp", None)
+        if cdp is None:
+            return {}
+        try:
+            return cdp.truth() or {}
+        except Exception:  # noqa: BLE001
+            return {}
+
     def sense(self, frame) -> Observation:
         self._track_seat(frame)
         self._observe_table_gated(frame)     # 记牌: 每帧都看桌面(别人的出牌也要记 ✓)
@@ -770,7 +796,7 @@ class GuandanAdapter(GameAdapter):
             return ExecResult(True, 0, "不出")
         # RL 臂: 打的是我们自己选的牌 → 必须点选直出(提示只会出游戏自己选的牌)
         if action.meta.get("direct") and action.combo is not None and obs.hand:
-            idxs = _map_indices(obs.hand, action.combo.cards)
+            idxs = _map_indices(self._hand_for_map(obs), action.combo.cards)
             if idxs:
                 ranks = [getattr(obs.hand[i], "zhi", None) for i in idxs
                          if 0 <= i < len(obs.hand)]
@@ -814,7 +840,7 @@ class GuandanAdapter(GameAdapter):
             except Exception as e:  # noqa: BLE001
                 print(f"  [自检] 异常({type(e).__name__}) → 放行", flush=True)
         if action.combo is not None and obs.hand:
-            idxs = _map_indices(obs.hand, action.combo.cards)
+            idxs = _map_indices(self._hand_for_map(obs), action.combo.cards)
             if idxs:
                 ranks = [getattr(obs.hand[i], "zhi", None) for i in idxs if 0 <= i < len(obs.hand)]
                 if ex.direct_play(idxs, len(obs.hand), ranks=ranks):

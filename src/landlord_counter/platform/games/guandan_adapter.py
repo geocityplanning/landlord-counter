@@ -10,6 +10,7 @@ import re
 import time
 
 from ..types import Action, ExecResult, GameAdapter, Observation, SettleInfo
+from .. import mode                      # ★ 真值/产品 模式开关(用户 2026-09-18 拍板解耦 ✓)
 from ..game_log import GameLog
 from ..usage import UsageMeter
 from ...guandan.tracker import CardTracker
@@ -659,6 +660,9 @@ class GuandanAdapter(GameAdapter):
 
     # ---------- 决策 ----------
     def decide(self, obs: Observation) -> Action:
+        if not getattr(self, "_mode_logged", False):     # ★ 启动就亮明模式(演示/产品 ✓)
+            self._mode_logged = True
+            print("  " + mode.describe(), flush=True)
         if obs.extra.get("read_fail") or not obs.hand:
             # 提示臂已禁用(2026-09-17): 读牌失败就**不动作**, 等下一帧重读 —— 绝不让游戏替我们打 ✗
             return Action("none", meta={"why": "读牌失败→等待重读(不用提示)"})
@@ -692,7 +696,7 @@ class GuandanAdapter(GameAdapter):
         (产品路径没有真值 ⇒ 仍要靠桌面识别; 这条是实验室兜底 + 诊断用 ✓)
         """
         cdp = getattr(getattr(self, "_ex", None), "cdp", None)
-        if cdp is None:
+        if cdp is None or not mode.TRUTH:      # ★ 产品模式不用真值(靠桌面识别 ✓)
             return None
         try:
             plays = (cdp.truth() or {}).get("plays") or []

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .actloop import ActReport, Evidence
+from . import mode                      # ★ 真值/产品 模式开关(用户 2026-09-18 拍板解耦 ✓)
 
 import numpy as np
 
@@ -490,7 +491,7 @@ class Executor:
                 return False
             slots, _chk = L.locate(self._snap(), n)
             ids, sel = [], set()
-            if cdp is not None:
+            if cdp is not None and mode.TRUTH:       # ★ 只有**真值模式**才用游戏真值核对 ✓
                 try:
                     t = cdp.truth() or {}
                     ids = list(t.get("handIds") or [])

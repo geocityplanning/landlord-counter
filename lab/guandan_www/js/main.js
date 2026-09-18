@@ -353,10 +353,25 @@
                     3: gameState.ai3Pai.map(c => ({zhi: c.zhi, hua: c.hua, id: c.id}))
                 },
                 jiPai: gameState.jiPai,
-                // 桌上"待压"的那一手: 上家最近出的牌(带花色) ⇒ 决策不用再靠视觉认桌面 ✓
-                shangJia: (gameState.shangJiaPaiXing && gameState.shangJiaPaiXing.cards)
+                // 桌上"待压"那一手: **只有真有人领出、且我还得压时**才有值 ✓
+                //   (2026-09-18 踩坑: 单看 shangJiaPaiXing 会漏 —— 它可能是 null 而桌上仍压着牌 ✗
+                //    ⇒ 判据必须带 shangJiaChuPai(用户口述规则 + 源码 xiaYiGeChuPai 印证) ✓)
+                shangJia: (gameState.shangJiaChuPai && gameState.shangJiaPaiXing
+                           && gameState.shangJiaPaiXing.cards)
                     ? gameState.shangJiaPaiXing.cards.map(c => ({zhi: c.zhi, hua: c.hua, id: c.id}))
                     : null,
+                // ★ 2026-09-18 加: 判"该不该压/我能不能任意出"的三个权威字段 ✓
+                shangJiaChuPai: gameState.shangJiaChuPai,   // 本手牌谁领出(null=没人领 ⇒ 我任意出)
+                passCount: gameState.passCount,             // 连续几家不出(3 ⇒ 该新一轮)
+                benLunChuPai: (function () {                // 本轮各座位已出的牌(带花色)
+                    const o = {};
+                    const src = gameState.benLunChuPai || {};
+                    Object.keys(src).forEach(function (k) {
+                        const v = src[k];
+                        o[k] = v ? v.map(c => ({zhi: c.zhi, hua: c.hua})) : null;
+                    });
+                    return o;
+                })(),
                 plays: (window.__plays || []).slice(-30)
             };
         } catch (e) { return {err: String(e)}; }

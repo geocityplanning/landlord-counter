@@ -541,7 +541,11 @@ class GuandanAdapter(GameAdapter):
             except Exception:  # noqa: BLE001
                 tm_reads = _tm_first
         if tm_reads:
-            hand = [R.Card(zhi=z, hua=_TM_HUA2RULES.get(s)) for s, z, _x, _l in tm_reads]
+            # ★ 兼容 3/4 元组(2026-09-19): 旧写法写死 `for s, z, _x, _l in tm_reads` ✗
+            #   ⇒ 读法统一后元组变成 3 个 ⇒ **未定义解包 ⇒ 整个 sense 崩** ✗
+            #   (实测: 真值掉线、首次走到视觉兜底时才发现 —— 兜底路径从没被跑过 ✓)
+            #   只取**前两位**(花色/点数), 后面几位是什么都不影响 ✓
+            hand = [R.Card(zhi=it[1], hua=_TM_HUA2RULES.get(it[0])) for it in tm_reads]
             self.usage.vlm_read(what="hand_tm", ok=True, n=len(hand))     # 计量: 0 成本路径
         if not hand:
             # ② 兜底: 大模型读(模板库尚未覆盖的牌型/界面改版)

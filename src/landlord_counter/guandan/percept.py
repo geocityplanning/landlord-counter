@@ -1224,7 +1224,7 @@ def slide_best(img, x: int, y0: int, tpl, win_up: int = 56, win_dn: int = 130,
     return float(best_dy - (win_up - 3)), best_d
 
 
-def tm_read_hand(img, y0: int | None = None, tpl: dict | None = None):
+def tm_read_hand(img, y0: int | None = None, tpl: dict | None = None, slots: list | None = None):
     """**唯一公开读法**(模板竖直滑动): 一次滑动同时给出 花色/点数/x/抬起量 ✓
 
     返回 (list[(花色, 点数, x, 抬起量px)], info); 有牌被抬起时也 100% ✓
@@ -1286,7 +1286,8 @@ def tm_read_hand(img, y0: int | None = None, tpl: dict | None = None):
 
 
 def tm_collect_from_ranks(img, ranks, y0: int | None = None, y1: int | None = None,
-                          out_dir: str = "data/templates_rank", tag: str = "auto") -> int:
+                          out_dir: str = "data/templates_rank", tag: str = "auto",
+                          slots: list | None = None) -> int:
     """**唯一的采集实现**: 按游戏真值给每个牌位贴标签, 裁竖条存模板 ✓
 
     工具(tools/tm_collect_live.py)与适配器(换局自动重采)共用 —— 只此一份, 避免第二套 ✓
@@ -1297,7 +1298,10 @@ def tm_collect_from_ranks(img, ranks, y0: int | None = None, y1: int | None = No
 
     if y0 is None or y1 is None:
         y0, y1 = hand_band_measured(img)
-    xs = card_slots(img, y0, y1)
+    # ★★ 位置必须由调用方给(通常来自 locate 的"按张数实测表" ✓)
+    #   教训(2026-09-18): 采集用公式、读取用表 ⇒ 两者裁的位置不同 ⇒ 模板与读数对不上
+    #   ⇒ 读牌崩到 19% ✗。**采集与读取必须同一份位置** ✓(今天第三次栽在这条纪律上)
+    xs = [int(v) for v in slots] if slots else card_slots(img, y0, y1)
     if len(xs) != len(ranks):
         return 0                                   # 牌位数与真值不一致 ⇒ 宁可不采 ✓
     _os.makedirs(out_dir, exist_ok=True)

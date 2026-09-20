@@ -56,12 +56,20 @@ def metric_of_deal(gid: str, result: dict, my_seat: int = 0) -> DealMetric | Non
         # 我方赢 ⇒ 我方升级为正 ✓; 输 ⇒ 被对方升级, 记负 ✓
         m.sheng_ji = int(sj) * (1 if m.won else -1)
 
-    youci = result.get("youCiList")          # 游次列表: 按出完牌的顺序排的座位号 ✓
-    if isinstance(youci, list) and len(youci) == 4:
+    youci = result.get("youCiList")   # 游次列表: 按出完牌顺序的座位号 ✓
+    # ★ 2026-09-20 修正: **掼蛋双上/双下时立即结算** ⇒ youCiList 只有 2 个是正常的 ✓
+    #   (页面 main.js: length>=2 就结束本局 —— 后两名不用再打 ✓)
+    #   原来的 len(youci)==4 写死了 ✗ ⇒ 把正常局判成"不合格、不计入" ✗
+    if isinstance(youci, list) and 2 <= len(youci) <= 4:
         ranks = [0] * 4
         for i, seat in enumerate(youci):
             if 0 <= int(seat) < 4:
                 ranks[int(seat)] = i + 1
+        # 没出现在列表里的家 ⇒ 按剩余名次补(3 / 4) ✓
+        rest = [3, 4]
+        for s_ in range(4):
+            if ranks[s_] == 0:
+                ranks[s_] = rest.pop(0) if rest else 4
         m.ranks = ranks
         m.tou_you = int(youci[0])
         mine = [ranks[s] for s in MY_TEAM]

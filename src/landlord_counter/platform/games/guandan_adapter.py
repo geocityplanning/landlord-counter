@@ -977,7 +977,8 @@ class GuandanAdapter(GameAdapter):
                     _want = [c.zhi for c in action.combo.cards]
                     _seen = ""
                     try:
-                        _t2 = ex.cdp.truth() or {}
+                        _tfn = getattr(ex.cdp, "truth", None)
+                        _t2 = (_tfn() if callable(_tfn) else None) or {}
                         _sh = _t2.get("shangJia") or []
                         _seen = (f" | 游戏看到: 桌上={[(c.get('zhi'), c.get('hua')) for c in _sh]} "
                                  f"needBeat={_t2.get('needBeat')} 级牌={_t2.get('jiPai')} "

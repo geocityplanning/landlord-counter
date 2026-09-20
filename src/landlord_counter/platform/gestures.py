@@ -500,6 +500,7 @@ class Executor:
                 return False
             slots, _chk = L.locate(self._snap(), n)
             ids, sel = [], set()
+            t = {}                                   # ★ 兜底: 下面身份定位也要用 ✓
             if cdp is not None and mode.TRUTH:       # ★ 只有**真值模式**才用游戏真值核对 ✓
                 try:
                     t = cdp.truth() or {}
@@ -510,15 +511,28 @@ class Executor:
             # ★★ 2026-09-21 用户指出: 想选的牌 ≠ 实际点中的牌 ✗
             #   实测: 想选 [Q,Q,Q,♥4,♥4] 却点成 [Q,Q,Q,♥4,♠4] ⇒ 游戏判"无效的牌型组合" ✗
             #   原因: 原来只核对"**位置**"一致(位置是自洽的) ⇒ 位置对 ≠ 牌对 ✗
-            #   正解: 拿"我们想出的牌"的 **id** 去真值手牌里定位(身份级 ✓ 唯一不会错)
-            #        id 找不到 ⇒ 映射失败 ⇒ 本轮不点(宁可不出, 绝不点错 ✗)
-            if want and ids:
+            #   正解: 按 **(点数+花色) 身份**去真值手牌里定位 ✓
+            #        (先试 id —— 但实测真值在开局那会儿**不给 id** ✗ ⇒ 必须能退回身份匹配 ✓)
+            #        定位失败 ⇒ 本轮不点(宁可不出, 绝不点错 ✗)
+            if want:
                 _wids = [int(getattr(c, "id", -1)) for c in want]
-                if all(w in ids for w in _wids):
+                if ids and all(w in ids for w in _wids):
                     want = sorted(ids.index(w) for w in _wids)
                 else:
-                    self.log(f"  [sel] ✗ 想出的牌在真值手牌里找不到(id={_wids}) ⇒ 本轮不点")
-                    return False
+                    _hf = (t.get("handsFull") or {}).get("0") or [] if cdp is not None else []
+                    _hz = [(int(c["zhi"]), int(c["hua"])) for c in _hf]
+                    _need = sorted((int(c.zhi), int(c.hua)) for c in want)
+                    _used, _idx = set(), []
+                    for _k in _need:
+                        _j = next((i for i, zh in enumerate(_hz)
+                                   if zh == _k and i not in _used), None)
+                        if _j is None:
+                            self.log(f"  [sel] ✗ 想出的牌在真值手牌里找不到 "
+                                     f"{_k} ⇒ 本轮不点(不猜 ✓)")
+                            return False
+                        _used.add(_j)
+                        _idx.append(_j)
+                    want = sorted(_idx)
             if not ids:                      # 产品路径: 没有真值 ⇒ 只按目标逐张点一次 ✓
                 for i in want:
                     if 0 <= i < len(slots):

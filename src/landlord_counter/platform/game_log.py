@@ -37,7 +37,9 @@ def _zhi(card: Any) -> int:
     return int(getattr(card, "zhi", card))
 
 
-_HUA_MAP = {"♠": 0, "♥": 1, "♣": 2, "♦": 3}
+# ★ 2026-09-20: 花色字符全表 —— 原来只认 4 个, 遇到别的(如全角/别名)就 -1 ⇒ 显示 "?" ✗
+_HUA_MAP = {"♠": 0, "♥": 1, "♣": 2, "♦": 3, "♤": 0, "♡": 1, "♧": 2, "♢": 3,
+            "黑桃": 0, "红桃": 1, "梅花": 2, "方块": 3, "S": 0, "H": 1, "C": 2, "D": 3}
 _ZHI_MAP = {"J": 11, "Q": 12, "K": 13, "A": 14, "小王": 15, "大王": 16}
 
 
@@ -46,6 +48,10 @@ def _parse_name(s) -> tuple:
     s = str(s).strip()
     if s in ("小王", "大王"):
         return (15 if s == "小王" else 16), 4
+    for k in ("黑桃", "红桃", "梅花", "方块"):      # 多字花色要先整词试 ✓
+        if s.startswith(k):
+            rest = s[len(k):]
+            return (_ZHI_MAP.get(rest) or (int(rest) if rest.isdigit() else -1)), _HUA_MAP[k]
     hua = _HUA_MAP.get(s[:1], -1)
     rest = s[1:] if hua >= 0 else s
     if rest.isdigit():

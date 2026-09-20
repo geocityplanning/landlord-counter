@@ -20,9 +20,11 @@ def make_sink(log: Any, store: Any, gid: str):
     """
 
     _last_hand: list = []          # 缓存最近一条 hand 事件(开局手牌) ✓
+    _deal_n = 0                    # 同一个 gid 下的第几局
+    _base_gid = gid                # 原始局号(分钟级)
 
     def sink(ev: dict) -> None:
-        nonlocal _last_hand
+        nonlocal _last_hand, _deal_n, gid
         t = ev.get("type")
         # ★ 优先用结构化牌(`cards_raw` = [{zhi,hua}]) ✓ 取不到才退回字符串名
         cards = ev.get("cards_raw") or ev.get("cards")
@@ -31,15 +33,20 @@ def make_sink(log: Any, store: Any, gid: str):
             _last_hand = ev.get("cards_raw") or ev.get("cards") or []
 
         elif t == "deal_start":
-            # 开局手牌: 优先用刚缓存的 hand 事件 ✓ 兜底才是 log 的状态(只有点数、没花色)
-            store.record_deal(gid, _last_hand or list(getattr(log, "my_hand", []) or []), seat="南")
+            # ★ 2026-09-20: 局号加"第几局"后缀 —— 原局号是分钟级, 同一分钟多局会串 ✓
+            _deal_n += 1
+            gid = f"{_base_gid}#{_deal_n}"
+            store.record_deal(gid, _last_hand or list(getattr(log, "my_hand", []) or []),
+                              seat="南", ji_pai=ev.get("ji_pai"))
 
         elif t in ("play", "pass"):
             seat = ev.get("seat", "南")
             # 是不是我出的: 座位名对得上就算我出的 ✓(掼蛋我方坐"南")
             mine = seat == "南"
             store.record_play(gid, seat, cards if t == "play" else [],
-                              hand_left=len(getattr(log, "my_hand", []) or []) or None,
+                              # ★ 2026-09-20: 优先用事件里的真值(adapter 传的真·剩牌)
+                              #   ✗ 旧写法用 len(log.my_hand) 是估的, 实测滞后
+                              hand_left=ev.get("hand_left"),
                               mine=mine, kind=t, ts=ev.get("t"))
             # 牌池快照: 直接取 log.pool() ✓ —— **它本来就是算这个的** ✗ 这里绝不自己算
             try:

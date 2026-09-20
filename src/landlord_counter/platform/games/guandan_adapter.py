@@ -773,7 +773,8 @@ class GuandanAdapter(GameAdapter):
 
     def _new_deal(self) -> None:
         """新一局: 记牌器/日志/RL 历史全部归零。"""
-        self.log.deal_start()
+        # ★ 2026-09-20: 带上级牌 —— 桥那边一直在收 ji_pai, 只是没人传 ⇒ 库里记成 None ✗
+        self.log.deal_start(ji_pai=getattr(self, "_ji_pai", None))
         self.tracker.reset()
         self._last_sig.clear()
         self._rl_hist.clear()

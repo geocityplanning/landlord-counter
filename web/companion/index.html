@@ -52,6 +52,15 @@
   .pcell .v { font-size:15px; font-weight:700; }
   .pcell.z .v { color:var(--ok); }        /* 剩0 = 打完了 ✓ */
 
+  /* 四家出牌 */
+  .seats { display:grid; grid-template-columns:repeat(2,1fr); gap:6px; }
+  .seatbox { background:var(--card); border:1px solid var(--line); border-radius:6px;
+             padding:5px 7px; min-height:40px; }
+  .seatbox.mine { border-color:var(--mine); }
+  .seatbox .who { color:var(--dim); font-size:11px; }
+  .seatbox .cs { font-family:ui-monospace,monospace; font-size:12px; word-break:break-all; }
+  .seatbox .cs.pass { color:var(--dim); }
+
   /* 推荐 / 托管 */
   .rec-row { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:6px 8px;
              display:flex; justify-content:space-between; align-items:center; }
@@ -79,6 +88,8 @@
   </header>
 
   <div class="body">
+    <section><h3>四家出牌 <span id="seatHint">各家最近一手</span></h3>
+      <div class="seats" id="seats"></div></section>
     <section><h3>出牌记录 <span id="playCount"></span></h3><div id="plays"></div></section>
     <section><h3>牌池 <span id="poolHint">剩余张数</span></h3><div class="pool" id="pool"></div></section>
     <section><h3>出牌推荐 <span id="recHint"></span></h3><div id="recs"></div></section>
@@ -116,7 +127,22 @@ function render(j){
   document.getElementById('ballBadge').textContent = (j.hand||[]).length;
   document.getElementById('updated').textContent = new Date().toLocaleTimeString();
 
-  // ① 出牌记录(最近 12 手)
+  // ①a 四家出牌 —— 每家最近一手(谁领出/谁压/谁不出, 一眼看清 ✓)
+  const SEATS = ["南", "西", "北", "东"];
+  const all = j.plays || [];
+  document.getElementById("seats").innerHTML = SEATS.map(s => {
+    const me = s === "南";
+    const last = [...all].reverse().find(p => (p.mine ? "南" : p.seat) === s);
+    const body = !last ? "—"
+      : last.kind === "pass" ? "不出"
+      : (last.cards || []).map(c => cname(c)).join(" ");
+    return `<div class="seatbox ${me ? "mine" : ""}">
+        <div class="who">${me ? "我(南)" : s}</div>
+        <div class="cs ${last && last.kind === "pass" ? "pass" : ""}">${body}</div>
+      </div>`;
+  }).join("");
+
+  // ①b 出牌记录(最近 12 手)
   const ps = (j.plays||[]).slice(-12);
   document.getElementById('playCount').textContent = `${(j.plays||[]).length} 手`;
   document.getElementById('plays').innerHTML = ps.map(p => `

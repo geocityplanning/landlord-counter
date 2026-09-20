@@ -381,6 +381,10 @@
                     3: gameState.ai3Pai.map(c => ({zhi: c.zhi, hua: c.hua, id: c.id}))
                 },
                 jiPai: gameState.jiPai,
+                // ★★ 2026-09-21: 游戏引擎**判牌型时真正用的**级牌(gameRules 模块内的)
+                //   实测两者会走岔: 真值说 2, 模块里还是 3 ✗
+                //   ⇒ 托管侧必须按这个算(否则"我们以为逢人配生效、游戏不认"⇒ 判无效 ✗)
+                jiPaiModule: GameRules.dangQianJiPai,
                 // ★★ 2026-09-19 定案: "该压谁"的权威 = `shangJiaChuPai` —— **它存的是牌数组**!
                 //   (字段名骗人 ✗: 名字像"谁领出", 实际源码 430 行 `shangJiaChuPai = cards` ✓)
                 //   而 `shangJiaPaiXing.cards` **是空的** ✗ ⇒ 之前一直读到"没人压着" ⇒

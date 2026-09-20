@@ -497,7 +497,10 @@ class GuandanAdapter(GameAdapter):
         # ★★ 2026-09-20: **本局级牌以真值为准** ✓
         #   原来写死 JIPAI(环境变量默认 2) ✗ ⇒ 打A局时"逢人配/同花顺"判断全错 ✗
         #   实测: 真值 jiPai=14(A), 而 Python 里是 2 ⇒ 候选数都不一样(5 vs 6) ✗
-        self._jipai_now = int(t.get("jiPai") or 0) or None
+        # ★★ 2026-09-21: 级牌以**游戏引擎真正用的那个**(jiPaiModule)为准 ✓
+        #   实测两者会走岔: 真值 gameState.jiPai=2, 而 gameRules 模块内是 3 ✗
+        #   而游戏判牌型用的是模块内那个 ⇒ 我们必须跟它一致, 否则算出"游戏不认"的牌型 ✗
+        self._jipai_now = int(t.get("jiPaiModule") or t.get("jiPai") or 0) or None
         need_beat = bool(t.get("needBeat"))
         sj = t.get("shangJia") or [] if need_beat else []
         table = [R.Card(zhi=int(c["zhi"]), hua=int(c["hua"]),

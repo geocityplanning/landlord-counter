@@ -44,6 +44,7 @@ API 一览(函数名即文档):
 from __future__ import annotations
 
 import itertools
+import os
 import random
 from dataclasses import dataclass, field
 
@@ -803,6 +804,13 @@ def find_all_plays(hand: list, last: "Group | None" = None, jipai: int | None = 
             continue
         seen.add(key)
         res.append(g)
+    # ★★ 2026-09-21: **逢人配开关** —— 游戏本体(gameRules.js)只定义了 shiZhuPai(),
+    #   但 jieXiPaiXing() 里**没落地** ✗ ⇒ 我们算出的"用了红桃级牌当万能"的牌型,
+    #   游戏会判"无效的牌型组合"并拒绝(实测: 想用 ♥2+♠4♦4 出 444 被拒 ✗ ⇒ 卡死)
+    #   默认**过滤掉**这类候选, 保证"算得出就出得去" ✓
+    #   (待游戏本体补上逢人配后, 设 GUANDAN_ALLOW_WILD=1 即可放开 ✓)
+    if os.getenv("GUANDAN_ALLOW_WILD", "") != "1":
+        res = [g for g in res if not getattr(g, "wild_used", 0)]
     res.sort(key=lambda g: (g.xing, g.chang_du, g.zhu_zhi))
     return res
 

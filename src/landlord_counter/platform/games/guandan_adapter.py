@@ -648,7 +648,9 @@ class GuandanAdapter(GameAdapter):
         """记一次决策(我们打算出的牌) → 操作准确率对账用。同时记下"决策前手牌张数"。"""
         try:
             hb = len(getattr(self, "_cur_hand", []) or [])
-            self.log.plan("南", [str(c) for c in choice.cards], why=why, hand_before=hb or None)
+            self.log.plan("南", [str(c) for c in choice.cards], why=why, hand_before=hb or None,
+                          need_beat=bool(getattr(self, "_last_need_beat", False)),
+                          cand_n=int(getattr(self, "_last_n_cand", 0) or 0))
         except Exception:                            # noqa: BLE001
             pass
 
@@ -850,6 +852,9 @@ class GuandanAdapter(GameAdapter):
         rem = self.log.seat_remaining()              # 记牌器实测(他方 = 27 − 已出)
         others = [float(rem.get(s, 27)) for s in ("西", "北", "东")]
         self.usage.rl_infer(n_cand=len(cands), hand=len(obs.hand))
+        # ★ 2026-09-20 补口子②: 决策当时的处境(候选数 + 压/领出) ⇒ 写进日志/伴随应用库
+        self._last_n_cand = len(cands)
+        self._last_need_beat = bool((obs.extra or {}).get("need_beat"))
         choice, info = self._rl.choose(cands, obs.hand, self._rl_hist[-16:],
                                        [mine] + others + [mine + sum(others)], (wi, last), 0)
         _md = "压" if (obs.extra or {}).get("need_beat") else "领出"

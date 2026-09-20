@@ -19,13 +19,20 @@ def make_sink(log: Any, store: Any, gid: str):
       —— 直接读它 = 复用现有实现 ✓(自己再算一遍就是第二套 ✗)
     """
 
+    _last_hand: list = []          # 缓存最近一条 hand 事件(开局手牌) ✓
+
     def sink(ev: dict) -> None:
+        nonlocal _last_hand
         t = ev.get("type")
         # ★ 优先用结构化牌(`cards_raw` = [{zhi,hua}]) ✓ 取不到才退回字符串名
         cards = ev.get("cards_raw") or ev.get("cards")
 
-        if t == "deal_start":
-            store.record_deal(gid, list(getattr(log, "my_hand", []) or []), seat="南")
+        if t == "hand":
+            _last_hand = ev.get("cards_raw") or ev.get("cards") or []
+
+        elif t == "deal_start":
+            # 开局手牌: 优先用刚缓存的 hand 事件 ✓ 兜底才是 log 的状态(只有点数、没花色)
+            store.record_deal(gid, _last_hand or list(getattr(log, "my_hand", []) or []), seat="南")
 
         elif t in ("play", "pass"):
             seat = ev.get("seat", "南")

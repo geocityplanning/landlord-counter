@@ -217,7 +217,12 @@ class GameLog:
         return False
 
     def set_my_hand(self, cards) -> None:
+        cards = list(cards)
         self.my_hand = Counter(_zhi(c) for c in cards)
+        # ★ 2026-09-20 补口子①: 这里原本**不发事件** ✗ ⇒ 伴随应用的开局手牌永远是空的
+        #   现在补一条 hand 事件(带结构化点+花色), 由 bridge 缓存, 到 deal_start 时落库 ✓
+        self.append("hand", n=len(cards), cards=[_name(c) for c in cards],
+                    cards_raw=_cards_raw(cards))
 
     # ---------------- 重放 ----------------
     def _apply(self, ev: dict) -> None:

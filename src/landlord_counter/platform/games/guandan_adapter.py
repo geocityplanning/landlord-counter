@@ -432,6 +432,34 @@ class GuandanAdapter(GameAdapter):
             time.sleep(0.4)
         print("  [对账] ? 真值里没看到这一手(还没写入?)", flush=True)
 
+    _SEATS_TRUTH = ("南", "西", "北", "东")      # 真值座位序号 → 座位名(与 GameLog.seats 同序 ✓)
+
+    def _observe_others_by_truth(self, t: dict) -> None:
+        """真值模式: 从真值 `plays` 读**别人**出的牌 ✓
+
+        用户 2026-09-20 定: "反正都已经用真值了, 索性就全用" ✓
+        为什么需要它: 真值模式把整段视觉跳过了 ✗ ⇒ 原来"看桌面记别人牌"的路径也断了
+          (实测库里只有我自己的 22 手, 别人一张没记 ✗ —— 一个意外的耦合)
+        `plays` 每条自带 seat/zhi/hua/t ⇒ 取"新出现的"做差量即可 ✓
+        """
+        seen = getattr(self, "_truth_plays_seen", None)
+        if seen is None:
+            seen = self._truth_plays_seen = set()
+        for p in (t.get("plays") or []):
+            zhi = tuple(int(v) for v in (p.get("zhi") or []))
+            hua = tuple(int(v) for v in (p.get("hua") or []))
+            si = int(p.get("seat", -1))
+            key = (si, int(p.get("t") or 0), zhi, hua)
+            if key in seen:
+                continue
+            seen.add(key)
+            if si <= 0 or not zhi:
+                continue      # 0=我(另有路径: 带手牌+即时对账 ✓); 空牌=不出 ✓
+            seat = self._SEATS_TRUTH[si] if si < len(self._SEATS_TRUTH) else f"座{si}"
+            cards = [R.Card(zhi=z, hua=h) for z, h in
+                     zip(zhi, hua or (0,) * len(zhi))]
+            self._log_seat_play(seat, cards, src="truth")
+
     def _sense_by_truth(self, frame):
         """**纯真值观测**(2026-09-18 用户拍板: "如果真值就直接全部都用真值, 视觉去掉") ✓
 
@@ -445,6 +473,9 @@ class GuandanAdapter(GameAdapter):
         t = self._truth_now()
         if not t or t.get("err") or t.get("phase") is None:
             return None
+        # ★ 2026-09-20: **先**记别人出的牌 —— 必须在下面"别人回合早退"之前 ✗
+        #   (原来早退了, 别人那几手连读的机会都没有 ⇒ 库里只有自己的牌 ✗)
+        self._observe_others_by_truth(t)
         phase = t.get("phase")
         if phase != "playing":                      # 结算/等待: 不动作, 交给 settle ✓
             return Observation(frame=frame, my_turn=False, extra={"truth_phase": phase})

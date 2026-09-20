@@ -64,6 +64,11 @@ def make_sink(log: Any, store: Any, gid: str):
                 note=str(ev.get("why") or ""),
             )
 
+        elif t == "deal_end":
+            # ★ 2026-09-20: 结算 ⇒ 回填**结束日期时间** + 结果 ✓
+            store.end_deal(gid, {k: v for k, v in ev.items()
+                                 if k not in ("t", "seq", "type")})
+
         elif t == "identity":
             # ★ 2026-09-20 用户定: **唯一权威的对账** = 决定的牌 vs 真值实出的牌
             #   (逐张比点数+花色 ✓)。旧口径"手牌掉几张"是间接推断、读数滞后就误判 ✗ 已删。

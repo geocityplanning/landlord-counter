@@ -989,6 +989,21 @@ class GuandanAdapter(GameAdapter):
             _tr = None
         if _tr and _tr.get("phase") == "playing":
             return None
+        # ★★ 2026-09-20 用户定: **真值有结算就直接用它** ✓
+        #   以前只把真值当"否决闸门"用 ✗ ⇒ 结算仍靠 a11y 文本猜, 没有 名次/结构,
+        #   连 win 都解析不出来(实测 result={"raw":..., "win":null} ✗)
+        #   现在: 真值 result(won/升级数/四家名次/头游/新级牌/炸弹数) 直接进库 ✓
+        _res = (_tr or {}).get("result") if _tr else None
+        if isinstance(_res, dict) and _res:
+            raw = f"头游={_res.get('touYou')};升级={_res.get('shengJiShu')}级"
+            try:
+                self.log.deal_end(raw=raw, **{k: v for k, v in _res.items()})
+            except Exception:                # noqa: BLE001
+                pass
+            _now2 = time.time()
+            self._last_settle_key = raw.strip()[:200]
+            self._last_settle_t = _now2
+            return SettleInfo(raw=raw, win=bool(_res.get("won")))
         _key = (blob or "").strip()[:200]
         _now = time.time()
         if _key and _key == getattr(self, "_last_settle_key", None):

@@ -485,8 +485,10 @@ class Executor:
         from ..guandan import locate as L
 
         cdp = getattr(self, "cdp", None)
-        want = sorted(int(i) for i in idxs)
-        # ★ 2026-09-21: 牌位偏格的**自校正**(用户铁律: 禁 layout 常量, 当帧实测+校验)
+        # ★★ 2026-09-21 删掉旧的局部变量 `want = sorted(int(i) for i in idxs)` ✗
+        #   为什么删: 它和函数参数同名(参数曾叫 want) ⇒ 一进函数就被它覆盖 ⇒ 连崩两次 ✗
+        #   现在"目标牌位"只叫 `tgts`(每轮按当帧真值重算 ✓), 名字唯一、不会再撞 ✓
+        # ★ 牌位偏格的**自校正**(用户铁律: 禁 layout 常量, 当帧实测+校验)
         #   实测: 手牌 21 张时 `slots_from_right` 用固定 pitch=24 从右端左铺 ⇒ 整体偏左一格
         #        ⇒ 点目标 i 结果选中 i-1(真值日志: 目标=[20] 选中=[19])⇒ 连续 3 轮越修越左 ✗
         #   做法: 判据全部来自**真值**(不猜 ✓) —— 只在"点的全是目标的左邻"时把整排右移一格 ✓

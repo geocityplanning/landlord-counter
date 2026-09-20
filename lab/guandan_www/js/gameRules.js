@@ -214,7 +214,34 @@ const GameRules = (function() {
     /**
      * 解析牌型
      */
+    // ★★ 2026-09-21 用户定: **逢人配** —— 红桃级牌可当任意牌(掼蛋普遍规则) ✓
+    //   背景: 游戏本身只定义了 shiZhuPai() 却没在解析牌型时用它 ✗
+    //        ⇒ 托管侧算出的合法牌型被游戏判"无效的牌型组合" ⇒ 出牌被拒 ⇒ 卡死
+    //        (实测: 想用 ♥2+♠4♦4 出 444, 游戏回"无效的牌型组合" ✓)
+    //   做法: 抽出红桃级牌(逢人配) ⇒ 枚举它替代的点数(2..A, 不能替王) ⇒
+    //        用**官方比较函数** biJiaoPaiXing 取能组出的最大牌型 ✓
     function jieXiPaiXing(paiList) {
+        if (!paiList || paiList.length === 0) {
+            return { xing: PAI_XING.WU_XIAO, zhuZhi: 0, changDu: 0 };
+        }
+        const wilds = paiList.filter(shiZhuPai);
+        if (wilds.length === 0) {
+            return jieXiPaiXingYuanShi(paiList);
+        }
+        const others = paiList.filter(function (p) { return !shiZhuPai(p); });
+        let best = null;
+        for (let zhi = PAI_ZHI.ER; zhi <= PAI_ZHI.A; zhi++) {
+            const fake = others.concat(wilds.map(function (w) {
+                return { zhi: zhi, hua: w.hua, id: w.id };
+            }));
+            const r = jieXiPaiXingYuanShi(fake);
+            if (r.xing === PAI_XING.WU_XIAO) continue;
+            if (!best || biJiaoPaiXing(r, best) > 0) best = r;
+        }
+        return best || { xing: PAI_XING.WU_XIAO, zhuZhi: 0, changDu: 0 };
+    }
+
+    function jieXiPaiXingYuanShi(paiList) {
         if (!paiList || paiList.length === 0) {
             return { xing: PAI_XING.WU_XIAO, zhuZhi: 0, changDu: 0 };
         }

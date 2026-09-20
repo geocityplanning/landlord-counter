@@ -514,7 +514,7 @@ class Executor:
 
         first = self._snap()
         before = self.L.white_count(first)
-        base_lift = self._lift(first)
+        self._lift(first)                    # 只调(内部有记录副作用 ✓), 不用返回值
         # ---- 清残留选中(实测: 残留会让"我们选的+残留"变成非法牌型 → 出牌被拒) ----
         # "空"基线估计: 取"见过的最小值"与 250 的更小者(实测空手牌抬起≈196; 脏值会带偏自适应)
         # ★ 删除"盲点清残留"(2026-09-17 实测有害 ✗): 游戏"点一张选一整组" → 盲点会把整手牌全选上 ✗
@@ -523,8 +523,7 @@ class Executor:
         # ★ 2026-09-21 清: 老的"空基线"(_lift_min/empty)是死代码 ✗(只被 `_ = (...)` 占位)
         #   连带那次"盲点清残留"一起删了 —— 盲点会把整手牌全选上 ✗(实测振荡 16837↔5801↔16300)
         #   现在的做法: 绝不盲点, 残留交给 _clear_selection_via_truth 按真值精确清 ✓
-        #   最小抬起量 base_lift 保留(活性探针 _lift 还在用 ✓)
-        _ = base_lift
+        #   _lift() 那一调用保留(内部记录最小抬起量, 活性探针用 ✓)
         for r in range(rounds):
             if r:
                 self.log("  [gesture] ↻ 直选重试(重新取帧)")

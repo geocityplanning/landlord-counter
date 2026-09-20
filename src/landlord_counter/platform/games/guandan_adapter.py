@@ -369,6 +369,14 @@ class GuandanAdapter(GameAdapter):
         """
         if mode.TRUTH:
             t = self._truth_now()
+            # ★★ 2026-09-21 关键修复: **必须带 hua 和 id** ✗
+            #   旧写法只取点数 `R.Card(zhi=int(v))` ⇒ map_indices 只能按**点数**匹配
+            #   ⇒ 同点数的牌会混(想选 ♥4 却点到 ♠4 ✗)
+            #   实测: 想选 [Q,Q,Q,♥4,♥4] 点成 [Q,Q,Q,♥4,♠4] ⇒ 游戏判"无效的牌型组合" ✗
+            hf = (t.get("handsFull") or {}).get("0") or []
+            if hf:
+                return [R.Card(zhi=int(c["zhi"]), hua=int(c["hua"]),
+                               id=int(c.get("id", -1))) for c in hf]
             hh = (t.get("hands") or {}).get("0") or []
             if hh:
                 return [R.Card(zhi=int(v)) for v in hh]
@@ -933,6 +941,19 @@ class GuandanAdapter(GameAdapter):
         self._last_need_beat = bool((obs.extra or {}).get("need_beat"))
         choice, info = self._rl.choose(cands, obs.hand, self._rl_hist[-16:],
                                        [mine] + others + [mine + sum(others)], (wi, last), 0)
+        # ★★ 2026-09-21: RL 把选中的组**重新造了一遍** ⇒ 牌的 id 丢了(实测 id=[-1,-1] ✗)
+        #   ⇒ 选牌时按 id 定位就找不到 ⇒ 卡住(用户看到"不断点1010又放下1010") ✓
+        #   修: 按"点数+花色"在候选表里找回**原对象**(带 id ✓)
+        if choice is not None and cands:
+            _k = sorted((c.zhi, c.hua) for c in choice.cards)
+            _orig = next((g for g in cands
+                          if sorted((c.zhi, c.hua) for c in g.cards) == _k), None)
+            if _orig is not None:
+                choice = _orig
+            else:
+                print(f"  [注意] RL 选的 {R.group_to_str(choice)} 不在候选表里 ⇒ 按不出处理",
+                      flush=True)
+                choice = None
         # ★★ 2026-09-21 用户指出"为压一对K, 炸掉5张(含万能)": RL 会瞎炸 ✗
         #   掼蛋常识: 该压时若"**不用炸弹、不用万能**"就能压过 ⇒ 不许动它们 ✓
         #   (RL 的 value 分不出这种代价 —— 记忆里的"96% 挤在 ±0.05" ✗ —— 只能靠规则拦 ✓)
@@ -945,9 +966,8 @@ class GuandanAdapter(GameAdapter):
                       if g.xing not in _BOMB and not getattr(g, "wild_used", 0)]
             if _expensive and _cheap:
                 _alt = min(_cheap, key=lambda g: (g.chang_du, g.zhu_zhi))
-                print(f"  [代价] RL 想 {R.group_to_str(choice)}"
-                      f"(炸弹/用万能 ✗) → 改用 {R.group_to_str(_alt)}"
-                      f"(不用炸弹/万能也能压 ✓)", flush=True)
+                print(f"  [代价] RL 想 {R.group_to_str(choice)}(炸弹/用万能 ✗)"
+                      f" → 改用 {R.group_to_str(_alt)}(不用炸弹/万能也能压 ✓)", flush=True)
                 choice = _alt
         _md = "压" if (obs.extra or {}).get("need_beat") else "领出"
         # ★ 2026-09-21 诊断: 打出"桌上那手 + 用的级牌 + 我们选的点数"

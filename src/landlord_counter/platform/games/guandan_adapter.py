@@ -484,14 +484,20 @@ class GuandanAdapter(GameAdapter):
         hf = (t.get("handsFull") or {}).get("0") or []
         if not hf:
             return Observation(frame=frame, my_turn=False)
-        hand = [R.Card(zhi=int(c["zhi"]), hua=int(c["hua"])) for c in hf]
+        # ★★ 2026-09-20 关键修复: **必须带 id** ✗
+        #   Card 的 id 默认 -1 ⇒ 三张 A 全变同一张 ⇒ find_all_plays 去重后只剩 1 个候选 ✗
+        #   (实测: 手牌 3 张 A ⇒ 候选只 1 个; 真值里每张牌本来就有唯一 id, 是我们丢了 ✗)
+        #   后果极严重: 决策器面前永远只有单张 ⇒ "只会出单张" / "领出却候选0" 全是这个根 ✓
+        hand = [R.Card(zhi=int(c["zhi"]), hua=int(c["hua"]),
+                       id=int(c.get("id", -1))) for c in hf]
         # ★★ 职责分工(2026-09-19 用户定, 避免"一个字段兼职两件事"):
         #   · "该不该压 / 能不能任意出" ⇒ **只看 needBeat**(一个布尔, 零歧义 ✓)
         #   · benLunChuPai(本轮各家出了什么) ⇒ **专门给记牌器用**, 不参与判断 ✓
         #   (教训: 之前 shangJiaPaiXing 兼职 ⇒ 它 null 时被误读成"没人压着" ⇒ 候选给 10 张 ✗)
         need_beat = bool(t.get("needBeat"))
         sj = t.get("shangJia") or [] if need_beat else []
-        table = [R.Card(zhi=int(c["zhi"]), hua=int(c["hua"])) for c in sj]
+        table = [R.Card(zhi=int(c["zhi"]), hua=int(c["hua"]),
+                        id=int(c.get("id", -1))) for c in sj]
         self._set_my_hand(hand)                     # 喂日志/记牌器(它们要"我手里有什么" ✓)
         if table:
             self._observe_table(table)              # 记牌: 我该压的那一手 ✓

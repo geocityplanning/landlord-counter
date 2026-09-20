@@ -647,7 +647,9 @@ class GuandanAdapter(GameAdapter):
     def _log_plan(self, choice, why: str) -> None:
         """记一次决策(我们打算出的牌) → 操作准确率对账用。同时记下"决策前手牌张数"。"""
         try:
-            hb = len(getattr(self, "_cur_hand", []) or [])
+            # ★ 2026-09-20: 原来取 _cur_hand, 实测会滞后(记成 16 张、实际 9 张 ⇒ 假警报 ✗)
+            #   真值在决策时的 obs.hand 里, 由 _decide_rl 存进 self._hand_n ✓
+            hb = int(getattr(self, "_decision_hand_n", 0) or 0) or len(getattr(self, "_cur_hand", []) or [])
             self.log.plan("南", [str(c) for c in choice.cards], why=why, hand_before=hb or None,
                           need_beat=bool(getattr(self, "_last_need_beat", False)),
                           cand_n=int(getattr(self, "_last_n_cand", 0) or 0))
@@ -854,6 +856,8 @@ class GuandanAdapter(GameAdapter):
         self.usage.rl_infer(n_cand=len(cands), hand=len(obs.hand))
         # ★ 2026-09-20 补口子②: 决策当时的处境(候选数 + 压/领出) ⇒ 写进日志/伴随应用库
         self._last_n_cand = len(cands)
+        # ★ 本轮真实手牌张数(供 _log_plan 记账 ✓) —— 名字别跟防抖用的 _last_hand_n 混 ✓
+        self._decision_hand_n = len(obs.hand)
         self._last_need_beat = bool((obs.extra or {}).get("need_beat"))
         choice, info = self._rl.choose(cands, obs.hand, self._rl_hist[-16:],
                                        [mine] + others + [mine + sum(others)], (wi, last), 0)

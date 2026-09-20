@@ -50,7 +50,6 @@ class Executor:
         self.cdp = None              # 可选: CDP 输入后端(调试/标定用)
         self.mt = None               # 可选: MaaTouch 拟人化输入(真实 MotionEvent: 压力/接触/时长)
         self._liveness_fails = 0     # 连续"点了没反应"次数(活性探针)
-        self._lift_min = None        # 本次运行见过的最小抬起量(≈"空"基线, 自适应)
 
     # ---------- 基础 ----------
     def _snap(self):
@@ -192,45 +191,6 @@ class Executor:
                 self.log(f"  [input] CDP 点牌失败({type(e).__name__}) → 回落 adb")
         self.dev.tap(x, self._card_y(), wait=wait)
 
-    def tap_card(self, idx: int, n: int) -> bool:
-        """点选第 idx 张并验证抬起; 失败则左右扫点(小牌量牌位漂移)。
-
-        验证方式: 有 lift_diff(帧差) 用它(更稳); 否则用绝对抬起量增量。
-        """
-        # 身份驱动点选(2026-09-15): 点完看"实际抬起的列", 与目标位比对。
-        #   实测现场: 想点 310 → 实际抬起 360(系统性偏 ~50px, 布局左缘测得偏左)
-        #   ⇒ 把偏差累加进 self._dx(全局自纠正), 点偏了就取消重来。
-        for _rnd in range(2):
-            x_want = self._pos(idx, n)
-            if not (0 < x_want < 720):
-                return False
-            before_img = self._snap()
-            self._tap_card_at(x_want, wait=0.45)
-            after_img = self._snap()
-            if after_img is None:
-                continue
-            cols = []
-            try:
-                from ..guandan import percept as _P
-
-                cols = [c for c, _w in _P.lifted_columns(before_img, after_img)]
-            except Exception:  # noqa: BLE001
-                pass
-            # 可靠信号: 抬起增量(真的选中了牌)。抬起位只作**软校验/日志**:
-            #   实测抬起带易混进桌面牌堆 → 幻影会诱导"取消重试"反而毁掉正确点选,
-            #   故不据它取消。位置本身已由"卡边界实测"保证(与公式/张数无关)。
-            est = round((self._lift(after_img) - (self._lift(before_img))) / self.L.lift_one)
-            if est > 0:
-                if cols:
-                    near = min(cols, key=lambda c: abs(c - x_want))
-                    if abs(near - x_want) > 20:
-                        self.log(f"  [gesture] ⚠ 抬起位(想{x_want} 实测{near}) 不符, 但已选中{est}张 → 接受")
-                return True
-            if cols:                          # 没抬起但画面变了 → 记录后微调重试
-                self.log(f"  [gesture] ⚠ 未选中但画面有变化 {cols} → 微调重试")
-            self._dx += 6
-        return False
-
     def _pos(self, idx: int, n: int) -> int:
         """第 idx 张的可点 x: 优先"实测牌位", 失败回落公式, 再叠加自纠正偏移 dx。"""
         base = None
@@ -330,24 +290,9 @@ class Executor:
         except Exception:  # noqa: BLE001
             return False
 
-    def _selected_xs(self) -> list:
-        """当前已抬起(选中)的牌位 x(绝对测量)。"""
-        try:
-            from ..guandan import percept as _P
-
-            img = self._snap()
-            return _P.selected_columns(img) if img is not None else []
-        except Exception:  # noqa: BLE001
-            return []
-
     def clear(self, idxs: list[int], n: int) -> None:
         for i in idxs:
             self._tap_card_at(self._pos(i, n), wait=0.15)
-
-    def selected_count(self, img, base: float | None = None) -> int:
-        """已选张数: 用**相对基线**的抬起增量(承载存在基线偏移, 绝对值会多算)。"""
-        lift = self._lift(img) - (base or 0.0)
-        return round(lift / self.L.lift_one) if lift > self.L.lift_min else 0
 
     def pass_turn(self, frame=None) -> bool:
         p = self.btn("pass", frame)
@@ -402,57 +347,6 @@ class Executor:
         return "fail"
 
     # ---------- 伺服式直选(用户 2026-09-17 设计的算法) ----------
-    def _flat_top(self) -> float:
-        """"牌放平"时的顶边基线(动态实测, 不写死 ✗)。"""
-        return float(getattr(self, "_top_flat", 0.0))
-
-    def _raised_state(self, img, xs: list, idxs: list | None = None) -> list:
-        """逐张判断: "已抬起(True) / 平放(False) / 看不出(None)" ✓
-
-        用**滑动匹配**(读牌+量抬起同一机制 ✓): 只依赖牌自己的图案 → 不受邻牌遮挡 ✓
-        (顶边/底边法都会被邻牌污染 ✗: 实测 真值5 → 顶边法12 / 底边法0)
-        """
-        from ..guandan import percept as _P
-
-        if img is None:
-            return [None] * len(xs)
-        try:
-            _cards, _info = _P.tm_read_hand(img)
-        except Exception as e:  # noqa: BLE001
-            # 不静默(教训: 一次 NameError 被吞掉, 整条直选链路全废还看不出来 ✗)
-            self.log(f"  [servo] ✗ 读抬起失败: {type(e).__name__}: {e}")
-            return [None] * len(xs)
-        by_x = {int(x_): l_ for _s, _r, x_, l_ in _cards}
-        # 兜底(2026-09-17): 坐标对不上时(不同来源的牌位/带漂移), 按**顺序对齐** ——
-        #   两侧都是"从左到右", 第 i 个目标天然对应第 i 张读到的牌 ✓ (实测 27 = 27 ✓)
-        rd = sorted((int(x_), l_) for _s, _r, x_, l_ in _cards)
-        tg = sorted((int(x), i) for i, x in enumerate(xs))
-        by_order = {}
-        if len(rd) == len(tg):
-            for (xr, l_), (xt, _i) in zip(rd, tg):
-                by_order[xt] = l_
-        # 最强兜底(2026-09-17): **按手牌索引对齐** —— 伺服本来就是按索引决策的,
-        #   读取的牌也是从左到右 ⇒ 第 idx 张目标 = 读取里第 idx 张 ✓ (不依赖任何坐标来源 ✓)
-        by_idx = {}
-        if idxs is not None and len(_cards) > max(idxs, default=-1):
-            for i, x in enumerate(xs):
-                if i < len(idxs) and 0 <= idxs[i] < len(_cards):
-                    by_idx[int(x)] = _cards[idxs[i]][3]
-        out = []
-        for x in xs:
-            got = by_idx.get(int(x))
-            if got is None:
-                got = by_x.get(int(x))
-            if got is None:
-                for xx, ll in by_x.items():
-                    if abs(xx - int(x)) <= 10:   # 点击坐标=牌位+6px, 容差要放宽 ✓
-                        got = ll
-                        break
-            if got is None:
-                got = by_order.get(int(x))
-            out.append(None if got is None else bool(got >= 18))
-        return out
-
     def _wait_ready(self, n: int, timeout: float = 5.0) -> bool:
         """等到"**画面停稳 且 牌位数量 == n**"为止(2026-09-18 用户两次指出的坑)。
 
@@ -569,47 +463,6 @@ class Executor:
             self._wait_stable(1.0)
         return False
 
-    def _servo_select(self, idxs: list, rounds: int = 3) -> bool:
-        """伺服选牌(用户 2026-09-17 设计的算法): **求差 → 多的回落 / 少的补抬 → 复核** ✓
-
-        量出的"抬起集合"包含三类: ① 我们要的 ② 上一轮我们点过、这轮不要的 ③ 游戏自己抬的提示牌
-        ⇒ ②要回落(点掉) ✓; ③**只能点一次**就放过 —— 点它反而会把它选上 ✗(会来回振荡)
-        判据全部来自**同一份读取结果**(看和点同源 ✓); 坐标每次点击前重新量 ✓
-        """
-        from ..guandan import percept as _P
-
-        want = set(int(i) for i in idxs)
-        tried_extra: set = set()          # 点过的"多余抬起"位 —— 只点一次, 防振荡 ✓
-        for r in range(rounds):
-            img = self._snap()
-            try:
-                cards, _info = _P.tm_read_hand(img)
-            except Exception as e:  # noqa: BLE001
-                self.log(f"  [servo] ✗ 读抬起失败: {type(e).__name__}: {e}")
-                return
-            raised = {i for i, c in enumerate(cards) if c[3] >= 18}
-            miss = sorted(want - raised)                  # 少的 → 补抬 ✓
-            extra = sorted(raised - want - tried_extra)   # 多的 → 回落(每个只试一次) ✓
-            self.log(f"  [servo] 第{r + 1}轮 需补={len(miss)} 需落={len(extra)}")
-            if not miss and not extra:
-                self.log(f"  [servo] ✓ 就位({len(want)}张) → 可以出牌")
-                return True
-            for i in extra:                               # ★ 多了回落 ✓
-                if i < len(cards):
-                    fresh, _f = _P.tm_read_hand(self._snap())
-                    _i = i if i < len(fresh) else None
-                    if _i is not None:
-                        self._tap_card_at(fresh[_i][2], wait=0.45)
-                        self.log(f"  [servo] 回落 第{i}张 x={fresh[_i][2]}")
-                    tried_extra.add(i)
-            for i in miss:                                # ★ 少了补抬 ✓
-                fresh, _f = _P.tm_read_hand(self._snap())
-                if i < len(fresh):
-                    self._tap_card_at(fresh[i][2], wait=0.5)
-                    self.log(f"  [servo] 补点 第{i}张 x={fresh[i][2]}(当帧实量)")
-        self._last_picked = list(getattr(self, '_last_picked', []))
-        return False        # 没在 rounds 内就位 ✓
-
     def _clear_selection_via_truth(self) -> int:
         """把牌桌上**已有的选中**全部点掉 —— 用户算法第③步"多了回落"的精确版 ✓
 
@@ -652,10 +505,9 @@ class Executor:
         return cleared
 
     def direct_play(self, idxs: list[int], n: int, rounds: int = 2,
-                    ranks: list | None = None, want_cards=None) -> bool:
+                    want_cards=None) -> bool:
         """直选执行: 点选 → 校验张数 → 出牌 → 回执; 失败清选后再来一轮。"""
         # ★ 选牌与核对已统一到 _select_cards(坐标走 locate 标定表 / 核对走真值 ✓)
-        _ = ranks                      # 保留签名兼容(调用方仍在传 ✓)
         # ★★ 先"回落"桌上**已有的选中**(用户算法第③步) —— 否则残留会和我们选的牌
         #   混成非法牌型, 游戏回『无效的牌型组合』✗(2026-09-17 实测踩到)
         self._clear_selection_via_truth()
@@ -663,21 +515,16 @@ class Executor:
         first = self._snap()
         before = self.L.white_count(first)
         base_lift = self._lift(first)
-        self._lift_min = base_lift if self._lift_min is None else min(self._lift_min, base_lift)
         # ---- 清残留选中(实测: 残留会让"我们选的+残留"变成非法牌型 → 出牌被拒) ----
         # "空"基线估计: 取"见过的最小值"与 250 的更小者(实测空手牌抬起≈196; 脏值会带偏自适应)
         # ★ 删除"盲点清残留"(2026-09-17 实测有害 ✗): 游戏"点一张选一整组" → 盲点会把整手牌全选上 ✗
         #   实测: 从 16837 一路振荡(16837↔5801↔16300) → 越清越乱, 且把牌桌搞脏 ✗
         #   残留只可能来自"我们自己的选错"; 正确做法是**绝不盲点** —— 宁可本轮放弃 ✓
-        # "空"基线: **动态实测**(2026-09-17 修正 ✗→✓)
-        #   旧写法 min(self._lift_min, 250) 把基线硬压到 250 ✗ —— 但本界面里"游戏自己抬起的
-        #   提示牌(如打A 时高亮的 A)"就有 ~3000 抬起 ✗ → 被误判成"我们选了牌" ✗ → 直选全部拒绝 ✓
-        #   正解: 用本会话**观察到的最小抬起**当基线, 不设上限 ✓
-        empty = self._lift_min if self._lift_min is not None else base_lift
-        # ★ 不再"开局就放弃"(2026-09-17 用户算法): 有残留/有游戏自带高亮都**没关系** ✓
-        #   伺服循环(_servo_select)会逐张核对我们想要的牌位是否已抬起, 缺的补点 ✓
-        #   最终由"出牌回执"判成败 —— 不在这里做任何臆测 ✗
-        _ = (self._lift_min, empty)          # 保留基线供后续诊断, 不做阻断
+        # ★ 2026-09-21 清: 老的"空基线"(_lift_min/empty)是死代码 ✗(只被 `_ = (...)` 占位)
+        #   连带那次"盲点清残留"一起删了 —— 盲点会把整手牌全选上 ✗(实测振荡 16837↔5801↔16300)
+        #   现在的做法: 绝不盲点, 残留交给 _clear_selection_via_truth 按真值精确清 ✓
+        #   最小抬起量 base_lift 保留(活性探针 _lift 还在用 ✓)
+        _ = base_lift
         for r in range(rounds):
             if r:
                 self.log("  [gesture] ↻ 直选重试(重新取帧)")

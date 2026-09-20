@@ -877,9 +877,6 @@ def shi_fou_dui_you(wei_zhi1: int, wei_zhi2: int) -> bool:
     return huo_qu_dui_you(wei_zhi1) == wei_zhi2
 
 
-def shi_fou_wan_jia(wei_zhi: int) -> bool:
-    return wei_zhi == WEI_ZHI["NAN"]
-
 
 def huo_qu_dui_wu() -> dict:
     """{'dui_wu1': [南, 北], 'dui_wu2': [西, 东]}"""

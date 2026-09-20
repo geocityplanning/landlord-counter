@@ -63,7 +63,7 @@ def main() -> int:
     # 记录点牌前: 游戏认为选中了什么
     before = c.truth().get("selected") or []
     print("   点牌前 selected:", before)
-    ok = ex.direct_play(idxs, len(hand), ranks=[getattr(hand[i], 'zhi', 0) for i in idxs])
+    ok = ex.direct_play(idxs, len(hand))
     time.sleep(1.5)
     mid = c.truth()
     print(f"   点牌后 selected: {mid.get('selected')}  (点牌调用返回 {ok})")

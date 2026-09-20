@@ -68,7 +68,6 @@ class GuandanAdapter(GameAdapter):
         self._n_truth = 0            # 实测(反推)到的确切张数
         self._dump_n = 0             # 帧留证计数
         self._dump_t = 0.0
-        self._tap_cal = None         # 点选自标定结果: {"n0","x0","raw","pairs"}
 
     def attach(self, device, vision=None) -> None:
         super().attach(device, vision)
@@ -79,17 +78,6 @@ class GuandanAdapter(GameAdapter):
         from ..gestures import Executor, GestureLayout
 
         self.a11y = A11y(getattr(self.device, "serial", "127.0.0.1:5555"))
-
-        def _btn(name: str, fallback):
-            """无障碍树按文字取按钮中心(精确), 取不到用固定坐标。"""
-            pat = {"hint": "提示", "play": "出牌", "pass": "不出"}[name]
-            try:
-                n = self.a11y.button(pat)
-                if n:
-                    return n.center
-            except Exception:  # noqa: BLE001
-                pass
-            return fallback
 
         layout = GestureLayout(
             card_tap_x=P.card_tap_x,
@@ -166,84 +154,6 @@ class GuandanAdapter(GameAdapter):
             self._last_seat["who"] = None
         self._last_seat["blocks"] = cur
 
-    def _calibrate_taps(self, frame) -> None:
-        """点选自标定: 逐位试一次, 用"实际抬起位"建**真值牌位图**。
-
-        为什么需要(实测 2026-09-15):
-          ① 布局左缘与我们假设的略有差 → 最左那张点不中(点 x=94 无任何变化);
-          ② 游戏会**自动配对**: 点一张会连带选中同点数的另一张(点 238 时 307 也抬起);
-          ③ 页面重开后布局可能变 → 每轮重新标一次最稳。
-        产出: x0(真值左缘) + 每位"点了会抬起哪些列"(raw) + 配对关系(pairs)。
-        代价: 一次 ~n 次点选(满手 27 张约 30s), 且只点选不出牌, 不影响牌局。
-        """
-        if self.device is None:
-            return
-        n = P.hand_card_count_est(frame)
-        if n < 20:
-            return
-        est = P.card_positions(frame, n)
-        raw: dict = {}
-        for i, x in enumerate(est):
-            b = self.device.snap()
-            self.device.tap(x, 875, wait=0.55)
-            aa = self.device.snap()
-            raw[i] = [c for c, _w in P.lifted_columns(b, aa)]
-            self.device.tap(x, 875, wait=0.35)      # 复位(再点一次取消选中)
-        xs0 = sorted(c - 24 * i for i, cols in raw.items() for c in cols)
-        if not xs0:
-            print("  [标定] 无任何抬起 → 放弃(触控/页面可能异常)", flush=True)
-            return
-        x0 = float(xs0[len(xs0) // 2])
-        pairs = {i: sorted({(c - x0) / 24 for c in cols
-                            if abs(c - (x0 + 24 * i)) > 16})
-                 for i, cols in raw.items()}
-        self._tap_cal = {"n0": n, "x0": x0, "raw": raw, "pairs": pairs}
-        hit = sum(1 for i, cols in raw.items() if cols)
-        print(f"  [标定] 真值左缘 x0={x0:.0f} | 命中 {hit}/{n} 位 | 配对关系 {sum(1 for v in pairs.values() if v)} 处",
-              flush=True)
-
-    def _probe_card_count(self, frame) -> int:
-        """反推**确切张数**(边界判别法)。
-
-        原理: 整排是"居中 + 固定间距" → 张数估**多**时, 算出的"第 1 张"位置会落到
-        牌行**左边界之外**(点下去没反应); 张数估**少**时, 位置落在行内(会选中)。
-        ⇒ 从大到小试, **第一个能点中的 n 就是真值**(它正好是行首那张)。
-        代价: 每次标定最多 3 次点击, 且点完立刻取消, 不留残留。
-        """
-        ex = self._ex
-        if ex is None or getattr(ex, "cdp", None) is None or self.device is None:
-            return 0
-        est = P.hand_card_count_est(frame) or P.hand_columns(frame)
-        if est <= 0:
-            return 0
-        for cand in (est + 1, est, est - 1, est - 2, est - 3):
-            if not (8 <= cand <= 27):
-                continue
-            try:
-                pts = ex.cdp.card_tap_points(cand)
-            except Exception:  # noqa: BLE001
-                continue
-            if len(pts) != cand:
-                continue
-            x, y = pts[0]                     # 只看"第 1 张": 估多会落到行外
-            i0 = self.device.snap()
-            if i0 is None:
-                continue
-            try:
-                ex.cdp.click_screen(x, y, settle=0.55)
-            except Exception:  # noqa: BLE001
-                continue
-            i1 = self.device.snap()
-            if i1 is None:
-                continue
-            if P.lifted_px(i1) > P.lifted_px(i0) + 300:
-                ex.cdp.click_screen(x, y, settle=0.45)      # 取消, 恢复干净
-                print(f"  [张数标定] 视觉估{est} → 实测 **{cand}** 张(行首点中)", flush=True)
-                return cand
-            print(f"  [张数标定] 试 {cand}: 行首点不中(位置在行外)", flush=True)
-        print(f"  [张数标定] 未定(沿用视觉估 {est})", flush=True)
-        return est
-
     def _cal_positions(self, frame, n: int) -> list:
         """执行层取位(按可信度排序):
 
@@ -278,10 +188,6 @@ class GuandanAdapter(GameAdapter):
         pe = P.card_positions_by_edges(frame)
         if pe:
             return pe
-        cal = self._tap_cal
-        if cal:
-            x0 = cal["x0"] + (cal["n0"] - n) * 12
-            return [int(x0 + 24 * i + 12) for i in range(n)]
         return P.card_positions(frame, n)
 
     def _dump_read_evidence(self, frame, tag: str, info: dict) -> None:
@@ -329,34 +235,6 @@ class GuandanAdapter(GameAdapter):
             return True
         except Exception:  # noqa: BLE001
             return True
-
-    def _maybe_collect_templates(self, frame, frame0) -> None:
-        """**每局只采一次模板**(2026-09-17 用户指令: 换局即时处理, 别留着反复影响 ✗)
-
-        为什么要: 模板=这一局牌长什么样 ⇒ 换局不重采, 读牌会大面积错 ✗
-          (实测: 同局重采后 27 张只差 2~3 张; 换局不采 ⇒ 大面积错 ⇒ 决策指错位 ⇒ 点错牌 ✗)
-        采的时机(全部满足才采): 轮到我 + 无选中(牌全放平) + 牌位数==真值张数 ✓
-        一局只采一次(用真值的牌 id 哈希当"局指纹" ✓)
-        """
-        try:
-            tr = self._ex.cdp.truth() if getattr(self._ex, "cdp", None) is not None else None
-        except Exception:  # noqa: BLE001
-            tr = None
-        if not tr:
-            return                                  # 无真值通道(产品路径) ⇒ 不采, 由自校验兜底 ✓
-        ids = tr.get("handIds") or []
-        if not ids:
-            return
-        fp = hash(tuple(ids))
-        if fp == getattr(self, "_tpl_deal_fp", None):
-            return                                  # 本局已采过 ✓
-        if tr.get("current") != 0 or (tr.get("selected") or []):
-            return                                  # 不是我的回合 / 有选中(会采到抬起态) ⇒ 等下一帧 ✓
-        zhi = (tr.get("hands") or {}).get("0") or []
-        n = P.tm_collect_from_ranks(frame, list(zhi), tag="auto")
-        if n:
-            self._tpl_deal_fp = fp
-            print(f"  [模板] 新一局 → 自动重采 {n} 张 ✓ (这一局的读牌将回到 100%)")
 
     def _hand_for_map(self, obs):
         """**决定"哪张牌是第几个位"用的手牌顺序**(2026-09-18 实测踩坑后定案)。
@@ -604,12 +482,9 @@ class GuandanAdapter(GameAdapter):
         # 教训(2026-09-16): 老 hand_card_count_est 过期 → 一致性闸门误判"离谱" → 判定不敢用 ✗
         n_vis = (len(_tm_first) if _tm_first
                  else (P.hand_card_count_est(frame) or P.hand_columns(frame)))
-        if self.rl and self._tap_cal is None and n_vis >= 25:
-            # ★ 停用"点选自标定"(2026-09-17): 它靠**试点牌**推点位/张数 ✗ → 会留下残留选中
-            #   (实测: 重置后一跑起来就有 3137 抬起 ✗, 直选随即拒绝出牌 ✓)
-            #   现在点位已是实测(card_slots ✓), 老标定纯属有害 → 不再调用 ✓
-            # self._calibrate_taps(frame)
-            self._tap_cal = {"deprecated": True}
+        # ★ 2026-09-21 清: "点选自标定"的残留代码已全部删除 ✗
+        #   (它靠**试点牌**推点位/张数 ⇒ 会留下残留选中: 实测一跑起来就有 3137 抬起 ✗)
+        #   现在点位一律走实测(locate/card_slots ✓), 老标定不许回来 ✓
         # 优先"实测几何分段读"(整排直读会只读左半排, 实测 27 张只读出 12 张); 失败再回落整排。
         # 整轮重试 2 次: VLM 偶发空返回(服务端排队), 实测同一帧 3 次里 1 次失手 → 重试可兜住。
         hand = None
@@ -846,17 +721,6 @@ class GuandanAdapter(GameAdapter):
         self._rl_played = [0.0, 0.0, 0.0, 0.0]
         print("  [记牌] 新一局 → 事件日志与记牌器已清零", flush=True)
 
-    def board_state(self) -> dict:
-        """给后台/决策用的当前牌局数据: 各家余牌 + 池子 + 守恒自检。"""
-        try:
-            self._set_my_hand(getattr(self, "_cur_hand", []) or [])
-        except Exception:                        # noqa: BLE001
-            pass
-        return {"summary": self.log.summary(),
-                "seat_remaining": self.log.seat_remaining(),
-                "pool": self.log.pool(),
-                "played": {s: dict(self.log.played[s]) for s in self.log.seats}}
-
     # ---------- 决策 ----------
     def decide(self, obs: Observation) -> Action:
         if not getattr(self, "_mode_logged", False):     # ★ 启动就亮明模式(演示/产品 ✓)
@@ -1006,10 +870,8 @@ class GuandanAdapter(GameAdapter):
         if action.meta.get("direct") and action.combo is not None and obs.hand:
             idxs = _map_indices(self._hand_for_map(obs), action.combo.cards)
             if idxs:
-                ranks = [getattr(obs.hand[i], "zhi", None) for i in idxs
-                         if 0 <= i < len(obs.hand)]
-                if ex.direct_play(idxs, len(obs.hand), ranks=ranks,
-                                      want_cards=list(action.combo.cards)):
+                if ex.direct_play(idxs, len(obs.hand),
+                                  want_cards=list(action.combo.cards)):
                     self._log_plan(action.combo, action.meta.get("why", ""))   # 打出去了才记决策
                     self._verify_identity(action.combo, action.meta.get("why", ""))  # ★ 即时对账 ✓
                     self._log_seat_play("南", action.combo.cards,
@@ -1072,9 +934,8 @@ class GuandanAdapter(GameAdapter):
         if action.combo is not None and obs.hand:
             idxs = _map_indices(self._hand_for_map(obs), action.combo.cards)
             if idxs:
-                ranks = [getattr(obs.hand[i], "zhi", None) for i in idxs if 0 <= i < len(obs.hand)]
-                if ex.direct_play(idxs, len(obs.hand), ranks=ranks,
-                                      want_cards=list(action.combo.cards)):
+                if ex.direct_play(idxs, len(obs.hand),
+                                  want_cards=list(action.combo.cards)):
                     self._verify_identity(action.combo, action.meta.get("why", ""))  # ★ 即时对账 ✓
                     self._log_plan(action.combo, action.meta.get("why", ""))
                     self._log_seat_play("南", action.combo.cards,

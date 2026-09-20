@@ -113,12 +113,6 @@ def read_seat_panels(rec, img) -> dict:
 
 
 
-def _tpl_dir() -> str:
-    import os as _os
-
-    root = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
-    return _os.getenv("TPL_DIR", _os.path.join(root, "data", "templates"))
-
 
 
 def load_templates_sr(d: str | None = None) -> dict:
@@ -448,23 +442,6 @@ REGIONS = {
 }
 
 
-def _region_cards(img, box) -> int:
-    x0, y0, x1, y1 = box
-    sub = img[y0:y1, x0:x1]
-    b, g, r = sub[:, :, 0].astype(int), sub[:, :, 1].astype(int), sub[:, :, 2].astype(int)
-    white = ((b > 200) & (g > 200) & (r > 200)).astype(np.uint8)
-    n = int(white.sum())
-    if n < 2500:
-        return 0
-    ys, xs = np.where(white > 0)
-    if len(xs) == 0:
-        return 0
-    w = xs.max() - xs.min()
-    h = ys.max() - ys.min()
-    if w < 80 or h < 60:  # 太小的白块(文字"不出")不算牌
-        return 0
-    return n
-
 
 def _split_box(mask, box, y0):
     """把合并的牌块按"无白列的竖直间隙(≥6px)"拆成子块; 返回子块列表。"""
@@ -777,21 +754,6 @@ def card_slots(img, y0: int | None = None, y1: int | None = None, pitch_fallback
         if len(good):
             pitch = float(np.median(good))
 
-    def _col(x: float):
-        x = int(round(x))
-        if x < 0 or x + 8 >= img.shape[1]:
-            return None
-        return img[y0 + 8:y1 - 8, x:x + 8].reshape(-1, 3).astype(int)
-
-    def extendable(x: float) -> bool:
-        """还在牌排里吗? 判据 = **不是桌面绿**(2026-09-17) —— 桌面色会揭穿空白区,
-        而牌面/「你」字框都能过 ✓ (用亮度会误杀挨着「你」框的最左张 ✗)"""
-        col = _col(x)
-        if col is None:
-            return False
-        r, g, b = col[:, 0].mean(), col[:, 1].mean(), col[:, 2].mean()
-        return not (g > r + 15 and g > b + 15)
-
     # ---- 手牌横向占用(白占比高的连续段) —— 用来挡住右侧「打A」标签区的假峰 ✓ ----
     #   教训(2026-09-16): 不加这个边界时, 锚点会取到牌排右边的标签峰 ⇒ 牌位整体右移 ✗
     sub = img[y0 + 6:y1 - 6]
@@ -974,40 +936,6 @@ def hand_is_real(img, tol: int = 2):
     return abs(n_est - ne) <= tol, info
 
 
-def selected_columns(img, y0: int = 776, y1: int = 802) -> list:
-    """当前**已抬起(选中)**的牌位 x —— 绝对测量, 不是帧差。
-
-    原理: 选中的牌整张上移 → 手牌带正上方的窄带里会出现这些牌的卡面/边界。
-    用同一套"卡边界"检测读这条带, 就能知道"现在到底选中了哪几张"。
-    用途: 按组点选循环 —— 每次点击后据此判断"选中/取消", 而不是靠猜。
-    """
-    sub = img[y0:y1]
-    ps = card_edges(sub, y0=0, y1=sub.shape[0])
-    if len(ps) < 1:
-        # 边界不行就退化为"白卡列段"
-        colsum = (sub.min(axis=2) > 150).sum(axis=0)
-        xs = np.where(colsum > 3)[0]
-        if len(xs) == 0:
-            return []
-        runs, st, prev = [], int(xs[0]), int(xs[0])
-        for x in xs[1:]:
-            x = int(x)
-            if x - prev > 6:
-                runs.append((st, prev))
-                st = x
-            prev = x
-        runs.append((st, prev))
-        return [int((u + v) / 2) for u, v in runs if v - u >= 4]
-    diffs = sorted(b - a for a, b in zip(ps, ps[1:]) if 8 <= (b - a) <= 120)
-    if not diffs:
-        return [int(x + 12) for x in ps]
-    pitch = diffs[len(diffs) // 2]
-    keep = [ps[0]]
-    for b in ps[1:]:
-        if abs((b - keep[-1]) - pitch) <= max(4.0, pitch * 0.35):
-            keep.append(b)
-    return [int(x + pitch / 2) for x in keep]
-
 
 
 def lifted_xs(img, y0: int | None = None, up: int = 44, min_px: int = 8,
@@ -1048,36 +976,6 @@ def lifted_xs(img, y0: int | None = None, up: int = 44, min_px: int = 8,
     except Exception:  # noqa: BLE001
         pass
     return out
-
-def lifted_columns(before, after, y0: int = 776, y1: int = 802,
-                   min_px: int = 3, gap: int = 6) -> list:
-    """帧差定位"刚被抬起的是哪几张牌" → 返回变化列段中心 x 列表。
-
-    原理: 选中的牌整张上移, 手牌带**上方那条带**(默认 y756-806)从"无牌"变"有牌";
-    未选中的牌不动。用途: 身份校验 —— 点选后核对"抬起的 x" 是不是"想点的 x"。
-    实测: 点"提示"钮选牌 → 该带变化 23k 像素; 点到空地 → 0 像素。
-    ⚠️ 带的 y 范围必须紧贴手牌带**正上方**(约 25px): 取太宽(如 756-806)会混进桌面
-    牌堆区, 产生"总停在同一列"的幻影(实测 599), 把正确的点选误判成点偏。
-    """
-    if before is None or after is None:
-        return []
-    b = before[y0:y1].astype(int)
-    a = after[y0:y1].astype(int)
-    d = np.abs(a - b).sum(axis=2) > 60
-    colsum = d.sum(axis=0)
-    xs = np.where(colsum > min_px)[0]
-    if len(xs) == 0:
-        return []
-    runs = []
-    st = prev = int(xs[0])
-    for x in xs[1:]:
-        x = int(x)
-        if x - prev > gap:
-            runs.append((st, prev))
-            st = x
-        prev = x
-    runs.append((st, prev))
-    return [(int((u + v) / 2), v - u + 1) for u, v in runs if (v - u + 1) >= 4]
 
 
 def hand_columns(img) -> int:
@@ -1168,27 +1066,6 @@ def page_looks_ok(img) -> bool:
         return True
     return True
 
-
-def card_bottom_y(img, x: int, y_flat_bottom: int, span: int = 60, need: int = 8,
-                  bright: int = 150) -> int:
-    """找某个牌位的**牌面底边**(从下往上扫) —— 判"抬没抬起"用它 ✓
-
-    用户 2026-09-17 点破: 牌抬起时**右上角会多露出一小条白** ✗ → 按"顶边"判会把**右边邻牌**
-    也误判成抬起(实测: 真值 selected=5 却判出 12 个位抬起 ✗);
-    底边干净 ✓: 抬起的整张上移(底边也抬高 ~36px), 没抬的底边在原地, 且**底边不受邻牌遮挡** ✓
-    """
-    x0 = max(0, int(x))
-    x1 = min(img.shape[1], x0 + 24)
-    y_lo = max(0, int(y_flat_bottom) - span)
-    y_hi = min(img.shape[0], int(y_flat_bottom) + span)
-    if x1 <= x0 or y_hi <= y_lo:
-        return int(y_flat_bottom)
-    col = img[y_lo:y_hi, x0:x1]
-    rows = (col.min(axis=2) > bright).sum(axis=1)
-    for i in range(len(rows) - 1, -1, -1):
-        if rows[i] >= need:
-            return y_lo + i
-    return int(y_flat_bottom)
 
 
 def lift_baseline(dys: list) -> float:

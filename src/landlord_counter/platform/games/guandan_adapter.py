@@ -919,8 +919,14 @@ class GuandanAdapter(GameAdapter):
         choice, info = self._rl.choose(cands, obs.hand, self._rl_hist[-16:],
                                        [mine] + others + [mine + sum(others)], (wi, last), 0)
         _md = "压" if (obs.extra or {}).get("need_beat") else "领出"
+        # ★ 2026-09-21 诊断: 打出"桌上那手 + 用的级牌 + 我们选的点数"
+        #   目的: 出现"牌太小，压不过"时, 一眼看出是"读错桌上牌"还是"算错大小" ✓
+        _tbl = (f"{R.group_to_str(last)}(zhi={last.zhu_zhi})" if last is not None else "无(我领出)")
+        _me = (f"{R.group_to_str(choice)}(zhi={[c.zhi for c in choice.cards]})"
+               if choice is not None else "不出")
         print(f"  [rl] 手牌{len(obs.hand)} [{_md}] 候选{info['n_cand']}(可映射{info['mapped']}) → "
-              f"{R.group_to_str(choice) if choice is not None else '不出'} | value={info['value']:.3f}",
+              f"{_me} | value={info['value']:.3f}"
+              f" | 桌上={_tbl} 级牌={self._jp()}",
               flush=True)
         if choice is None:
             # ★★ 同上: 领出不能不出 ⇒ 兜底挑一手 ✓
@@ -966,7 +972,19 @@ class GuandanAdapter(GameAdapter):
                     except Exception:  # noqa: BLE001
                         why = ""
                 if why:
-                    print(f"  [真值] 出牌被游戏拒绝: {why}", flush=True)
+                    # ★ 2026-09-21 诊断: 被拒时把"我们想出的"和"游戏实际看到的"都记下来
+                    #   ⇒ 一眼分清是"读错桌上牌"还是"算错大小" ✓
+                    _want = [c.zhi for c in action.combo.cards]
+                    _seen = ""
+                    try:
+                        _t2 = ex.cdp.truth() or {}
+                        _sh = _t2.get("shangJia") or []
+                        _seen = (f" | 游戏看到: 桌上={[(c.get('zhi'), c.get('hua')) for c in _sh]} "
+                                 f"needBeat={_t2.get('needBeat')} 级牌={_t2.get('jiPai')} "
+                                 f"选中={_t2.get('selected')}")
+                    except Exception:  # noqa: BLE001
+                        _seen = ""
+                    print(f"  [真值] 出牌被游戏拒绝: {why} | 我们想出={_want}{_seen}", flush=True)
                 rpt = getattr(ex, "last_report", None)
                 if rpt is not None and (rpt.not_our_turn or rpt.skipped):
                     # 执行器规范: 识别/活性不满足 ⇒ 跳过, 不是失败(不计入失败率)

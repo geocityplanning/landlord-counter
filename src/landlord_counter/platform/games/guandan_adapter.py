@@ -933,6 +933,22 @@ class GuandanAdapter(GameAdapter):
         self._last_need_beat = bool((obs.extra or {}).get("need_beat"))
         choice, info = self._rl.choose(cands, obs.hand, self._rl_hist[-16:],
                                        [mine] + others + [mine + sum(others)], (wi, last), 0)
+        # ★★ 2026-09-21 用户指出"为压一对K, 炸掉5张(含万能)": RL 会瞎炸 ✗
+        #   掼蛋常识: 该压时若"**不用炸弹、不用万能**"就能压过 ⇒ 不许动它们 ✓
+        #   (RL 的 value 分不出这种代价 —— 记忆里的"96% 挤在 ±0.05" ✗ —— 只能靠规则拦 ✓)
+        if (choice is not None and cands
+                and bool((obs.extra or {}).get("need_beat"))):
+            _BOMB = (R.PAI_XING["ZHA_DAN"], R.PAI_XING["TONG_HUA_SHUN"],
+                     R.PAI_XING["TIAN_WANG_ZHA"])
+            _expensive = choice.xing in _BOMB or getattr(choice, "wild_used", 0) > 0
+            _cheap = [g for g in cands
+                      if g.xing not in _BOMB and not getattr(g, "wild_used", 0)]
+            if _expensive and _cheap:
+                _alt = min(_cheap, key=lambda g: (g.chang_du, g.zhu_zhi))
+                print(f"  [代价] RL 想 {R.group_to_str(choice)}"
+                      f"(炸弹/用万能 ✗) → 改用 {R.group_to_str(_alt)}"
+                      f"(不用炸弹/万能也能压 ✓)", flush=True)
+                choice = _alt
         _md = "压" if (obs.extra or {}).get("need_beat") else "领出"
         # ★ 2026-09-21 诊断: 打出"桌上那手 + 用的级牌 + 我们选的点数"
         #   目的: 出现"牌太小，压不过"时, 一眼看出是"读错桌上牌"还是"算错大小" ✓
@@ -972,7 +988,8 @@ class GuandanAdapter(GameAdapter):
             if idxs:
                 ranks = [getattr(obs.hand[i], "zhi", None) for i in idxs
                          if 0 <= i < len(obs.hand)]
-                if ex.direct_play(idxs, len(obs.hand), ranks=ranks):
+                if ex.direct_play(idxs, len(obs.hand), ranks=ranks,
+                                      want=list(action.combo.cards)):
                     self._log_plan(action.combo, action.meta.get("why", ""))   # 打出去了才记决策
                     self._verify_identity(action.combo, action.meta.get("why", ""))  # ★ 即时对账 ✓
                     self._log_seat_play("南", action.combo.cards,
@@ -1036,7 +1053,8 @@ class GuandanAdapter(GameAdapter):
             idxs = _map_indices(self._hand_for_map(obs), action.combo.cards)
             if idxs:
                 ranks = [getattr(obs.hand[i], "zhi", None) for i in idxs if 0 <= i < len(obs.hand)]
-                if ex.direct_play(idxs, len(obs.hand), ranks=ranks):
+                if ex.direct_play(idxs, len(obs.hand), ranks=ranks,
+                                      want=list(action.combo.cards)):
                     self._verify_identity(action.combo, action.meta.get("why", ""))  # ★ 即时对账 ✓
                     self._log_plan(action.combo, action.meta.get("why", ""))
                     self._log_seat_play("南", action.combo.cards,

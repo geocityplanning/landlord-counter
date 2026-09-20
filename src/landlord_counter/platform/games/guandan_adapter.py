@@ -494,6 +494,10 @@ class GuandanAdapter(GameAdapter):
         #   · "该不该压 / 能不能任意出" ⇒ **只看 needBeat**(一个布尔, 零歧义 ✓)
         #   · benLunChuPai(本轮各家出了什么) ⇒ **专门给记牌器用**, 不参与判断 ✓
         #   (教训: 之前 shangJiaPaiXing 兼职 ⇒ 它 null 时被误读成"没人压着" ⇒ 候选给 10 张 ✗)
+        # ★★ 2026-09-20: **本局级牌以真值为准** ✓
+        #   原来写死 JIPAI(环境变量默认 2) ✗ ⇒ 打A局时"逢人配/同花顺"判断全错 ✗
+        #   实测: 真值 jiPai=14(A), 而 Python 里是 2 ⇒ 候选数都不一样(5 vs 6) ✗
+        self._jipai_now = int(t.get("jiPai") or 0) or None
         need_beat = bool(t.get("needBeat"))
         sj = t.get("shangJia") or [] if need_beat else []
         table = [R.Card(zhi=int(c["zhi"]), hua=int(c["hua"]),
@@ -839,7 +843,7 @@ class GuandanAdapter(GameAdapter):
             return Action("none", meta={"why": "读牌失败→等待重读(不用提示)"})
         cards = obs.table or []
         if cards:
-            gl = R.identify(cards, JIPAI)
+            gl = R.identify(cards, self._jp())
             if getattr(gl, "is_invalid", False):
                 return Action("none", meta={"why": "待压牌非法→等待(不用提示)"})
         if not self.ours:
@@ -847,9 +851,9 @@ class GuandanAdapter(GameAdapter):
             return Action("none", meta={"why": "ours 未开(提示臂已禁用)"})
         self.usage.decide(arm=("rl" if self.rl else "ours"), hand=len(obs.hand))
         st = AI.GameState()
-        st.jipai = JIPAI
+        st.jipai = self._jp()
         st.shi_dui_you = self._last_seat.get("who") == "top"
-        last = R.identify(cards, JIPAI) if cards else None
+        last = R.identify(cards, self._jp()) if cards else None
         if self.rl:
             return self._decide_rl(obs, last, cards)
         choice = AI.choose_play(obs.hand, last, st)
@@ -859,12 +863,20 @@ class GuandanAdapter(GameAdapter):
             #   ⇒ 领出时一律兜底: 从候选里挑一手最小的(绝不允许 pass ✗)
             if not bool((obs.extra or {}).get("need_beat")):
                 # 现算候选(此处作用域没有 cands ✓) —— 领出时总得出一手
-                _fb = AI.zhao_ke_chu_de_pai(obs.hand, last, JIPAI)
+                _fb = AI.zhao_ke_chu_de_pai(obs.hand, last, self._jp())
                 if _fb:
                     choice = min(_fb, key=lambda g: (g.xing, g.chang_du, g.zhu_zhi))
             if choice is None or getattr(choice, "is_invalid", False):
                 return Action("pass", meta={"why": "引擎判不出"})
         return Action("play", combo=choice, meta={"why": "自研决策(direct)", "direct": True})
+
+    def _jp(self) -> int:
+        """本局级牌 —— **以真值为准** ✓(2026-09-20)
+
+        为什么必须同步: 级牌是"逢人配"(红桃级牌当万能)和"同花顺"的依据 ✓
+        真值每局都给 jiPai; 拿不到(视觉模式)才退回环境变量 GUANDAN_JIPAI(默认 2) ✓
+        """
+        return int(getattr(self, "_jipai_now", None) or JIPAI)
 
     def _decide_rl(self, obs: Observation, last, cards: list) -> Action:
         """RL 臂: 预训练权重在"我方全部合法出牌"里选 → 标记 direct(执行层点选直出)。"""
@@ -893,7 +905,7 @@ class GuandanAdapter(GameAdapter):
         #   ⇒ 拿它当 last ⇒ 新一轮还在"必须压上一轮的旧牌" ⇒ 候选 0 ⇒ **一直不出**(实测死循环 16 次 ✗)
         #   正确来源 = 游戏自己的待压状态 `shangJia`(开新一轮时游戏会把它清空 ✓),
         #   它已经通过 `_sense_by_truth` 进了 `obs.table` ⇒ 这里**不需要任何兜底** ✓
-        cands = AI.zhao_ke_chu_de_pai(obs.hand, last, JIPAI)
+        cands = AI.zhao_ke_chu_de_pai(obs.hand, last, self._jp())
         mine = float(len(obs.hand))
         rem = self.log.seat_remaining()              # 记牌器实测(他方 = 27 − 已出)
         others = [float(rem.get(s, 27)) for s in ("西", "北", "东")]
@@ -968,11 +980,11 @@ class GuandanAdapter(GameAdapter):
         #    (宁可不出, 也绝不去点一套游戏不认的牌 —— 后者还会在牌桌上留下残留选中 ✗)
         if action.combo is not None:
             try:
-                _g = R.identify(list(action.combo.cards), JIPAI)
+                _g = R.identify(list(action.combo.cards), self._jp())
                 if getattr(_g, "is_invalid", False):
                     return ExecResult(False, 0, f"自检: 牌型非法({action.combo!r}) → 不出", skipped=True)
                 if obs.table:
-                    _last = R.identify(list(obs.table), JIPAI)
+                    _last = R.identify(list(obs.table), self._jp())
                     if not R.can_beat(_g, _last):
                         return ExecResult(False, 0, "自检: 压不过桌上牌 → 不出", skipped=True)
             except Exception as e:  # noqa: BLE001

@@ -854,7 +854,16 @@ class GuandanAdapter(GameAdapter):
             return self._decide_rl(obs, last, cards)
         choice = AI.choose_play(obs.hand, last, st)
         if choice is None or getattr(choice, "is_invalid", False):
-            return Action("pass", meta={"why": "引擎判不出"})
+            # ★★ 2026-09-20 用户指出: **领出时不能不出** ✓(掼蛋规则)
+            #   领出(need_beat=False)却 pass ⇒ 违规 ⇒ 局永远打不完(实测卡死 ✗)
+            #   ⇒ 领出时一律兜底: 从候选里挑一手最小的(绝不允许 pass ✗)
+            if not bool((obs.extra or {}).get("need_beat")):
+                # 现算候选(此处作用域没有 cands ✓) —— 领出时总得出一手
+                _fb = AI.zhao_ke_chu_de_pai(obs.hand, last, JIPAI)
+                if _fb:
+                    choice = min(_fb, key=lambda g: (g.xing, g.chang_du, g.zhu_zhi))
+            if choice is None or getattr(choice, "is_invalid", False):
+                return Action("pass", meta={"why": "引擎判不出"})
         return Action("play", combo=choice, meta={"why": "自研决策(direct)", "direct": True})
 
     def _decide_rl(self, obs: Observation, last, cards: list) -> Action:
@@ -901,7 +910,12 @@ class GuandanAdapter(GameAdapter):
               f"{R.group_to_str(choice) if choice is not None else '不出'} | value={info['value']:.3f}",
               flush=True)
         if choice is None:
-            return Action("pass", meta={"why": "RL判不出/不出"})
+            # ★★ 同上: 领出不能不出 ⇒ 兜底挑一手 ✓
+            if not bool((obs.extra or {}).get("need_beat")) and cands:
+                choice = min(cands, key=lambda g: (g.xing, g.chang_du, g.zhu_zhi))
+                print(f"  [rl] ⚠ 领出兜底(原判不出) → {R.group_to_str(choice)}", flush=True)
+            else:
+                return Action("pass", meta={"why": "RL判不出/不出"})
         self._rl_hist.append((0, choice))
         return Action("play", combo=choice, meta={"why": "RL决策", "direct": True, "planned": True})
         return Action("play", combo=choice, meta={"why": "RL决策", "direct": True})
@@ -913,6 +927,9 @@ class GuandanAdapter(GameAdapter):
         ex = self._ex
         assert ex is not None
         if action.kind == "pass":
+            # ★★ 2026-09-20: **领出时拒绝 pass** ✓(违规动作; 宁可响亮报错也不静默卡死 ✗)
+            if not bool(((obs.extra if obs is not None else None) or {}).get("need_beat")):
+                return ExecResult(False, 0, "✗ 领出不能不出(违规, 已拦截)")
             ex.pass_turn()
             return ExecResult(True, 0, "不出")
         # RL 臂: 打的是我们自己选的牌 → 必须点选直出(提示只会出游戏自己选的牌)

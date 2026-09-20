@@ -22,6 +22,9 @@ from dataclasses import dataclass, field
 MY_TEAM = (0, 2)
 OPP_TEAM = (1, 3)
 
+# 座位名 → 座位号(GameLog.seats 顺序 ✓); 库里 deal.seat 存的是名字("南")
+SEAT_INDEX = {"南": 0, "西": 1, "北": 2, "东": 3}
+
 
 def team_of(seat: int) -> str:
     return "mine" if int(seat) in MY_TEAM else "opp"
@@ -102,7 +105,8 @@ def from_store(store, game_type: str = "guandan", limit: int = 200) -> dict:
     """从本地牌局库直接算(库是唯一数据源 ✓)"""
     out = []
     for g in store.list_games(game_type=game_type, limit=limit):
-        m = metric_of_deal(g["gid"], g.get("result") or {})
+        my_seat = SEAT_INDEX.get(str(g.get("seat") or "南"), 0)   # ★ 按实际座位算队伍 ✓
+        m = metric_of_deal(g["gid"], g.get("result") or {}, my_seat)
         if m is not None:
             out.append(m)
     return aggregate(out)

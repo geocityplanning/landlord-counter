@@ -810,6 +810,17 @@ class GuandanAdapter(GameAdapter):
         self._cur_hand = cards
         self._last_hand = cards                   # 记住最后一次成功读数(读失败时沿用)
         self.log.set_my_hand(cards)
+        # ★ 2026-09-21 用户要观察"红桃级牌(逢人配)": 每局第一次拿到手牌时报一次
+        #   (**只打印**, 不改决策、不碰规则 ✓)
+        if not getattr(self, "_wild_said", False):
+            self._wild_said = True
+            _jp = self._jp()
+            _w = [c for c in cards
+                  if getattr(c, "hua", -1) == 1 and getattr(c, "zhi", 0) == _jp]
+            if _w:
+                print(f"  ★ 本局手里有红桃级牌(逢人配) × {len(_w)} 张 (级牌={_jp}) ✓", flush=True)
+            else:
+                print(f"  ☆ 本局手里没有红桃级牌 (级牌={_jp})", flush=True)
         try:
             self.tracker.set_my_hand(list(cards))
         except Exception:                        # noqa: BLE001
@@ -820,6 +831,7 @@ class GuandanAdapter(GameAdapter):
         # ★ 2026-09-21: 变量名写错(原来读 `_ji_pai`, 实际存的是 `_jipai_now`)
         #   ⇒ 桥那边一直在收 ji_pai, 但每次都是 None ⇒ 库里"这局打几"一直空 ✗
         self.log.deal_start(ji_pai=getattr(self, "_jipai_now", None))
+        self._wild_said = False          # ★ 本局"红桃级牌"提示还没报过 ✓
         self.tracker.reset()
         self._last_sig.clear()
         self._rl_hist.clear()

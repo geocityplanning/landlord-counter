@@ -485,6 +485,15 @@ class Executor:
 
         cdp = getattr(self, "cdp", None)
         want = sorted(int(i) for i in idxs)
+        # ★ 2026-09-21: 牌位偏格的**自校正**(用户铁律: 禁 layout 常量, 当帧实测+校验)
+        #   实测: 手牌 21 张时 `slots_from_right` 用固定 pitch=24 从右端左铺 ⇒ 整体偏左一格
+        #        ⇒ 点目标 i 结果选中 i-1(真值日志: 目标=[20] 选中=[19])⇒ 连续 3 轮越修越左 ✗
+        #   做法: 判据全部来自**真值**(不猜 ✓) —— 只在"点的全是目标的左邻"时把整排右移一格 ✓
+        #   按张数分别记(不同张数偏的量不同) ✓
+        _shifts = getattr(self, "_slot_shift_by_n", None)
+        if _shifts is None:
+            _shifts = self._slot_shift_by_n = {}
+        shift = int(_shifts.get(int(n), 0))
         for r in range(rounds):
             if not self._wait_ready(n):
                 self.log(f"  [sel] ✗ 画面未就绪(牌位数≠{n}) ⇒ 本轮不点")
@@ -513,10 +522,18 @@ class Executor:
             if not miss and not extra:
                 self.log(f"  [sel] ✓ 真值核对一致({len(want)} 张)")
                 return True
+            # ★ 整体偏格的自校正判据: 缺的全是目标、多的全是"目标的左邻" ⇒ 整排右移一格 ✓
+            _wset = set(want)
+            if (shift == 0 and got and miss and not extra
+                    and all((g + 1) in _wset for g in got)):
+                _shifts[int(n)] = 1
+                shift = 1
+                self.log("  [sel] ⚙ 实测到牌位整体偏左一格 ⇒ 本轮起点击位置右移一格(自校正) ✓")
             for i in extra + miss:           # 多的点掉、缺的补点(游戏是开关 ✓)
                 cur, _c = L.locate(self._snap(), n)
-                if 0 <= i < len(cur):
-                    self._tap_card_at(cur[i], wait=0.4)
+                j = i + shift                # 自校正后的实际点击位 ✓
+                if 0 <= j < len(cur):
+                    self._tap_card_at(cur[j], wait=0.4)
             self._wait_stable(1.0)
         return False
 

@@ -968,9 +968,17 @@ class GuandanAdapter(GameAdapter):
                 why = ""
                 if getattr(ex, "cdp", None) is not None:
                     try:
-                        why = ex.cdp.toast()
+                        why = (ex.cdp.toast() or "").strip()
                     except Exception:  # noqa: BLE001
                         why = ""
+                # ★★ 2026-09-21 用户指出: toast 会取到**过期文本** ⇒ 假警报 ✗
+                #   实测: 报的是"北 不出"/"西 不出" —— 那是**别人不出牌**的提示 ✓
+                #        却把"选牌没选中"记成了"游戏拒绝出牌" ⇒ 4 次被拒全是假的 ✗
+                #   判据: 只有**含拒绝关键词**的才算游戏拒绝; 其余一律归"未生效" ✓
+                _REJECT = ("无效", "太小", "压不过", "不能出", "违规", "该你", "轮到你", "不是该你")
+                if why and not any(k in why for k in _REJECT):
+                    print(f"  [真值] 出牌未生效(提示文本与本次无关, 判为未生效): {why!r}", flush=True)
+                    why = ""
                 if why:
                     # ★ 2026-09-21 诊断: 被拒时把"我们想出的"和"游戏实际看到的"都记下来
                     #   ⇒ 一眼分清是"读错桌上牌"还是"算错大小" ✓

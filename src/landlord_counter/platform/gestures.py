@@ -470,7 +470,8 @@ class Executor:
             time.sleep(0.3)
         return False
 
-    def _select_cards(self, idxs: list, n: int, rounds: int = 3, want=None) -> bool:
+    def _select_cards(self, idxs: list, n: int, rounds: int = 3,
+                      want_cards=None) -> bool:
         """**选牌到"游戏真值 = 目标"为止** —— 把人工托管那套搬进自动路径(2026-09-18 用户拍板)。
 
         人工模式(同一套定位/点击, 但每步过真值)27 张全出完、**零失误** ✓;
@@ -517,14 +518,14 @@ class Executor:
             #   ⚠ 目标位放**局部变量** tgts，别改写 want ✗
             #     (want 是"想出的牌"，每轮都要用它重算 —— 上版把它改写成索引 ⇒ 第二轮就崩 ✓)
             tgts = sorted(int(i) for i in idxs)          # 默认: 调用方给的索引
-            if want:                                     # 有"想出的牌" ⇒ 按身份定位(每轮重算 ✓)
-                _wids = [int(getattr(c, "id", -1)) for c in want]
+            if want_cards:                               # 有"想出的牌" ⇒ 按身份定位(每轮重算 ✓)
+                _wids = [int(getattr(c, "id", -1)) for c in want_cards]
                 if ids and all(w in ids for w in _wids):
                     tgts = sorted(ids.index(w) for w in _wids)
                 else:
                     _hf = (t.get("handsFull") or {}).get("0") or [] if cdp is not None else []
                     _hz = [(int(c["zhi"]), int(c["hua"])) for c in _hf]
-                    _need = sorted((int(c.zhi), int(c.hua)) for c in want)
+                    _need = sorted((int(c.zhi), int(c.hua)) for c in want_cards)
                     _used, _idx = set(), []
                     for _k in _need:
                         _j = next((i for i, zh in enumerate(_hz)
@@ -649,7 +650,7 @@ class Executor:
         return cleared
 
     def direct_play(self, idxs: list[int], n: int, rounds: int = 2,
-                    ranks: list | None = None, want=None) -> bool:
+                    ranks: list | None = None, want_cards=None) -> bool:
         """直选执行: 点选 → 校验张数 → 出牌 → 回执; 失败清选后再来一轮。"""
         # ★ 选牌与核对已统一到 _select_cards(坐标走 locate 标定表 / 核对走真值 ✓)
         _ = ranks                      # 保留签名兼容(调用方仍在传 ✓)
@@ -683,7 +684,7 @@ class Executor:
             #   坐标一律来自 locate(按张数的标定表 ✓), 不用读牌结果 ✗;
             #   有真值就逐位核对 selIds ✓ ⇒ 缺的补点、多的点掉, 一致才往下走 ✓
             #   旧做法(用 tm_read_hand 的 x + "读抬起"核对)会被读错带偏 ⇒ 实测只有 1/3 成功 ✗
-            if not self._select_cards(idxs, n, want=want):
+            if not self._select_cards(idxs, n, want_cards=want_cards):
                 self.log("  [gesture] ✗ 选牌未与真值一致 ⇒ 本轮不按出牌(不猜、不硬按)")
                 self.clear(idxs, n)
                 continue

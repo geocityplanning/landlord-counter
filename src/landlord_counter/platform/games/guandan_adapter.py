@@ -1009,7 +1009,7 @@ class GuandanAdapter(GameAdapter):
                 ranks = [getattr(obs.hand[i], "zhi", None) for i in idxs
                          if 0 <= i < len(obs.hand)]
                 if ex.direct_play(idxs, len(obs.hand), ranks=ranks,
-                                      want=list(action.combo.cards)):
+                                      want_cards=list(action.combo.cards)):
                     self._log_plan(action.combo, action.meta.get("why", ""))   # 打出去了才记决策
                     self._verify_identity(action.combo, action.meta.get("why", ""))  # ★ 即时对账 ✓
                     self._log_seat_play("南", action.combo.cards,
@@ -1074,7 +1074,7 @@ class GuandanAdapter(GameAdapter):
             if idxs:
                 ranks = [getattr(obs.hand[i], "zhi", None) for i in idxs if 0 <= i < len(obs.hand)]
                 if ex.direct_play(idxs, len(obs.hand), ranks=ranks,
-                                      want=list(action.combo.cards)):
+                                      want_cards=list(action.combo.cards)):
                     self._verify_identity(action.combo, action.meta.get("why", ""))  # ★ 即时对账 ✓
                     self._log_plan(action.combo, action.meta.get("why", ""))
                     self._log_seat_play("南", action.combo.cards,

@@ -156,6 +156,16 @@
         
         const result = TeamLogic.jiSuanJieGuo(gameState.youCiList, gameState.jiPai, gameState.zhaDanShu);
         const won = result.duiWu1HuoSheng;
+        // ★ 2026-09-20: 把结算对象留在 gameState 上 —— 供 __truth() 暴露
+        //   (策略指标要"四家名次/升级数", 以前只能拿 a11y 文本硬解析, win 还解不出来 ✗)
+        gameState.lastResult = {
+            won: !!result.duiWu1HuoSheng,
+            shengJiShu: result.shengJiShu,
+            touYou: result.touYou,
+            xinJiPai: result.xinJiPai,
+            youCiList: (gameState.youCiList || []).slice(),
+            zhaDanShu: gameState.zhaDanShu
+        };
         
         if (won) {
             settings.jiPai = result.xinJiPai;
@@ -363,6 +373,8 @@
                 // 真有人压着吗(布尔, 给 Python 一个不用猜的判据 ✓)
                 needBeat: !!gameState.shangJiaChuPai,
                 passCount: gameState.passCount,             // 连续几家不出(3 ⇒ 该新一轮)
+                // ★ 结算(只在 phase=result 时有值 ✓): 供策略指标算"头游/双上/升级"
+                result: gameState.lastResult || null,
                 benLunChuPai: (function () {                // 本轮各座位已出的牌(带花色)
                     const o = {};
                     const src = gameState.benLunChuPai || {};

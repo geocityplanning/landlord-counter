@@ -164,13 +164,31 @@
             touYou: result.touYou,
             xinJiPai: result.xinJiPai,
             youCiList: (gameState.youCiList || []).slice(),
-            zhaDanShu: gameState.zhaDanShu
+            zhaDanShu: gameState.zhaDanShu,
+            jiPai: gameState.jiPai,                       // 本局打几(级牌) ✓
+            matchGames: settings.matchGames || 0,         // 本场打了几局 ✓
+            matchOver: gameState.matchOver || null        // 整场是否结束(过A) ✓
         };
         
-        if (won) {
-            settings.jiPai = result.xinJiPai;
+        // ★★ 2026-09-21 用户定: 掼蛋**大循环** —— 打赢且已在打 A ⇒ 过A通关,
+        //   整场结束, 级牌回 2 开新的一场 ✓
+        //   定位: 页面是我们的代码库(不全就补 ✓); 实验室跑真值, 补全才测得准 ✓
+        //   (产品路径下这条属于游戏厂商的事 —— 到那时这行不进产品 ✓)
+        const _passedA = !!won && Number(gameState.jiPai) >= 14;   // 已在打 A 且这局赢
+        if (_passedA) {
+            gameState.matchOver = { winner: "duiWu1", games: (settings.matchGames || 0) + 1 };
+            settings.matchGames = 0;
+            settings.jiPai = 2;                    // 回 2, 开新的一场 ✓
             GameRules.sheZhiJiPai(settings.jiPai);
             Storage.saveSettings(settings);
+            console.log("[match] 过A通关! 整场结束, 级牌回 2");
+        } else if (won) {
+            settings.matchGames = (settings.matchGames || 0) + 1;
+            settings.jiPai = result.xinJiPai;      // 正常升级 ✓
+            GameRules.sheZhiJiPai(settings.jiPai);
+            Storage.saveSettings(settings);
+        } else {
+            settings.matchGames = (settings.matchGames || 0) + 1;
         }
         
         const stats = Storage.updateStats(won, result.shengJiShu, gameState.zhaDanShu);

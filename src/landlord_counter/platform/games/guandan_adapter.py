@@ -814,8 +814,9 @@ class GuandanAdapter(GameAdapter):
 
     def _new_deal(self) -> None:
         """新一局: 记牌器/日志/RL 历史全部归零。"""
-        # ★ 2026-09-20: 带上级牌 —— 桥那边一直在收 ji_pai, 只是没人传 ⇒ 库里记成 None ✗
-        self.log.deal_start(ji_pai=getattr(self, "_ji_pai", None))
+        # ★ 2026-09-21: 变量名写错(原来读 `_ji_pai`, 实际存的是 `_jipai_now`)
+        #   ⇒ 桥那边一直在收 ji_pai, 但每次都是 None ⇒ 库里"这局打几"一直空 ✗
+        self.log.deal_start(ji_pai=getattr(self, "_jipai_now", None))
         self.tracker.reset()
         self._last_sig.clear()
         self._rl_hist.clear()

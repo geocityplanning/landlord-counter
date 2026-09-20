@@ -41,6 +41,11 @@ class DealMetric:
     shuang_shang: bool = False        # 双上: 我方两人包揽前两名 ✓
     shuang_xia: bool = False          # 被双下: 对方包揽前两名 ✗
     ranks: list = field(default_factory=list)   # 四家名次: ranks[seat] = 名次
+    # ---- 整场(大循环: 从打2一路到过A ✓ 2026-09-21 用户指出) ----
+    ji_pai: int | None = None         # 本局打几(级牌) ✓
+    match_games: int = 0              # 这一场打到第几局 ✓
+    match_over: dict | None = None    # 整场结束信息(过A), 没结束为 None ✓
+    match_won: bool | None = None     # 本局是否**整场获胜**(过A) ✓✓
 
 
 def metric_of_deal(gid: str, result: dict, my_seat: int = 0) -> DealMetric | None:
@@ -50,6 +55,13 @@ def metric_of_deal(gid: str, result: dict, my_seat: int = 0) -> DealMetric | Non
     m = DealMetric(gid=gid)
     won = result.get("won")
     m.won = None if won is None else bool(won)
+    # ★ 整场信息(2026-09-21): 级牌 / 本场局数 / 过A ✓
+    m.ji_pai = result.get("jiPai")
+    m.match_games = int(result.get("matchGames") or 0)
+    mo = result.get("matchOver")
+    if isinstance(mo, dict):
+        m.match_over = mo
+        m.match_won = (mo.get("winner") == "duiWu1")
 
     sj = result.get("shengJiShu")
     if sj is not None:
@@ -98,8 +110,18 @@ def aggregate(metrics: list[DealMetric]) -> dict:
     ranks = [x.ranks for x in ms if x.ranks]
     my_rank_avg = (sum(sum(r[s] for s in MY_TEAM) / 2 for r in ranks) / len(ranks)
                    if ranks else None)
+    # 整场(过A)统计 ✓ —— 只统计"本场最后一局"那些(它们才带 matchOver)
+    overs = [x for x in ms if x.match_over]
+    n_over = len(overs)
+    n_match_won = sum(1 for x in overs if x.match_won)
     return {
         "deals": n,
+        # ★ 整场指标(掼蛋真正的"赢" ✓)
+        "matches_finished": n_over,
+        "matches_won": n_match_won,
+        "pass_a_rate": (round(n_match_won / n_over, 3) if n_over else None),
+        "games_per_match": (round(sum(x.match_games for x in overs) / n_over, 1)
+                            if n_over else None),
         "main_sheng_ji_per_deal": round(sum(x.sheng_ji for x in ms) / n, 2),  # ★ 主指标
         "win_rate": round(wins / n, 3),
         "tou_you_rate": round(tou / n, 3),

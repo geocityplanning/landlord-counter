@@ -421,6 +421,13 @@ class GuandanAdapter(GameAdapter):
                 print(f"  [对账] {'✓ 一致' if ok else '✗ 不一致!!'} "
                       f"决策={R.group_to_str(combo) if combo is not None else '-'} "
                       f"实出={' '.join(str(v) for v in z)}{extra}", flush=True)
+                # ★ 2026-09-20 用户定: **对账结果直接进账** ✓ 这是唯一权威口径
+                #   (旧口径"手牌掉几张"是间接推断, 读数一滞后就误判 ✗ 已删)
+                try:
+                    self.log.append("identity", ok=bool(ok), n=len(z),
+                                    want_z=want_z, got_z=z, want_h=want_h, got_h=h)
+                except Exception:            # noqa: BLE001
+                    pass
                 return
             time.sleep(0.4)
         print("  [对账] ? 真值里没看到这一手(还没写入?)", flush=True)
@@ -656,20 +663,11 @@ class GuandanAdapter(GameAdapter):
         except Exception:                            # noqa: BLE001
             pass
 
-    def _check_hand_delta(self, hand) -> None:
-        """出牌后手牌张数校验: 掉了多少张 == 决策打多少张?
-
-        这是"操作准确率"的**张数口径**(不依赖桌面读回):
-        决定打 1 张、实际掉 3 张(游戏"自动带上同点数") → 立刻暴露 ✓
-        """
-        exp = getattr(self, "_expect_after", None)
-        if exp is None or not hand:
-            return
-        try:
-            self.log.verify("南", hand_after=len(hand), expected_after=exp)
-        except Exception:                            # noqa: BLE001
-            pass
-        self._expect_after = None
+    # (2026-09-20 整段删除) `_check_hand_delta` —— 旧的"手牌掉几张"口径 ✗
+    #   它是**间接推断**: 用"手牌数掉了几张"去倒推这手对不对, 读数一滞后就误判
+    #   ⇒ 假警报(实测两次误报"决定≠实出", 一查牌其实一模一样 ✓)
+    #   已被 `_verify_identity`(决定的牌 vs 真值实出牌, 逐张比点数+花色)取代 ✓
+    #   用户 2026-09-20: "老的看看能不能删了, 不要留在代码里影响后面的判断" ✓
 
     # ---------- 记牌(观测 → 事件日志 + 记牌器) ----------
     _SEAT_OF = {"right": "西", "top": "北", "left": "东"}     # 相对"我(南)"的座位
@@ -767,7 +765,6 @@ class GuandanAdapter(GameAdapter):
             return
         self._cur_hand = cards
         self._last_hand = cards                   # 记住最后一次成功读数(读失败时沿用)
-        self._check_hand_delta(cards)             # 张数校验(决策后手牌应正好少 N 张)
         self.log.set_my_hand(cards)
         try:
             self.tracker.set_my_hand(list(cards))
@@ -879,7 +876,6 @@ class GuandanAdapter(GameAdapter):
         assert ex is not None
         if action.kind == "pass":
             ex.pass_turn()
-            self._expect_after = None         # 不出 → 不做掉牌校验
             return ExecResult(True, 0, "不出")
         # RL 臂: 打的是我们自己选的牌 → 必须点选直出(提示只会出游戏自己选的牌)
         if action.meta.get("direct") and action.combo is not None and obs.hand:
@@ -894,7 +890,6 @@ class GuandanAdapter(GameAdapter):
                                         hand_left=max(0, len(obs.hand) - len(action.combo.cards)),
                                         src="own")
                     # 出牌**成功后**才设期望(按我们意图的张数) → 下次读手牌做校验
-                    self._expect_after = max(0, len(obs.hand) - len(action.combo.cards))
                     return ExecResult(True, 0, "直选出牌(RL)")
                 why = ""
                 if getattr(ex, "cdp", None) is not None:
@@ -937,7 +932,6 @@ class GuandanAdapter(GameAdapter):
                     self._log_seat_play("南", action.combo.cards,
                                         hand_left=max(0, len(obs.hand) - len(action.combo.cards)),
                                         src="own")
-                    self._expect_after = max(0, len(obs.hand) - len(action.combo.cards))
                     return ExecResult(True, 0, "直选出牌")
             return ExecResult(False, 1, "直选失败(未出牌)")
         return ExecResult(False, 1, "无组合可打(未出牌)")

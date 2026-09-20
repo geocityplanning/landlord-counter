@@ -57,9 +57,9 @@ def make_sink(log: Any, store: Any, gid: str):
                 note=str(ev.get("why") or ""),
             )
 
-        elif t == "verify":
-            # 出牌后自检: 实际剩几张 vs 预期剩几张 ⇒ 这就是"这手对不对"的记账 ✓
-            agree = ev.get("hand_after") == ev.get("expected_after")
-            store.mark_last_decision(gid, agree=agree)
+        elif t == "identity":
+            # ★ 2026-09-20 用户定: **唯一权威的对账** = 决定的牌 vs 真值实出的牌
+            #   (逐张比点数+花色 ✓)。旧口径"手牌掉几张"是间接推断、读数滞后就误判 ✗ 已删。
+            store.mark_last_decision(gid, agree=bool(ev.get("ok")))
 
     return sink

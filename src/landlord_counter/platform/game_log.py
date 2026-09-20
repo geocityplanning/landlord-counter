@@ -178,12 +178,9 @@ class GameLog:
                            n=len(list(cards)), hand_before=hand_before, cards_raw=_cards_raw(cards), **extra,
                            src=("direct" if "RL" in why or "直选" in why else "hint"))
 
-    def verify(self, seat: str, hand_after: int, expected_after: int) -> dict:
-        """出牌后的**张数校验**: 实际掉牌数 是否等于 决策张数(抓"自动带上同点数")。"""
-        return self.append("verify", seat=seat, hand_after=hand_after,
-                           expected_after=expected_after,
-                           ok=(hand_after == expected_after),
-                           delta=(expected_after - hand_after) if expected_after is not None else None)
+    # (2026-09-20 删除) `verify()` —— "手牌掉几张"的张数口径 ✗
+    #   它是**间接推断**, 读牌一滞后就把"牌明明一致"的一手误判成不一致 ✗
+    #   对账已统一走 `identity` 事件(_verify_identity: 决定的牌 vs 真值实出牌) ✓
 
     def pass_(self, seat: str) -> dict:
         return self.append("pass", seat=seat, action="pass")

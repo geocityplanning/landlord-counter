@@ -514,10 +514,13 @@ class Executor:
             #   正解: 按 **(点数+花色) 身份**去真值手牌里定位 ✓
             #        (先试 id —— 但实测真值在开局那会儿**不给 id** ✗ ⇒ 必须能退回身份匹配 ✓)
             #        定位失败 ⇒ 本轮不点(宁可不出, 绝不点错 ✗)
-            if want:
+            #   ⚠ 目标位放**局部变量** tgts，别改写 want ✗
+            #     (want 是"想出的牌"，每轮都要用它重算 —— 上版把它改写成索引 ⇒ 第二轮就崩 ✓)
+            tgts = sorted(int(i) for i in idxs)          # 默认: 调用方给的索引
+            if want:                                     # 有"想出的牌" ⇒ 按身份定位(每轮重算 ✓)
                 _wids = [int(getattr(c, "id", -1)) for c in want]
                 if ids and all(w in ids for w in _wids):
-                    want = sorted(ids.index(w) for w in _wids)
+                    tgts = sorted(ids.index(w) for w in _wids)
                 else:
                     _hf = (t.get("handsFull") or {}).get("0") or [] if cdp is not None else []
                     _hz = [(int(c["zhi"]), int(c["hua"])) for c in _hf]
@@ -532,24 +535,24 @@ class Executor:
                             return False
                         _used.add(_j)
                         _idx.append(_j)
-                    want = sorted(_idx)
+                    tgts = sorted(_idx)
             if not ids:                      # 产品路径: 没有真值 ⇒ 只按目标逐张点一次 ✓
-                for i in want:
+                for i in tgts:
                     if 0 <= i < len(slots):
                         self._tap_card_at(slots[i], wait=0.35)
                 self._wait_stable(1.2)
                 return True
             got = sorted(i for i, x in enumerate(ids) if x in sel)
-            miss = [i for i in want if i not in got]
-            extra = [i for i in got if i not in want]
+            miss = [i for i in tgts if i not in got]
+            extra = [i for i in got if i not in tgts]
             self.log(f"  [sel] 第{r + 1}轮 真值选中={[i + 1 for i in got]} "
-                     f"目标={[i + 1 for i in want]} 缺={[i + 1 for i in miss]} "
+                     f"目标={[i + 1 for i in tgts]} 缺={[i + 1 for i in miss]} "
                      f"多={[i + 1 for i in extra]}")
             if not miss and not extra:
-                self.log(f"  [sel] ✓ 真值核对一致({len(want)} 张)")
+                self.log(f"  [sel] ✓ 真值核对一致({len(tgts)} 张)")
                 return True
             # ★ 整体偏格的自校正判据: 缺的全是目标、多的全是"目标的左邻" ⇒ 整排右移一格 ✓
-            _wset = set(want)
+            _wset = set(tgts)
             if (shift == 0 and got and miss and not extra
                     and all((g + 1) in _wset for g in got)):
                 _shifts[int(n)] = 1

@@ -18,7 +18,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.getenv("COMPANION_DB", os.path.join(ROOT, "data", "companion.db"))
 ARM_PREFIX = {"rl": "gd-", "gameai": "gameai-"}
-NIGHT_START = (22, 30)      # 夜跑时段起点(与 night_segment.sh 的闸门一致 ✓)
+NIGHT_START = (19, 0)       # 夜跑时段起点(与 night_segment.sh 的闸门一致 ✓)
 
 
 def night_begin_ts(now: _dt.datetime | None = None) -> float:

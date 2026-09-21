@@ -68,6 +68,30 @@ def main() -> int:
     for pre, name in ARMS:
         print(line(name, grab(db, pre, since)))
 
+    # ── 整场(过A)层 ──
+    # 掼蛋真正的胜负单位是**整场**: 得分/升级只是过程, 有人"过A"才算一场打完 ✓
+    # (用户 2026-09-21: "掼蛋这种游戏一局是要过A算赢" ⇒ 段也要够长才打得完一场 ✓)
+    print()
+    for pre, name in ARMS:
+        over, ours, played = [], 0, 0
+        for (rj,) in db.execute(
+                "SELECT result_json FROM deal WHERE gid LIKE ? AND started_at >= ?"
+                " AND result_json IS NOT NULL AND result_json != ''", (pre + "%", since)):
+            try:
+                d = json.loads(rj)
+            except Exception:  # noqa: BLE001
+                continue
+            played += 1
+            mo = d.get("matchOver")
+            if isinstance(mo, dict) and mo:
+                over.append(mo.get("games") or 0)
+                if str(mo.get("winner")) == "duiWu1":      # duiWu1 = 我方(南+北) ✓
+                    ours += 1
+        if played:
+            extra = (f" | 打完整场 {len(over)} 次 | **我方过A {ours}** | 平均每场 "
+                     f"{sum(over)/len(over):.1f} 局") if over else " | 还没有一场打到过A"
+            print(f"  {name:28s} 本段共 {played} 局{extra}")
+
     # 对账(唯一权威口径: 决定的牌 vs 真值实出的牌 ✓)
     print()
     for pre, name in ARMS:

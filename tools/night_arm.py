@@ -16,7 +16,7 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.getenv("COMPANION_DB", os.path.join(ROOT, "data", "companion.db"))
-ROUND_MAX = 12 * 3600       # 一轮夜跑最长 12 小时 ⇒ 过期就开新一轮 ✓
+ROUND_MAX = 14 * 3600       # 一轮夜跑最长 14 小时(19:00→次日 07:00 ✓) 过期开新一轮 ✓
 
 
 def main() -> int:

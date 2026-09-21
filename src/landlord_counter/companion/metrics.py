@@ -99,7 +99,12 @@ def metric_of_deal(gid: str, result: dict, my_seat: int = 0) -> DealMetric | Non
 
 def aggregate(metrics: list[DealMetric]) -> dict:
     """汇总 —— **只统计有结算的局** ✓(没结算的不算, 不拿没打完的充数 ✗)"""
-    ms = [x for x in metrics if x is not None and (x.won is not None or x.ranks)]
+    # ★★ 2026-09-21: 分成**两套口径**(原来一套, 导致"过A-only"的局被入口就滤掉 ✗)
+    #   ① 单局口径: 只用"有结算(won/名次)"的局 ✓ —— 否则过A-only 的局会把胜率/头游率带偏 ✗
+    #   ② 整场口径: 用**全量** ✓ —— "只有过A、没等到结算"的局, 恰恰是过A率的唯一来源 ✓✓
+    ms_all = [x for x in metrics
+              if x is not None and (x.won is not None or x.ranks or x.match_over)]
+    ms = [x for x in ms_all if x.won is not None or x.ranks] or ms_all
     n = len(ms)
     if not n:
         return {"deals": 0, "note": "还没有带结算的牌局"}
@@ -111,7 +116,7 @@ def aggregate(metrics: list[DealMetric]) -> dict:
     my_rank_avg = (sum(sum(r[s] for s in MY_TEAM) / 2 for r in ranks) / len(ranks)
                    if ranks else None)
     # 整场(过A)统计 ✓ —— 只统计"本场最后一局"那些(它们才带 matchOver)
-    overs = [x for x in ms if x.match_over]
+    overs = [x for x in ms_all if x.match_over]
     n_over = len(overs)
     n_match_won = sum(1 for x in overs if x.match_won)
     return {

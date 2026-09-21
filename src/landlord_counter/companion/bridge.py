@@ -54,6 +54,15 @@ def make_sink(log: Any, store: Any, gid: str):
             except Exception:            # noqa: BLE001
                 pass                     # 快照失败不影响牌局/不影响落库主流程 ✓
 
+        elif t == "match_over":
+            # ★★ 2026-09-21: **过A通关当场落库** ✓ (等结算会丢 —— 实测 matchOver 0 条 ✗)
+            try:
+                store.mark_match_over(gid, ev.get("data") or {},
+                                      extra={"matchGames": ev.get("match_games"),
+                                             "jiPai": ev.get("ji_pai")})
+            except Exception:            # noqa: BLE001
+                pass                     # 记账失败不影响牌局 ✓
+
         elif t == "plan":
             store.record_decision(
                 gid,

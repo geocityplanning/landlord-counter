@@ -387,6 +387,19 @@ class GuandanAdapter(GameAdapter):
         #   实测两者会走岔: 真值 gameState.jiPai=2, 而 gameRules 模块内是 3 ✗
         #   而游戏判牌型用的是模块内那个 ⇒ 我们必须跟它一致, 否则算出"游戏不认"的牌型 ✗
         self._jipai_now = int(t.get("jiPaiModule") or t.get("jiPai") or 0) or None
+        # ★★ 2026-09-21: "**过A通关**"是一瞬间的事(级牌 A→2) ⇒ 见到就**立刻落库** ✓
+        #   实测教训: 大循环明明闭环了(级牌 14→2 ✓), 库里 matchOver 却是 0 条 ✗
+        #   —— 因为我们是"等结算"才记账, 而那一局往往没等到结算就跑完了 ✓
+        _mo = (t.get("result") or {}).get("matchOver")
+        if _mo and getattr(self, "_mo_logged", None) != _mo:
+            self._mo_logged = _mo
+            try:
+                self.log.append("match_over", data=_mo,
+                                match_games=(t.get("result") or {}).get("matchGames"),
+                                ji_pai=self._jipai_now)
+            except Exception:                # noqa: BLE001
+                pass
+            print(f"  ★★ 过A通关(真值) → 已当场落库 ✓ {_mo}", flush=True)
         need_beat = bool(t.get("needBeat"))
         sj = t.get("shangJia") or [] if need_beat else []
         table = [R.Card(zhi=int(c["zhi"]), hua=int(c["hua"]),

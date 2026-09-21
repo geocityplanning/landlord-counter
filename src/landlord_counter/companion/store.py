@@ -29,6 +29,7 @@ DEFAULT_DB = Path(os.getenv("COMPANION_DB", "data/companion.db"))
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS deal (
     gid         TEXT PRIMARY KEY,      -- 牌局编号(含"第几局"后缀, 同分钟不撞号 ✓)
+    ts          REAL,                  -- 建行时间戳(老库靠迁移补的; 建表时**必须也写** ✗)
     game_type   TEXT,                  -- ★ 游戏分类: guandan / ddz / mahjong …
     started_at  REAL,                  -- ★ 开局日期时间
     ended_at    REAL,                  -- ★ 结束日期时间(结算时回填)
@@ -172,6 +173,27 @@ class CompanionStore:
         """结算回填: **结束日期时间** + 结果(名次/升级/队友名次 …) ✓"""
         self.db.execute("UPDATE deal SET ended_at=?, result_json=? WHERE gid=?",
                         (time.time(), json.dumps(result or {}, ensure_ascii=False), gid))
+        self.db.commit()
+
+    def mark_match_over(self, gid: str, data: dict, extra: dict | None = None) -> None:
+        """把"**过A通关**"当场写进该局的结果里 ✓ —— 不必等结算(等结算常常就丢了 ✗)
+
+        为什么需要(2026-09-21 实测): 大循环明明闭环了(级牌 14→2 ✓),
+          但库里 matchOver **0 条** ✗ —— 因为"等结算"时那局往往还没结算就跑完了 ✓
+        · 只**合并**这几个字段, 不动其它 ✓ (结算晚点来时 end_deal 会整体覆盖 ✓)
+        · extra: 顺带记的(如 matchGames / jiPai ✓)
+        """
+        row = self.db.execute("SELECT result_json FROM deal WHERE gid=?", (gid,)).fetchone()
+        try:
+            cur = json.loads((row[0] if row else "") or "{}") or {}
+        except Exception:                    # noqa: BLE001
+            cur = {}
+        cur["matchOver"] = data
+        for k, v in (extra or {}).items():
+            if v is not None:
+                cur[k] = v
+        self.db.execute("UPDATE deal SET result_json=? WHERE gid=?",
+                        (json.dumps(cur, ensure_ascii=False), gid))
         self.db.commit()
 
     def list_games(self, game_type: str | None = None, limit: int = 50) -> list[dict]:

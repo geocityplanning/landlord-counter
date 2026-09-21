@@ -16,7 +16,6 @@ from ..usage import UsageMeter
 from ...guandan.tracker import CardTracker
 
 # 复用已标定常量(见 docs/M4_掼蛋几何参考.md)
-from ...guandan import ai as AI
 from ...guandan import percept as P
 from ...guandan import rules as R
 from ...guandan.agent import BTN_HINT, BTN_PASS, BTN_PLAY, JIPAI, gold_button
@@ -39,7 +38,9 @@ class GuandanAdapter(GameAdapter):
         self._last_seat = {"who": None, "blocks": {}}
         self._ex = None
         # RL 决策臂(2026-09-15): 开源预训练权重在我方合法候选里选牌 → 必须走点选直出
-        self.rl = os.getenv("GUANDAN_DECIDE", "").strip().lower() == "rl"
+        # ★ 2026-09-21(用户): "既然规则这个不行, 直接不修了, 删了吧, 直接用RL"
+        #   ⇒ 规则决策臂已删(原 ai.choose_play) ⇒ 决策**恒为 RL**, 不再看环境变量 ✓
+        self.rl = True
         self._rl = None
         self._rl_hist: list = []
         # 记牌器 + 牌局事件日志(追溯"谁打了什么牌"/"池子里还剩什么"; 见 docs/记牌器_调研.md)
@@ -750,26 +751,13 @@ class GuandanAdapter(GameAdapter):
         if not self.ours:
             # ours 未开 = 没启用我们自己的决策 → 不动作(提示臂已禁用, 不许偷偷退回 ✗)
             return Action("none", meta={"why": "ours 未开(提示臂已禁用)"})
-        self.usage.decide(arm=("rl" if self.rl else "ours"), hand=len(obs.hand))
-        st = AI.GameState()
-        st.jipai = self._jp()
-        st.shi_dui_you = self._last_seat.get("who") == "top"
+        self.usage.decide(arm="rl", hand=len(obs.hand))
         last = R.identify(cards, self._jp()) if cards else None
-        if self.rl:
-            return self._decide_rl(obs, last, cards)
-        choice = AI.choose_play(obs.hand, last, st)
-        if choice is None or getattr(choice, "is_invalid", False):
-            # ★★ 2026-09-20 用户指出: **领出时不能不出** ✓(掼蛋规则)
-            #   领出(need_beat=False)却 pass ⇒ 违规 ⇒ 局永远打不完(实测卡死 ✗)
-            #   ⇒ 领出时一律兜底: 从候选里挑一手最小的(绝不允许 pass ✗)
-            if not bool((obs.extra or {}).get("need_beat")):
-                # 现算候选(此处作用域没有 cands ✓) —— 领出时总得出一手
-                _fb = AI.zhao_ke_chu_de_pai(obs.hand, last, self._jp())
-                if _fb:
-                    choice = min(_fb, key=lambda g: (g.xing, g.chang_du, g.zhu_zhi))
-            if choice is None or getattr(choice, "is_invalid", False):
-                return Action("pass", meta={"why": "引擎判不出"})
-        return Action("play", combo=choice, meta={"why": "自研决策(direct)", "direct": True})
+        # ★★ 2026-09-21(用户): "既然规则这个不行, 直接不修了, 删了吧, 直接用RL"
+        #   A/B 实测(同机同局): 规则脚本 被拒 11.8% / 没生效 23.5%; RL 两项全 0 ✓✓
+        #   ⇒ 规则决策臂(ai.choose_play + 它的领出兜底)**整段删除** ✗, 决策只有 RL 一条路 ✓
+        #   注: "领出不能不出"的硬约束在 RL 臂里仍然生效(见 _decide_rl 的候选兜底)✓
+        return self._decide_rl(obs, last, cards)
 
     def _jp(self) -> int:
         """本局级牌 —— **以真值为准** ✓(2026-09-20)
@@ -806,7 +794,7 @@ class GuandanAdapter(GameAdapter):
         #   ⇒ 拿它当 last ⇒ 新一轮还在"必须压上一轮的旧牌" ⇒ 候选 0 ⇒ **一直不出**(实测死循环 16 次 ✗)
         #   正确来源 = 游戏自己的待压状态 `shangJia`(开新一轮时游戏会把它清空 ✓),
         #   它已经通过 `_sense_by_truth` 进了 `obs.table` ⇒ 这里**不需要任何兜底** ✓
-        cands = AI.zhao_ke_chu_de_pai(obs.hand, last, self._jp())
+        cands = R.find_all_plays(obs.hand, last, self._jp())
         mine = float(len(obs.hand))
         rem = self.log.seat_remaining()              # 记牌器实测(他方 = 27 − 已出)
         others = [float(rem.get(s, 27)) for s in ("西", "北", "东")]

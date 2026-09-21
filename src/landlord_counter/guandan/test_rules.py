@@ -13,7 +13,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from landlord_counter.guandan import rules as R                      # noqa: E402
-from landlord_counter.guandan.ai import GameState, choose_play, NAN_DU  # noqa: E402
 
 PASS = 0
 FAIL = 0
@@ -155,20 +154,6 @@ def run():
     empty = R.find_all_plays(C(["3s", "4h"]), G(["9s", "9h", "9c", "9d", "9s", "9h"]), 2)
     check("find_all_plays:无可压牌时为空", len(empty) == 0)
 
-    # ---------------- AI 决策 choose_play ----------------
-    lp = G(["5s"])
-    ai = choose_play(hand, lp, GameState(shi_dui_you=False, nan_du=NAN_DU["ZHONG_DENG"],
-                                         rng=random.Random(3)))
-    check("AI:非队友必出合法牌", ai is not None and R.can_beat(ai, lp), str(ai))
-    first = choose_play(hand, None, GameState(rng=random.Random(1)))
-    check("AI:首出返回合法牌型", first is not None and not first.is_invalid, str(first))
-    team_pass = choose_play(hand, lp, GameState(shi_dui_you=True, nan_du=NAN_DU["ZHONG_DENG"],
-                                                rng=random.Random(0)))
-    check("AI:队友出牌时让牌(None)", team_pass is None, str(team_pass))
-    no_beat = choose_play(C(["3s", "4h"]), G(["9s", "9h", "9c", "9d"]),
-                          GameState(rng=random.Random(1)))
-    check("AI:无解不出", no_beat is None, str(no_beat))
-
     # ---------------- 贡牌 / 升级 / 队伍 ----------------
     gong_hand = C(["3s", "2s", "As"])
     _gong = R.zhao_zui_da_pai(gong_hand, 2)
@@ -260,7 +245,10 @@ def run():
     check("500局:自由出牌候选合法", bad2 == 0, f"非法 {bad2} 个")
     check("500局:自由出牌候选来自手牌", bad2_hand == 0, f"越界 {bad2_hand} 个")
 
-    # ---------------- 随机属性测试: 200 局 AI 决策 ----------------
+    # ---------------- 随机属性测试: 200 局"随机合法出牌" ----------------
+    #  ★ 2026-09-21: 原为规则决策臂(ai.choose_play)的属性测试 —— 该臂已按用户指令删除 ✗
+    #    ⇒ 改成"从合法候选里随机挑一手": **覆盖目标不变**(候选必须合法 + 必须来自手牌 ✓),
+    #      但不再依赖任何决策器 ✓(决策质量由 test_rl_policy.py / 真机对账管 ✓)
     bad_ai = 0
     ai_rng = random.Random(99)
     for _ in range(200):
@@ -270,15 +258,15 @@ def run():
         pool = d[27:27 + ai_rng.randrange(1, 9)]
         lg = R.identify(pool, 2)
         last = None if lg.is_invalid else lg
-        mv = choose_play(h, last, GameState(shi_dui_you=bool(ai_rng.getrandbits(1)),
-                                          nan_du=ai_rng.choice([1, 2, 3]), rng=ai_rng))
+        cds = R.find_all_plays(h, last, 2)
+        mv = ai_rng.choice(cds) if cds else None
         if mv is not None:
             if mv.is_invalid or not R.can_beat(mv, last):
                 bad_ai += 1
             for card in mv.cards:
                 if card.id not in ids(h):
                     bad_ai += 1
-    check("200局:AI 返回必合法且能压(或不出)", bad_ai == 0, f"非法 {bad_ai} 个")
+    check("200局:随机合法出牌必合法且能压(或不出)", bad_ai == 0, f"非法 {bad_ai} 个")
 
     # ★★ 2026-09-21 三带二/四带二的**主值必须取"主体那组"** ✓
     #   实测踩到: 原来用 max(全部牌) ⇒ 666+JJ 主值算成 11(J) ⇒ 误判能压 101010+77

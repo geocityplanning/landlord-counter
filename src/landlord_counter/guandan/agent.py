@@ -1,12 +1,20 @@
-"""掼蛋托管 MVP（黑盒视觉版）: 轮到我→提示→出牌; 无解→不出。
+"""掼蛋托管: 平台入口 + 少量共用常量/小工具。
 
-判据(源码推导+实测): 仅当"轮到我且未过牌"时, 我方手牌(白卡)才被绘制 →
-底部手牌带白卡存在 ⇒ 我的回合。
-坐标实测(720x1280, dpr2): 提示(199,1119) 出牌(359,1119) 不出(519,1119); 开始游戏(359,942)
+★ 2026-09-21 大清理(用户: "既然规则这个不行, 直接不修了, 删了吧, 直接用RL"):
+  本文件原来还带着一条 **旧的自研视觉主循环**(读手牌→规则决策→点牌, 约 470 行)。
+  它早就被 ``platform/`` 通用层取代, 实测**外部零调用** ⇒ 按"停用=删掉"整条删除 ✗,
+  连带 ``ai.choose_play`` 那条**规则决策臂**一起删(见 ai.py / guandan_adapter.py)。
+
+  保留下来的, 只有**别人还在用的东西**:
+    * ``BTN_HINT/BTN_PLAY/BTN_PASS`` / ``JIPAI``  ← guandan_adapter 导入 ✓
+    * ``tap`` / ``snap`` / ``gold_button``       ← tools/guandan_prep.py 导入 ✓
+    * ``map_indices``                            ← guandan_adapter 用(牌→手牌下标)✓
+    * ``main()``                                 ← tools/demo_guandan.sh / night_guandan.sh 在用 ✓
+
+  决策现在**只有一条路**: RL(``platform/games/guandan_adapter.py::_decide_rl``)✓。
 """
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -15,18 +23,14 @@ import time
 import cv2
 import numpy as np
 
-from . import ai as AI
-from . import percept as P
-from . import rules as R
-from .percept import card_tap_x
-
 ADB = ["adb", "-s", "127.0.0.1:5555"]
+
+# 底部三个按钮(720x1280 实测): 提示 / 出牌 / 不出
 BTN_HINT = (199, 1119)
 BTN_PLAY = (359, 1119)
 BTN_PASS = (519, 1119)
-BTN_START = (359, 942)
-HAND_BAND = (805, 945)  # y0,y1
-WHITE_MIN = 4000  # 手牌带白卡像素阈值(27张≈66k, 15张≈42k, 8张≈19k → 取4k, 非我回合时≈0)
+
+JIPAI = int(os.getenv("GUANDAN_JIPAI", "2"))  # 本局级牌(默认打2); 真值可用时以真值为准 ✓
 
 
 def tap(x, y, wait=1.0):
@@ -39,46 +43,7 @@ def snap():
     if r.returncode != 0 or not r.stdout:
         return None
     arr = np.frombuffer(r.stdout, np.uint8)
-    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    return img
-
-
-def white_count(img) -> int:
-    y0, y1 = HAND_BAND
-    band = img[y0:y1, :, :]
-    b, g, r = band[:, :, 0].astype(int), band[:, :, 1].astype(int), band[:, :, 2].astype(int)
-    return int(((b > 200) & (g > 200) & (r > 200)).sum())
-
-
-PROMPT_SETTLE = P.PROMPT_SETTLE
-
-
-def read_settle(rec, img):
-    """读结算弹窗(实现已下沉到 percept, 这里保留兼容入口)。"""
-    return P.read_settle(rec, img)
-
-
-def _stats_append(path: str, row: str) -> None:
-    try:
-        with open(path, "a") as fo:
-            fo.write(row + "\n")
-    except Exception:  # noqa: BLE001
-        pass
-
-
-# ---- 夜跑指标打点(仅在 METRICS_FILE 设置时写, 默认零成本) ----
-_SG = {"last_read_ok": None, "last_decide": None}   # 子目标(SGA)临时状态
-
-
-def _metric(ev: str, **kv) -> None:
-    path = os.getenv("METRICS_FILE")
-    if not path:
-        return
-    try:
-        with open(path, "a") as fo:
-            fo.write(json.dumps({"ev": ev, "ts": round(time.time(), 3), **kv}, ensure_ascii=False) + "\n")
-    except Exception:  # noqa: BLE001
-        pass
+    return cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
 
 def gold_button(img):
@@ -93,47 +58,6 @@ def gold_button(img):
             if best is None or a > best[4]:
                 best = (x, y, w, h, a, int(cent[i][0]), int(cent[i][1]))
     return (best[5], best[6]) if best else None
-
-
-def selection_up(img) -> int:
-    """提示后是否选中了牌: 选中牌上移18CSS=36设备px → 手牌带上沿之上出现白卡"""
-    band = img[770:812, :, :]
-    b, g, r = band[:, :, 0].astype(int), band[:, :, 1].astype(int), band[:, :, 2].astype(int)
-    return int(((b > 200) & (g > 200) & (r > 200)).sum())
-
-
-JIPAI = int(os.getenv("GUANDAN_JIPAI", "2"))  # 本局级牌(默认打2)
-OURS = os.getenv("GUANDAN_OURS", "0") == "1"  # 自研决策模式
-
-# ---- RL 决策臂(2026-09-15): 开源预训练权重在"我方合法候选"里选牌 ----
-#   GUANDAN_DECIDE=rl 启用。模型(MonadMorph/guandan-RL, 453k 参数, CPU ~5ms)对
-#   20 个状态 token 打分, 在我们 rules.find_all_plays 出的候选里取 argmax(或不出)。
-#   注意: 打自己选的牌必须自己点 → 该臂强制走"点选直出"(不受 GUANDAN_OURS_DIRECT 影响)。
-RL_DECIDE = os.getenv("GUANDAN_DECIDE", "").strip().lower() == "rl"
-_RL_POLICY = None
-_RL_HIST: list = []                      # [(座位号, Group)] 最近观测到的出牌(≤16)
-_RL_PLAYED = [0.0, 0.0, 0.0, 0.0]         # 各座位累计出牌张数(估算, 供余牌 token)
-_SEAT_IDX = {"right": 1, "top": 2, "left": 3}   # 我方=0; 对家=北(top)=2
-
-
-def _rl_get():
-    """惰性加载 RL 决策器(首次调用才读权重)。"""
-    global _RL_POLICY
-    if _RL_POLICY is None:
-        from .rl_policy import RLPolicy
-
-        _RL_POLICY = RLPolicy()
-        print(f"▶ RL 决策器已加载: {os.path.basename(_RL_POLICY.path)}", flush=True)
-    return _RL_POLICY
-
-
-def _rl_left(hand) -> list:
-    """[我方, 下家, 对家, 上家, 合计] 余牌(我方精确, 他家按累计出牌估算)。"""
-    mine = float(len(hand))
-    others = [max(0.0, 27 - _RL_PLAYED[i]) for i in (1, 2, 3)]
-    return [mine] + others + [mine + sum(others)]
-_LAST_SIG = ""   # 上次决策签名(防重复空转)
-_SAME_SIG_N = 0
 
 
 def map_indices(hand, cards) -> list[int] | None:
@@ -160,444 +84,8 @@ def map_indices(hand, cards) -> list[int] | None:
     return sorted(out)
 
 
-def _read_hand(img, rec, n_vis: int):
-    """读手牌: 默认旧路(切两半); GUANDAN_READ_STRIPS=1 走按牌位分段读(更准, 上机 A/B 用)。"""
-    if os.getenv("GUANDAN_READ_STRIPS", "0") == "1" and n_vis:
-        return P.read_hand_strips(rec, img, n_vis)
-    return P.read_hand_ordered(rec, img, expected=n_vis)
-
-
-def ours_decide(img, rec) -> str:
-    """自研决策: 读手牌+桌面 → rules/ai 决策 → 点选执行。
-    返回 'play'|'pass'|'fallback'(回落提示钮)。"""
-    global _LAST_SIG, _SAME_SIG_N
-    # 像素数牌(已滤噪) 作为期望张数喂给识别
-    # 期望张数(喂给 VLM 的提示词): 只在**两种口径一致**时才注入 —— 块宽估算会偏大
-    # (实测用户看图确认: 视觉估 19 vs 实际 17), 把偏大的数字写进提示词会把读数带偏。
-    _est = P.hand_card_count_est(img)
-    _seg = P.hand_columns(img)
-    if _est and _seg and abs(_est - _seg) <= 1:
-        n_vis = _est                     # 两法一致 → 可信, 作为提示
-    else:
-        n_vis = 0                        # 不一致 → 不带提示(让模型自由读), 避免被带偏
-        print(f"  [读牌] 张数口径不一致(块宽{_est}/分段{_seg}) → 不注入期望值", flush=True)
-    hand = _read_hand(img, rec, n_vis)
-    if not hand:  # 读失败 → 重新取帧再读一次(VLM 偶发空返回)
-        img2 = snap()
-        if img2 is not None:
-            n_vis = P.hand_columns(img2) or n_vis
-            hand = _read_hand(img2, rec, n_vis)
-            if hand:
-                img = img2
-    if not hand:
-        print("  [ours] 手牌读取失败 → 回落", flush=True)
-        _SG["last_read_ok"] = False
-        return "fallback"
-    # 读数一致性: 与像素数牌差 >1 → 用期望值重读一次
-    if n_vis and abs(n_vis - len(hand)) > 1:
-        _SG["last_read_ok"] = False
-        print(f"  [ours] 读数{len(hand)}张 vs 像素{n_vis}张 → 重读", flush=True)
-        hand2 = _read_hand(img, rec, n_vis)
-        if hand2 and abs(len(hand2) - n_vis) <= 1:
-            hand = hand2
-        else:
-            print("  [ours] 重读后仍不一致 → 回落", flush=True)
-            return "fallback"
-    _SG["last_read_ok"] = True            # 读牌通过(含一致性校验)
-    last_cards = P.read_table_last(rec, img)
-    if last_cards is None:
-        print("  [ours] 桌面读取失败 → 回落", flush=True)
-        return "fallback"
-    # 牌型合法性闸门: 读到的"待压牌"必须能识别成合法牌型, 否则视为误读
-    if last_cards:
-        gl = R.identify(last_cards, JIPAI)
-        if getattr(gl, "is_invalid", False):
-            print(f"  [ours] 待压牌型非法(误读): {R.cards_to_str(last_cards)} → 回落", flush=True)
-            return "fallback"
-    st = AI.GameState()
-    st.jipai = JIPAI
-    # 队友判定: 主循环跟踪"刚出牌的那一家"(座位块变化) → top=北=我方队友
-    st.shi_dui_you = _LAST_SEAT.get("who") == "top"
-    last = R.identify(last_cards, JIPAI) if last_cards else None
-    if last_cards:
-        print(f"  [ours] 上家={'队友(北)' if st.shi_dui_you else _LAST_SEAT.get('who') or '未知'}", flush=True)
-    if RL_DECIDE:
-        # RL 臂: 记录本回合观测到的"上家出牌" → 历史 token; 候选 = 我方全部合法出牌
-        if last_cards and last is not None:
-            w = _SEAT_IDX.get(_LAST_SEAT.get("who") or "", 1)
-            if not _RL_HIST or _RL_HIST[-1][1] is not last:
-                _RL_HIST.append((w, last))
-                _RL_PLAYED[w] = min(27.0, _RL_PLAYED[w] + len(last_cards))
-        cands = AI.zhao_ke_chu_de_pai(hand, last, JIPAI)
-        seat_last = (_SEAT_IDX.get(_LAST_SEAT.get("who") or "", 1), last)
-        choice, _rlinfo = _rl_get().choose(cands, hand, _RL_HIST[-16:], _rl_left(hand), seat_last, 0)
-        print(
-            f"  [ours:rl] 候选{_rlinfo['n_cand']}(可映射{_rlinfo['mapped']}) → "
-            f"{R.group_to_str(choice) if choice is not None else '不出'} | value={_rlinfo['value']:.3f}",
-            flush=True,
-        )
-        if choice is not None:
-            _RL_HIST.append((0, choice))
-            _RL_PLAYED[0] = min(27.0, _RL_PLAYED[0] + len(choice.cards))
-    else:
-        choice = AI.choose_play(hand, last, st)
-    if choice is None or getattr(choice, "is_invalid", False):
-        print(f"  [ours] 决策=不出 (手牌{len(hand)}张, 待压={R.cards_to_str(last_cards) if last_cards else '无'})", flush=True)
-        return "pass"
-    idxs = map_indices(hand, choice.cards)
-    if idxs is None:
-        print("  [ours] 选牌映射失败 → 回落", flush=True)
-        return "fallback"
-    print(
-        f"  [ours] 决策={R.group_to_str(choice)} idx={idxs} (手牌{len(hand)}, 压={R.cards_to_str(last_cards) if last_cards else '领出'})",
-        flush=True,
-    )
-    # 执行策略(2026-09-14 数据驱动修改):
-    #   实测"领出 1-2 张走点选直出"时 33% 出牌未生效(682/2058), 而提示路径 0 失败
-    #   ⇒ 默认**出牌一律走"提示选牌执行"**(决策层只决定"出/不出", 具体牌由游戏提示选, 与 MVP 同执行面);
-    #     点选直出降级为实验开关 GUANDAN_OURS_DIRECT=1(对照实验/残局研究用)。
-    follow = bool(last_cards)
-    if not RL_DECIDE and (len(idxs) >= 3 or follow or os.getenv("GUANDAN_OURS_DIRECT", "0") != "1"):
-        tag = "跟牌" if follow else f"多张({len(idxs)})"
-        print(f"  [ours] {tag} → 提示选牌执行", flush=True)
-        base_lift = P.lifted_px(img)          # 抬起量基线(Bromite 等承载下存在偏移)
-        tap(*BTN_HINT, wait=1.6)
-        iv2 = snap()
-        if iv2 is None:
-            return "fallback"
-        delta = P.lifted_px(iv2) - base_lift
-        est = round(delta / 1460) if delta > 500 else 0
-        if est == 0:
-            print("  [ours] 提示无可出 → 不出", flush=True)
-            return "pass"
-        if not follow and abs(est - len(idxs)) > max(1, len(idxs) // 2):
-            print(f"  [ours] ✗ 提示选牌张数{est} ≠ 决策{len(idxs)} → 回落", flush=True)
-            return "fallback"
-        tap(*BTN_PLAY, wait=1.6)
-        w_before = P.white_count(img)
-        for _ in range(8):
-            time.sleep(0.4)
-            i2 = snap()
-            if i2 is None:
-                continue
-            if not P.my_turn(i2):
-                return "play"
-            if P.white_count(i2) < w_before - 1500:
-                return "play"
-        print("  [ours] ✗ 提示执行未生效 → 回落", flush=True)
-        return "fallback"
-
-    sig = f"{R.group_to_str(choice)}|{len(hand)}|{R.cards_to_str(last_cards) if last_cards else '-'}"
-    if sig == _LAST_SIG:
-        _SAME_SIG_N += 1
-        if _SAME_SIG_N >= 2:  # 同一决策重复出现(上次未生效) → 熔断, 回落提示钮
-            print(f"  [ours] ↻ 决策重复({_SAME_SIG_N}) → 熔断回落提示钮", flush=True)
-            return "fallback"
-    else:
-        _LAST_SIG, _SAME_SIG_N = sig, 0
-    for attempt in range(2):   # 直选最多两轮: 第二轮重新取帧重选重出
-        if attempt:
-            print("  [ours] ↻ 直选重试(重新取帧)", flush=True)
-            time.sleep(1.0)
-        miss = False
-        for i in idxs:
-            if not _tap_card_verified(i, len(hand)):
-                miss = True
-                break
-        if miss:
-            print("  [ours] ✗ 点选不中(扫点仍无抬起) → 清选", flush=True)
-            for j in idxs:  # 清掉可能已选中的牌
-                tap(card_tap_x(j, len(hand)), 875, wait=0.15)
-            continue
-        # 选牌校验: 抬起亮带 ≈ 选中张数 × ~1460px(实测5张=7316)
-        time.sleep(0.5)
-        iv = snap()
-        if iv is not None:
-            lift = P.lifted_px(iv)
-            est = round(lift / 1460) if lift > 500 else 0
-            if est == 0 or (not follow and abs(est - len(idxs)) > max(1, len(idxs) // 2)):
-                print(f"  [ours] ✗ 选牌校验失败(抬起≈{est}张/{lift}px vs 决策{len(idxs)}张) → 清选", flush=True)
-                for i in idxs:  # 再点一遍取消选中
-                    tap(card_tap_x(i, len(hand)), 875, wait=0.15)
-                continue
-        w_before = P.white_count(img)
-        tap(*BTN_PLAY, wait=1.6)
-        # 执行回执(强): 轮询3秒 — 手牌白卡须明显下降, 或回合已交出(手牌带消失)
-        for _ in range(8):
-            time.sleep(0.4)
-            i2 = snap()
-            if i2 is None:
-                continue
-            if not P.my_turn(i2):
-                return "play"  # 回合已交出 → 成功
-            if P.white_count(i2) < w_before - 1500:
-                return "play"  # 手牌减少 → 成功
-        # 未生效 → 补点一次出牌(可能按钮点击丢失/动画未落定), 再判
-        print("  [ours] ↻ 出牌未生效 → 补点一次", flush=True)
-        tap(*BTN_PLAY, wait=1.6)
-        for _ in range(6):
-            time.sleep(0.4)
-            i2 = snap()
-            if i2 is None:
-                continue
-            if not P.my_turn(i2):
-                return "play"
-            if P.white_count(i2) < w_before - 1500:
-                return "play"
-        # 清选, 进入下一轮重试
-        for i in idxs:
-            tap(card_tap_x(i, len(hand)), 875, wait=0.15)
-        print(f"  [ours] ↻ 出牌仍未生效(w_before={w_before})", flush=True)
-    print("  [ours] ✗ 直选两轮均未生效 → 回落提示钮", flush=True)
-    return "fallback"
-
-
-def _tap_card_verified(i: int, n: int) -> bool:
-    """点选第 i 张并验证抬起; 抬起≈0 时左右扫点(小牌量牌位会漂移)。"""
-    base = card_tap_x(i, n)
-    for dx in (0, 8, -8, 16, -16):
-        tap(base + dx, 875, wait=0.30)
-        iv = snap()
-        if iv is not None and P.lifted_px(iv) > 900:
-            return True
-    return False
-
-
-def _lazy_rec():
-    """按需创建识别器(统计模式需要, 非 OURS 模式也适用)"""
-    try:
-        from ..config import load_config
-        from ..vision.card_recognizer import CardRecognizer
-
-        return CardRecognizer(load_config().vision)
-    except Exception:  # noqa: BLE001
-        return None
-
-
-_LAST_SEAT = {"who": None, "blocks": {}}
-
-
-def _track_last_seat(img) -> None:
-    """跟踪"刚出牌的那一家": 对比相邻帧各座位牌块(纯CV, 无VLM)。
-    块变了/新出现 → 该座位刚出牌; 全部消失(新一轮) → 归为未知。"""
-    cur = P.blocks_by_seat(img)
-    changed = None
-    for name, box in cur.items():
-        pb = _LAST_SEAT["blocks"].get(name)
-        if pb is None or abs(box[0] - pb[0]) + abs(box[1] - pb[1]) > 10:
-            changed = name
-    if changed:
-        _LAST_SEAT["who"] = changed
-    elif not cur and _LAST_SEAT["blocks"]:
-        _LAST_SEAT["who"] = None      # 桌面清空 = 新一轮开始, 谁领出未知
-    _LAST_SEAT["blocks"] = cur
-
-
-def _recover_page(tag: str = "") -> None:
-    _t0 = time.time()
-    """看门狗自愈: 强制重开浏览器页面并回到对局/开始页"""
-    print(f"[看门狗] 页面疑似卡死({tag}) → 重开浏览器", flush=True)
-    br = os.getenv("BROWSER_PKG", "org.bromite.bromite")
-    act = os.getenv("BROWSER_ACT", "com.google.android.apps.chrome.Main")
-    subprocess.run(ADB + ["shell", "am", "force-stop", br], capture_output=True)
-    time.sleep(2)
-    subprocess.run(
-        ADB + ["shell", "am", "start", "-a", "android.intent.action.VIEW", "-d",
-               "http://172.18.0.1:8123/index.html", "-n", f"{br}/{act}"],
-        capture_output=True,
-    )
-    time.sleep(12)
-    for _ in range(6):
-        img = snap()
-        if img is None:
-            time.sleep(1)
-            continue
-        gb = gold_button(img)
-        if gb:
-            tap(gb[0], gb[1], wait=3.0)
-            continue
-        break
-    print("[看门狗] 重开完成", flush=True)
-    _metric("recover", tag=tag, secs=round(time.time() - _t0, 2))
-
-
-def legacy_main() -> int:
-    """旧自研主循环(保留兜底): GUANDAN_LEGACY=1 时使用。"""
-    dur = float(sys.argv[1]) if len(sys.argv) > 1 else 600
-    t_end = time.time() + dur
-    plays = passes = 0
-    deals = 0
-    last_prog = time.time()  # 看门狗: 最近进展时刻
-    last_wc = -1
-    stall = 0                # 连续"动作无效"次数(触发页面重开)
-    bad_frames = 0           # 连续"页面异常"帧数(配合无进展时长判定)
-    rec = None
-    if OURS or os.getenv("STATS_FILE"):
-        from ..config import load_config
-        from ..vision.card_recognizer import CardRecognizer
-
-        rec = CardRecognizer(load_config().vision)
-    if OURS:
-        print("▶ 自研决策模式(OURS=1): rules+ai 接管, 失败回落提示钮", flush=True)
-    print("▶ 掼蛋托管MVP启动(v2: 无解自动不出)", flush=True)
-    _deal_t0 = time.time()      # 本局起点(用于端到端耗时)
-    while time.time() < t_end:
-        _t0 = time.time()
-        img = snap()
-        _t_snap = time.time() - _t0
-        if img is None:
-            time.sleep(1)
-            continue
-        _track_last_seat(img)   # 跟踪"刚出牌的那一家"(供队友判定)
-        # 页面健康度: 白屏/异常(手牌白卡超上限 或 中部整片白) → 恢复(25s 冷却防抖)
-        if os.getenv("GUANDAN_NO_HEALTH", "0") != "1" and not P.page_looks_ok(img):
-            bad_frames += 1
-            # 必须"连续 2 帧异常" 且 "60s 无任何进展" 才重开(避免动画帧误判导致自杀式重开)
-            if bad_frames >= 2 and time.time() - last_prog > 60:
-                print(f"[健康检查] 连续{bad_frames}帧异常且{int(time.time()-last_prog)}s无进展 → 重开页面", flush=True)
-                _recover_page("页面异常白屏")
-                last_prog = time.time()
-                last_wc = -1
-                stall = 0
-                bad_frames = 0
-            time.sleep(1.2)
-            continue
-        bad_frames = 0
-        # 看门狗: 3 分钟无任何进展(无大金钮/无我方回合动作/手牌无变化) → 重开页面自愈
-        wc_now = white_count(img)
-        if wc_now != last_wc:
-            last_wc = wc_now
-            last_prog = time.time()
-        if time.time() - last_prog > 240:
-            _recover_page(f"{int(time.time() - last_prog)}s 无进展")
-            last_prog = time.time()
-            last_wc = -1
-            continue
-        gb = gold_button(img)
-        if gb:  # 开始游戏 / 结算页"再接一局"
-            last_prog = time.time()
-            _LAST_SEAT["who"] = None      # 新一局: 清空上家跟踪
-            _LAST_SEAT["blocks"] = {}
-            if RL_DECIDE:                 # RL 臂: 新一局清空历史/余牌估算
-                _RL_HIST.clear()
-                _RL_PLAYED[:] = [0.0, 0.0, 0.0, 0.0]
-            sf = os.getenv("STATS_FILE")
-            if sf:
-                r = rec if rec is not None else _lazy_rec()
-                if r is not None:
-                    raw, win = read_settle(r, img)
-                    deals += 1
-                    _stats_append(sf, f"{int(time.time())},{deals},{'win' if win else ('lose' if win is False else '?')},{os.getenv('STATS_TAG','-')},{raw.strip()[:60]}")
-                    _metric("deal_end", deal=deals, win=win, dur=round(time.time() - _deal_t0, 2), raw=raw.strip()[:60])
-                    _deal_t0 = time.time()      # 新一局起点
-                    print(f"[统计] 第{deals}局: {'我方升级' if win else ('对手升级' if win is False else '未判定')} | {raw.strip()[:40]!r}", flush=True)
-            print(f"[按钮] 点大金钮@{gb}", flush=True)
-            tap(gb[0], gb[1], wait=3.0)
-            continue
-        wc = white_count(img)
-        if wc < WHITE_MIN or not P.play_button_active(img):  # 非我回合(残局手牌仍显示但按钮禁用)
-            time.sleep(0.8)
-            continue
-        # 我回合(注意: 不在此处刷新 last_prog — 空转时同样会进这里, 会把看门狗"喂活")
-        if OURS:
-            _SG["last_read_ok"] = None
-            _t1 = time.time()
-            r = ours_decide(img, rec)
-            _t_decide = time.time() - _t1
-            if r == "pass":
-                tap(*BTN_PASS, wait=2.0)
-                passes += 1
-                _metric("step", mode="ours", act="pass", ok=True, read_ok=_SG["last_read_ok"],
-                        t_snap=round(_t_snap, 3), t_decide=round(_t_decide, 3))
-                print(f"  → 不出(ours) (出牌{plays} 不出{passes})", flush=True)
-                continue
-            if r == "play":
-                plays += 1
-                _t2 = time.time()
-                print(f"  ✓ 出牌(ours) (出牌{plays} 不出{passes})", flush=True)
-                _eff = False
-                for _k in range(2):
-                    time.sleep(1.2)
-                    _iv = snap()
-                    if _iv is None:
-                        continue
-                    _wcx = white_count(_iv)
-                    if _wcx < wc - 1500 or _wcx < WHITE_MIN:
-                        _eff = True
-                        break
-                _metric("step", mode="ours", act="play", ok=bool(_eff), read_ok=_SG["last_read_ok"],
-                        t_snap=round(_t_snap, 3), t_decide=round(_t_decide, 3),
-                        t_exec=round(time.time() - _t2, 3))
-                if _eff:
-                    stall = 0
-                else:
-                    stall += 1
-                    print(f"  ! 出牌后手牌未减少(无效动作 {stall}/4)", flush=True)
-                    if stall >= 4:
-                        print("  ! 连续 4 次动作无效 → 重开页面", flush=True)
-                        _recover_page("连续4次动作无效(ours)")
-                        stall = 0
-                        last_prog = time.time()
-                        last_wc = -1
-                        continue
-                time.sleep(1.0)
-                continue
-            # fallback → 走提示钮
-        _t2 = time.time()
-        tap(*BTN_HINT, wait=1.5)
-        img2 = snap()
-        if img2 is None:
-            continue
-        if selection_up(img2) > 800:  # 有选中 → 出牌
-            tap(*BTN_PLAY, wait=2.2)
-            plays += 1
-            print(f"  ✓ 出牌 (累计出牌{plays} 不出{passes})", flush=True)
-        else:  # 无解 → 不出
-            tap(*BTN_PASS, wait=2.0)
-            passes += 1
-            print(f"  → 不出 (累计出牌{plays} 不出{passes})", flush=True)
-        time.sleep(0.8)
-        # 回执校验(稳健): 手牌明显减少 或 手牌带消失 = 生效; 否则留时间再判一次
-        effective = False
-        for _k in range(2):
-            time.sleep(1.5)
-            imgx = snap()
-            if imgx is None:
-                continue
-            wcx = white_count(imgx)
-            if wcx < wc - 1500 or wcx < WHITE_MIN:
-                effective = True
-                break
-        _metric("step", mode="hint", act="play" if effective else "fail", ok=bool(effective),
-                t_snap=round(_t_snap, 3), t_decide=0.0, t_exec=round(time.time() - _t2, 3))
-        if effective:
-            stall = 0
-        else:
-            stall += 1
-            print(f"  ! 动作无效({stall}/4): 手牌未减少 → 换动作重试", flush=True)
-            if stall >= 4:
-                print("  ! 连续 4 次动作无效 → 判定页面卡死, 重开页面", flush=True)
-                _recover_page("连续4次动作无效")
-                stall = 0
-                last_prog = time.time()
-                last_wc = -1
-                continue
-            tap(*BTN_PASS, wait=1.8)
-            tap(*BTN_PLAY, wait=2.0)
-    print(f"▶ 结束: 出牌{plays} 不出{passes}", flush=True)
-    return 0
-
-
-
 def main() -> int:
-    """薄壳入口: 走 platform 通用层(Runtime + GuandanAdapter)。
-
-    环境变量与旧入口一致: STATS_FILE / STATS_TAG / GUANDAN_OURS / GUANDAN_JIPAI。
-    GUANDAN_LEGACY=1 → 回退旧自研主循环。
-    """
-    if os.getenv("GUANDAN_LEGACY", "0") == "1":
-        print("▶ 使用旧主循环(GUANDAN_LEGACY=1)", flush=True)
-        return legacy_main()
+    """薄壳入口: 只有 platform 一条路(Runtime + GuandanAdapter ⇒ RL 决策 ✓)。"""
     dur = float(sys.argv[1]) if len(sys.argv) > 1 else 600
     from ..config import load_config
     from ..platform.device import AdbDevice

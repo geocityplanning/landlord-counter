@@ -13,9 +13,10 @@ import sys
 import time
 from collections import Counter
 
-import glob
+import sqlite3
 
-USAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "usage")
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+from landlord_counter.platform.usage import USAGE_DB  # noqa: E402
 
 
 def main() -> int:
@@ -25,27 +26,25 @@ def main() -> int:
     tok_p = tok_c = tok_t = 0.0
     by_model: Counter = Counter()
     n = 0
-    for fp in sorted(glob.glob(os.path.join(USAGE_DIR, "usage-*.jsonl"))):
-        for ln in open(fp, encoding="utf-8", errors="ignore"):
-            ln = ln.strip()
-            if not ln:
-                continue
-            try:
-                e = json.loads(ln)
-            except Exception:  # noqa: BLE001
-                continue
-            if float(e.get("t", 0)) < cutoff:
-                continue
-            n += 1
-            kind = e.get("kind", "?")
-            amt = float(e.get("amount") or 0)
-            tot[kind] += amt
-            if kind == "vlm_tokens":
-                m = e.get("meta") or {}
-                tok_p += float(m.get("prompt") or 0)
-                tok_c += float(m.get("completion") or 0)
-                tok_t += amt
-                by_model[m.get("model", "?")] += 1
+    # ★ 2026-09-21(用户): 数据一律从 sql 拿(jsonl 已删 ✗) ⇒ 直接读 data/usage.db ✓
+    con = sqlite3.connect(f"file:{USAGE_DB}?mode=ro", uri=True, timeout=5)
+    for ts, kind, amount, meta in con.execute(
+            "SELECT ts, kind, amount, meta FROM usage WHERE ts >= ? ORDER BY id", (cutoff,)):
+        n += 1
+        amt = float(amount or 0)
+        tot[kind or "?"] += amt
+        if kind == "vlm_tokens":
+            m = {}
+            if meta:
+                try:
+                    m = json.loads(meta)
+                except Exception:  # noqa: BLE001
+                    m = {}
+            tok_p += float(m.get("prompt") or 0)
+            tok_c += float(m.get("completion") or 0)
+            tok_t += amt
+            by_model[m.get("model", "?")] += 1
+    con.close()
     print(f"=== 最近 {mins:g} 分钟 (事件 {n} 条) ===")
     for k, v in sorted(tot.items(), key=lambda kv: -kv[1]):
         print(f"  {k:16s} {v:,.0f}")

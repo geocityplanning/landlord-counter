@@ -24,7 +24,7 @@ fi
 
 echo
 echo "=== ④ 常驻服务 ==="
-for p in 8123 8130 8140; do
+for p in 8123 8140; do
     printf "  :%s " $p
     curl -s -o /dev/null -w "%{http_code}\n" --max-time 2 "http://127.0.0.1:$p/" 2>/dev/null || echo "✗(需要重启)"
 done

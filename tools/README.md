@@ -37,7 +37,6 @@
 | `run_via_platform.py` | 跑托管窗口：`python3 tools/run_via_platform.py 150 guandan`（已在牌局不重开页） |
 | `guandan_prep.py` | 进桌准备（重开页 + 开始游戏 + 带 CDP 调试口） |
 | `live_view.py` | 网页直播 `:8140`（MJPEG + 操作日志 + 记牌事件） |
-| `board_api.py` | 后台数据服务 `:8130`（`/games/<id>/history|pool|timeline|export.csv`） |
 | `show_select_now.py` | 整屏 + 手牌放大截图（发给用户人眼核对时用） |
 
 ## 诊断（`_` 前缀，排查用，可随时删）

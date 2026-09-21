@@ -28,7 +28,7 @@ print("adb:", sh("adb devices | tail -n +2 | head -3").replace("\n", " | "))
 print("前台:", sh('adb -s 127.0.0.1:5555 shell dumpsys window 2>/dev/null | grep mCurrentFocus | head -1'))
 
 print("\n=== 服务端口 ===")
-for port, what in ((8123, "掼蛋游戏页"), (8130, "看板 board_api"), (8140, "直播 live_view"), (8001, "mall"), (4000, "osctl")):
+for port, what in ((8123, "掼蛋游戏页"), (8140, "直播 live_view"), (8001, "mall"), (4000, "osctl")):
     code = sh(f"curl -s --max-time 3 -o /dev/null -w '%{{http_code}}' http://127.0.0.1:{port}/ 2>/dev/null")
     print(f"  {port} {what}: {code or '无响应'}")
 

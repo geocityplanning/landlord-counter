@@ -28,7 +28,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-DATA_DIR = os.getenv("GAME_DATA_DIR", os.path.join(ROOT, "data", "games"))
 
 
 def _zhi(card: Any) -> int:
@@ -89,12 +88,10 @@ class GameLog:
     seats: tuple = ("南", "西", "北", "东")
     deck_total: int = 108                 # 掼蛋 108(2副) / 斗地主 54(1副)
     per_rank_total: dict = field(default_factory=dict)   # 点数→总张数
-    path: str = ""
     events: list = field(default_factory=list)
     played: dict = field(default_factory=lambda: {})      # seat → Counter(点数)
     my_hand: Counter = field(default_factory=Counter)
     _seq: int = 0
-    _fh: Any = None
     # ★ 旁观者插座 (2026-09-19 伴随应用 M1 ✓): 每写一条事件就**广播一份**给旁观者
     #   · 只收不发: 旁观者只许"收数据/存数据" ✗ 不许回写/改牌局
     #   · **旁观者出事绝不影响牌局** —— 下面用 try/except 全兜住 ✓(牌局 > 记录 ✓)
@@ -102,8 +99,9 @@ class GameLog:
 
     # ---------------- 生命周期 ----------------
     def __post_init__(self) -> None:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        self.path = self.path or os.path.join(DATA_DIR, f"{self.game_id}.jsonl")
+        # ★★ 2026-09-21(用户): "csv 和 json 之类, 受数据的全部换成从 sql 拿, 然后全删"
+        #   ⇒ 这里原来会**落盘** data/games/<局号>.jsonl ✗(与伴随应用的 sqlite 重复 ✗)
+        #     GameLog 现在只干两件事: **内存态记账** + **sink 广播**(旁观者写 sqlite ✓)
         if not self.played:
             self.played = {s: Counter() for s in self.seats}
         if not self.per_rank_total:
@@ -113,34 +111,6 @@ class GameLog:
             else:
                 self.per_rank_total = {r: 4 for r in range(2, 15)} | {15: 1, 16: 1}
                 self.deck_total = 54
-
-    def load(self) -> "GameLog":
-        """从落盘文件重放, 恢复内存态(重启后可继续)。"""
-        if not os.path.exists(self.path):
-            return self
-        with open(self.path, encoding="utf-8") as f:
-            for line in f:
-                try:
-                    ev = json.loads(line)
-                except Exception:  # noqa: BLE001
-                    continue
-                self.events.append(ev)                 # 事件流也要恢复(历史/回放靠它)
-                self._seq = max(self._seq, int(ev.get("seq", 0)))
-                self._apply(ev)
-        return self
-
-    def _fh_open(self):
-        if self._fh is None:
-            self._fh = open(self.path, "a", encoding="utf-8")
-        return self._fh
-
-    def close(self) -> None:
-        try:
-            if self._fh:
-                self._fh.close()
-        except Exception:  # noqa: BLE001
-            pass
-        self._fh = None
 
     # ---------------- 写事件 ----------------
     def append(self, type_: str, **kw) -> dict:
@@ -153,12 +123,6 @@ class GameLog:
             except Exception as e:     # noqa: BLE001
                 print(f"  [sink] ⚠ 旁观者出错({type(e).__name__}: {e}) → 已忽略, 牌局继续 ✓",
                       flush=True)
-        try:
-            fh = self._fh_open()
-            fh.write(json.dumps(ev, ensure_ascii=False) + "\n")
-            fh.flush()
-        except Exception:  # noqa: BLE001
-            pass
         self._apply(ev)
         return ev
 
@@ -206,16 +170,6 @@ class GameLog:
                     return False
                 ev["cards"] = names
                 ev["amended"] = True
-                try:                                  # 同步改落盘的最后一行
-                    if os.path.exists(self.path):
-                        rows = open(self.path, encoding="utf-8").read().splitlines()
-                        for i in range(len(rows) - 1, -1, -1):
-                            if rows[i].strip():
-                                rows[i] = json.dumps(ev, ensure_ascii=False)
-                                break
-                        open(self.path, "w", encoding="utf-8").write("\n".join(rows) + "\n")
-                except Exception:                     # noqa: BLE001
-                    pass
                 return True
         return False
 
@@ -310,33 +264,3 @@ def _rank_of(card_name: str) -> int:
     return {"A": 14, "J": 11, "Q": 12, "K": 13, "10": 10}.get(tok, int(tok) if tok.isdigit() else 0)
 
 
-def list_games() -> list:
-    """列出落盘的所有牌局(供 /games 接口)。"""
-    out = []
-    if not os.path.isdir(DATA_DIR):
-        return out
-    for fn in sorted(os.listdir(DATA_DIR)):
-        if not fn.endswith(".jsonl"):
-            continue
-        p = os.path.join(DATA_DIR, fn)
-        gid = fn[:-6]
-        try:
-            with open(p, encoding="utf-8") as f:
-                first = None
-                last = None
-                n = 0
-                for line in f:
-                    n += 1
-                    if first is None:
-                        first = line
-                    last = line
-            import json as _j
-
-            f0 = _j.loads(first) if first else {}
-            fl = _j.loads(last) if last else {}
-            out.append({"game_id": gid, "events": n,
-                        "started": f0.get("t"), "last": fl.get("t"),
-                        "type": f0.get("game_type") or ("guandan" if "seats" in f0 else "?")})
-        except Exception:  # noqa: BLE001
-            continue
-    return out

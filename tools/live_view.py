@@ -70,26 +70,33 @@ def _tail(path: str, n: int = 60) -> str:
 
 
 def _events(n: int = 40) -> str:
-    d = os.path.join(ROOT, "data", "games")
-    try:
-        fs = sorted((os.path.join(d, x) for x in os.listdir(d) if x.endswith(".jsonl")),
-                    key=os.path.getmtime)
-        if not fs:
-            return "(还没有牌局事件)"
-        rows = open(fs[-1], encoding="utf-8", errors="replace").read().strip().split("\n")[-n:]
-        import json
+    """最近 n 手 —— **从 sqlite 读**(2026-09-21 用户: 数据一律从 sql 拿, json 全删 ✗)"""
+    import sqlite3
 
-        out = [f"# 事件文件: {os.path.basename(fs[-1])}"]
-        for r in rows:
-            try:
-                e = json.loads(r)
-            except Exception:  # noqa: BLE001
-                continue
-            c = " ".join(e.get("cards", [])) if e.get("cards") else ""
-            out.append(f"#{e.get('seq')} {e.get('type')} {e.get('seat', '')} {c}")
-        return "\n".join(out)
+    db = os.path.join(ROOT, "data", "companion.db")
+    if not os.path.exists(db):
+        return "(还没有牌局数据)"
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=3)
+        rows = con.execute("SELECT gid, seq, ts, seat, mine, cards_json FROM play "
+                           "ORDER BY id DESC LIMIT ?", (n,)).fetchall()
+        con.close()
     except Exception as e:  # noqa: BLE001
-        return f"(读事件失败: {e})"
+        return f"(读库失败: {e})"
+    if not rows:
+        return "(还没有出牌记录)"
+    import json as _j
+
+    out = [f"# 最近 {len(rows)} 手(来自 sqlite: data/companion.db)"]
+    for gid, seq, ts, seat, mine, cards in reversed(rows):
+        try:
+            cs = _j.loads(cards) if cards else []
+        except Exception:  # noqa: BLE001
+            cs = []
+        txt = " ".join(str(c) for c in cs)
+        who = f"{seat}{'(我)' if mine else ''}"
+        out.append(f"#{seq} {who} {txt}")
+    return "\n".join(out)
 
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>云手机直播</title>

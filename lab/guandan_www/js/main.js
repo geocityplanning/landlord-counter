@@ -156,24 +156,15 @@
         
         const result = TeamLogic.jiSuanJieGuo(gameState.youCiList, gameState.jiPai, gameState.zhaDanShu);
         const won = result.duiWu1HuoSheng;
-        // ★ 2026-09-20: 把结算对象留在 gameState 上 —— 供 __truth() 暴露
-        //   (策略指标要"四家名次/升级数", 以前只能拿 a11y 文本硬解析, win 还解不出来 ✗)
-        gameState.lastResult = {
-            won: !!result.duiWu1HuoSheng,
-            shengJiShu: result.shengJiShu,
-            touYou: result.touYou,
-            xinJiPai: result.xinJiPai,
-            youCiList: (gameState.youCiList || []).slice(),
-            zhaDanShu: gameState.zhaDanShu,
-            jiPai: gameState.jiPai,                       // 本局打几(级牌) ✓
-            matchGames: settings.matchGames || 0,         // 本场打了几局 ✓
-            matchOver: gameState.matchOver || null        // 整场是否结束(过A) ✓
-        };
-        
         // ★★ 2026-09-21 用户定: 掼蛋**大循环** —— 打赢且已在打 A ⇒ 过A通关,
         //   整场结束, 级牌回 2 开新的一场 ✓
         //   定位: 页面是我们的代码库(不全就补 ✓); 实验室跑真值, 补全才测得准 ✓
         //   (产品路径下这条属于游戏厂商的事 —— 到那时这行不进产品 ✓)
+        //
+        //   ⚠⚠ 顺序坑(2026-09-21 修复, 实测证据): 原来这段放在"构造 lastResult"**之后** ✗
+        //      ⇒ 结算对象里打包的永远是"还没来得及设置的 matchOver" = null ✗
+        //      ⇒ 库里 20 局 matchOver **全是 null**, 过A率永远算不出来(而级牌确实 A→2 了 ✗)
+        //   ⇒ 铁律: **先判定并设置状态, 再打包结算对象** ✓
         const _passedA = !!won && Number(gameState.jiPai) >= 14;   // 已在打 A 且这局赢
         if (_passedA) {
             gameState.matchOver = { winner: "duiWu1", games: (settings.matchGames || 0) + 1 };
@@ -190,6 +181,21 @@
         } else {
             settings.matchGames = (settings.matchGames || 0) + 1;
         }
+
+        // ★ 2026-09-20: 把结算对象留在 gameState 上 —— 供 __truth() 暴露
+        //   (策略指标要"四家名次/升级数", 以前只能拿 a11y 文本硬解析, win 还解不出来 ✗)
+        //   ⚠ 必须在上面的"过A/升级"判定**之后**构造(否则 matchOver 永远是 null ✗)
+        gameState.lastResult = {
+            won: !!result.duiWu1HuoSheng,
+            shengJiShu: result.shengJiShu,
+            touYou: result.touYou,
+            xinJiPai: result.xinJiPai,
+            youCiList: (gameState.youCiList || []).slice(),
+            zhaDanShu: gameState.zhaDanShu,
+            jiPai: gameState.jiPai,                       // 本局打几(级牌) ✓
+            matchGames: settings.matchGames || 0,         // 本场打了几局 ✓
+            matchOver: gameState.matchOver || null        // 整场是否结束(过A) ✓
+        };
         
         const stats = Storage.updateStats(won, result.shengJiShu, gameState.zhaDanShu);
         

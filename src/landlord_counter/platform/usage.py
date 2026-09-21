@@ -16,24 +16,64 @@
   vision_frame  视觉处理帧(帧)     —— 可选: 只看变化的帧
   proxy_minute  托管时长(分钟)     —— 可选: 按分钟计费
 
-落盘: data/usage/usage-<YYYYMMDD>.jsonl(按天分文件, 便于对账)
+★★ 2026-09-21(用户): "csv 和 json 之类, 受数据的全部换成从 sql 拿, 然后全删" ✗
+   ⇒ 存储从 `data/usage/usage-<YYYYMMDD>.jsonl` 改成 **sqlite: data/usage.db(表 usage)** ✓
+     顺带修掉旧写法的一个真 bug: 旧 seq 是**每进程从 1 重数**的 ✗ ⇒ 跨进程会重号,
+     上报"取 seq > N"就会漏/重 ✗ ⇒ 现在 seq 一律用 sqlite 自增 id(全局单调 ✓)
+
 上报: pending() 取未上报批次 → 上报底座 → ack(batch) 标记已上报(幂等: 重发不重复扣费)
 """
 from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import time
 from dataclasses import dataclass, field
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-USAGE_DIR = os.getenv("USAGE_DATA_DIR", os.path.join(ROOT, "data", "usage"))
+USAGE_DB = os.getenv("USAGE_DB", os.path.join(ROOT, "data", "usage.db"))
 
 KINDS = ("vlm_read", "rl_infer", "decide", "vision_frame", "proxy_minute")
+
+_DDL = """CREATE TABLE IF NOT EXISTS usage(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts REAL NOT NULL,
+  kind TEXT NOT NULL,
+  amount REAL NOT NULL DEFAULT 1,
+  game TEXT, device TEXT, user_id TEXT, meta TEXT,
+  reported INTEGER NOT NULL DEFAULT 0,
+  reported_at REAL
+)"""
 
 
 def _today() -> str:
     return time.strftime("%Y%m%d")
+
+
+def _con() -> sqlite3.Connection:
+    d = os.path.dirname(USAGE_DB)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    con = sqlite3.connect(USAGE_DB, check_same_thread=False, timeout=5)
+    con.execute(_DDL)
+    return con
+
+
+def _row_to_ev(r) -> dict:
+    ev = {"t": r[1], "seq": r[0], "kind": r[2], "amount": r[3], "game": r[4],
+          "device": r[5], "user": r[6] or "", "reported": bool(r[8])}
+    if r[7]:
+        try:
+            ev["meta"] = json.loads(r[7])
+        except Exception:  # noqa: BLE001
+            pass
+    if r[9]:
+        ev["reported_at"] = r[9]
+    return ev
+
+
+_COLS = "id, ts, kind, amount, game, device, user_id, meta, reported, reported_at"
 
 
 @dataclass
@@ -43,29 +83,28 @@ class UsageMeter:
     game: str = "guandan"
     device: str = os.getenv("DEVICE_ID", "cloudphone-1")
     user: str = os.getenv("USER_ID", "")          # 底座下发(上报时用)
-    path: str = ""
-    _n: int = 0
     _buf: list = field(default_factory=list)
-
-    def __post_init__(self) -> None:
-        os.makedirs(USAGE_DIR, exist_ok=True)
-        if not self.path:
-            self.path = os.path.join(USAGE_DIR, f"usage-{_today()}.jsonl")
 
     # ---------------- 记一笔 ----------------
     def record(self, kind: str, amount: float = 1, **meta) -> dict:
         """记一次算力消耗(不带价格)。amount 缺省 1(次)。"""
-        self._n += 1
-        ev = {"t": round(time.time(), 3), "seq": self._n, "kind": kind,
-              "amount": amount, "game": self.game, "device": self.device,
-              "user": self.user, "reported": False}
+        ev = {"t": round(time.time(), 3), "kind": kind, "amount": amount,
+              "game": self.game, "device": self.device, "user": self.user,
+              "reported": False}
         if meta:
             ev["meta"] = meta
         try:
-            with open(self.path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(ev, ensure_ascii=False) + "\n")
-        except Exception:                          # noqa: BLE001
-            pass
+            con = _con()
+            cur = con.execute(
+                "INSERT INTO usage(ts, kind, amount, game, device, user_id, meta, reported) "
+                "VALUES(?,?,?,?,?,?,?,0)",
+                (ev["t"], kind, float(amount), self.game, self.device, self.user,
+                 json.dumps(meta, ensure_ascii=False) if meta else None))
+            con.commit()
+            ev["seq"] = int(cur.lastrowid or 0)   # ★ seq = sqlite 自增 id(全局单调 ✓)
+            con.close()
+        except Exception:                       # noqa: BLE001
+            ev["seq"] = 0                        # 记不上也不许影响牌局 ✓
         self._buf.append(ev)
         return ev
 
@@ -82,30 +121,18 @@ class UsageMeter:
     def proxy_minutes(self, minutes: float, **m) -> dict:
         return self.record("proxy_minute", round(minutes, 3), **m)
 
-    def _files(self) -> list:
-        """要读的文件: 目录内按天分文件 + 显式 path(若在目录外)。"""
-        out = []
-        if os.path.isdir(USAGE_DIR):
-            out += [os.path.join(USAGE_DIR, f) for f in sorted(os.listdir(USAGE_DIR))
-                    if f.endswith(".jsonl")]
-        if self.path and os.path.exists(self.path) and self.path not in out:
-            out.append(self.path)
-        return out
-
     # ---------------- 上报(伴随包 → 底座) ----------------
     def pending(self, since_seq: int = 0) -> list:
         """取未上报事件(seq > since_seq)。伴随包上报后调用 ack()。"""
-        out = []
-        for fn in self._files():
-            with open(fn, encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        ev = json.loads(line)
-                    except Exception:              # noqa: BLE001
-                        continue
-                    if not ev.get("reported") and int(ev.get("seq", 0)) > since_seq:
-                        out.append(ev)
-        return out
+        try:
+            con = _con()
+            rows = con.execute(
+                f"SELECT {_COLS} FROM usage WHERE reported=0 AND id > ? ORDER BY id",
+                (int(since_seq),)).fetchall()
+            con.close()
+        except Exception:                       # noqa: BLE001
+            return []
+        return [_row_to_ev(r) for r in rows]
 
     def batch(self) -> dict:
         """打包一批待上报(底座侧按 batch_id 幂等)。"""
@@ -115,30 +142,22 @@ class UsageMeter:
                 "count": len(evs), "by_kind": self.count_by_kind(evs), "events": evs}
 
     def ack(self, batch: dict) -> int:
-        """底座确认收到 → 标记已上报(重写当天文件; 幂等)。"""
-        ids = {(e.get("t"), e.get("seq")) for e in batch.get("events", [])}
+        """底座确认收到 → 标记已上报(幂等)。"""
+        ids = [int(e["seq"]) for e in batch.get("events", []) if e.get("seq")]
         if not ids:
             return 0
-        n = 0
-        for p in self._files():
-            rows, changed = [], False
-            with open(p, encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        ev = json.loads(line)
-                    except Exception:              # noqa: BLE001
-                        rows.append(line)
-                        continue
-                    if (ev.get("t"), ev.get("seq")) in ids and not ev.get("reported"):
-                        ev["reported"] = True
-                        ev["reported_at"] = round(time.time(), 3)
-                        changed = True
-                        n += 1
-                    rows.append(json.dumps(ev, ensure_ascii=False) + "\n")
-            if changed:
-                with open(p, "w", encoding="utf-8") as f:
-                    f.writelines(rows)
-        return n
+        try:
+            con = _con()
+            q = ",".join("?" * len(ids))
+            cur = con.execute(
+                f"UPDATE usage SET reported=1, reported_at=? WHERE reported=0 AND id IN ({q})",
+                [round(time.time(), 3), *ids])
+            con.commit()
+            n = int(cur.rowcount or 0)
+            con.close()
+            return n
+        except Exception:                       # noqa: BLE001
+            return 0
 
     # ---------------- 对账 ----------------
     @staticmethod
@@ -150,16 +169,17 @@ class UsageMeter:
         return out
 
     def summary(self, since: float | None = None) -> dict:
-        evs = []
-        for fn in self._files():
-            with open(fn, encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        ev = json.loads(line)
-                    except Exception:              # noqa: BLE001
-                        continue
-                    if since is None or float(ev.get("t", 0)) >= since:
-                        evs.append(ev)
+        sql = f"SELECT {_COLS} FROM usage"
+        args: list = []
+        if since is not None:
+            sql += " WHERE ts >= ?"
+            args.append(float(since))
+        try:
+            con = _con()
+            evs = [_row_to_ev(r) for r in con.execute(sql, args).fetchall()]
+            con.close()
+        except Exception:                       # noqa: BLE001
+            evs = []
         pend = [e for e in evs if not e.get("reported")]
         return {"events": len(evs), "by_kind": self.count_by_kind(evs),
                 "unreported": len(pend), "unreported_by_kind": self.count_by_kind(pend),

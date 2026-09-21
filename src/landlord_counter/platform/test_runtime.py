@@ -4,8 +4,6 @@
 """
 from __future__ import annotations
 
-import os
-import tempfile
 
 import numpy as np
 
@@ -73,20 +71,18 @@ def main() -> int:
     failed = 0
 
     # 1) 进桌 + 结算统计
+    #   ★ 2026-09-21: 统计的落盘从 csv 改成 **sqlite**(伴随应用) ⇒ 这里不再验 csv,
+    #     只验"点进了桌 + 结算被数到" ✓
     dev = FakeDevice([frame(1, 1), frame(0, 5), frame(0, 6)])
     ad = FakeAdapter()
-    with tempfile.NamedTemporaryFile("r", suffix=".csv", delete=False) as tf:
-        csv_path = tf.name
-    rt = Runtime(ad, dev, stats_path=csv_path, tag="test", watchdog_s=999)
+    rt = Runtime(ad, dev, tag="test", watchdog_s=999)
     rt.run(seconds=0.6)
-    lines = [ln for ln in open(csv_path) if ln.strip()]
-    print("taps:", dev.taps, "| csv:", lines)
-    if not (dev.taps and lines and "win" in lines[0]):
+    print("taps:", dev.taps, "| deals:", rt.deals)
+    if not (dev.taps and rt.deals >= 1):
         print("✗ 进桌/统计 未通过")
         failed += 1
     else:
         print("✓ 进桌 + 结算统计 通过")
-    os.unlink(csv_path)
 
     # 2) 看门狗: 进展信号不变 → 应触发恢复
     dev2 = FakeDevice([frame(0, 7)] * 5)

@@ -13,7 +13,7 @@ sys.path.insert(0, "/project1/landlord-counter/src")
 
 from landlord_counter.guandan import rules as R  # noqa: E402
 from landlord_counter.guandan.rl_policy import (  # noqa: E402
-    GTNet, NUM_ACTIONS, PASS_INDEX, RLPolicy, candidate_to_index, encode_tokens,
+    GTNet, RLPolicy, candidate_to_index, encode_tokens,
 )
 
 

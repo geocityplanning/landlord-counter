@@ -96,8 +96,7 @@ def main() -> int:
     dev = AdbDevice(serial="127.0.0.1:5555", url="http://172.18.0.1:8123/index.html")
     rec = CardRecognizer(load_config().vision)
     ad = GuandanAdapter()
-    rt = Runtime(ad, dev, vision=rec,
-                 stats_path=os.getenv("STATS_FILE"), tag=os.getenv("STATS_TAG", "-"))
+    rt = Runtime(ad, dev, vision=rec, tag=os.getenv("STATS_TAG", "-"))
     print(f"▶ 掼蛋托管(platform 薄壳) 时长={dur}s ours={ad.ours}", flush=True)
     out = rt.run(seconds=dur)
     print(f"▶ 结束: {out}", flush=True)

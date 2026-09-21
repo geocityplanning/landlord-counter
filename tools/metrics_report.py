@@ -12,7 +12,6 @@ import argparse
 import json
 import re
 import statistics as st
-import time
 
 
 def pctl(xs: list[float], p: float) -> float:

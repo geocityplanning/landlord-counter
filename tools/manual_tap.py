@@ -87,7 +87,6 @@ def shot(dev, c, mt, note: str = "") -> tuple:
     ids = list(t.get("handIds") or [])
     sel = set(int(v) for v in (t.get("selected") or []))
     img = dev.snap()
-    g = L.geom()
     slots, _ = L.locate(img, len(hand))
     pos_sel = {i for i, i_ in enumerate(ids) if i_ in sel}      # 选中的是第几位(0 起)
     pb = L.play_button(img)

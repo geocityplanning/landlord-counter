@@ -55,7 +55,7 @@ def main() -> int:
     from landlord_counter.platform.runtime import Runtime
 
     rt = Runtime(ad, dev, vision=vision,
-                 stats_path=os.getenv("STATS_FILE"), tag=os.getenv("STATS_TAG", "plat"))
+                 tag=os.getenv("STATS_TAG", "plat"))
     print(f"▶ platform 运行时启动: adapter={ad.name} ours={getattr(ad, 'ours', None)} 时长={secs}s")
     out = rt.run(seconds=secs)
     print(f"▶ 结束: {out}")

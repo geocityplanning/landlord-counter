@@ -20,7 +20,6 @@
 """
 from __future__ import annotations
 
-import json
 import os
 import time
 from collections import Counter
@@ -146,7 +145,7 @@ class GameLog:
         """记一次**决策**(我们打算出的牌) —— 用于"决定 vs 实际打出"的操作准确率对账。"""
         return self.append("plan", seat=seat, cards=[_name(c) for c in cards], why=why,
                            n=len(list(cards)), hand_before=hand_before, cards_raw=_cards_raw(cards), **extra,
-                           src=("direct" if "RL" in why or "直选" in why else "hint"))
+                           src="direct")   # 提示臂已禁用(09-17) ⇒ 只有"我们自己点"这一种 ✓
 
     # (2026-09-20 删除) `verify()` —— "手牌掉几张"的张数口径 ✗
     #   它是**间接推断**, 读牌一滞后就把"牌明明一致"的一手误判成不一致 ✗

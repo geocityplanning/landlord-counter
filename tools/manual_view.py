@@ -48,7 +48,6 @@ def main() -> int:
     hand = [int(v) for v in ((t.get("hands") or {}).get("0") or [])]
     n = len(hand)
     img = dev.snap()
-    g = L.geom()
     slots, chk = L.locate(img, n)
     pb = L.play_button(img)
 

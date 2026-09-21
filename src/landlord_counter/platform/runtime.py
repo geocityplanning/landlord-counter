@@ -10,13 +10,12 @@ class Runtime:
     """驱动一个 GameAdapter 持续托管。"""
 
     def __init__(self, adapter: GameAdapter, device, vision=None,
-                 stats_path: str | None = None, tag: str = "",
+                 tag: str = "",
                  watchdog_s: float = 240.0, heartbeat_s: float = 60.0,
                  idle_sleep: float = 1.2) -> None:
         self.ad = adapter
         self.dev = device
         self.vision = vision
-        self.stats_path = stats_path
         self.tag = tag
         self.watchdog_s = watchdog_s
         self.heartbeat_s = heartbeat_s
@@ -24,16 +23,6 @@ class Runtime:
         self.deals = 0
         self.actions = 0
         self.ad.attach(device, vision)
-
-    # ---- 统计 ----
-    def _stats_append(self, row: str) -> None:
-        if not self.stats_path:
-            return
-        try:
-            with open(self.stats_path, "a") as fo:
-                fo.write(row + "\n")
-        except Exception:  # noqa: BLE001
-            pass
 
     def _foreground_pkg(self) -> str | None:
         """当前前台的包名(前台闸门用) —— 云手机里**第二个浏览器会抢前台** ✗
@@ -112,10 +101,6 @@ class Runtime:
                 if info is not None:
                     self.deals += 1
                     w = info.win
-                    self._stats_append(
-                        f"{int(time.time())},{self.deals},{'win' if w else ('lose' if w is False else '?')},"
-                        f"{self.tag or '-'},{info.raw.strip()[:60]}"
-                    )
                     self._log(f"[结算] 第{self.deals}局: {'我方得分' if w else ('我方失分' if w is False else '未判定')} ({info.raw})")
 
             # 开始/续局按钮
@@ -125,10 +110,6 @@ class Runtime:
                 if info is not None:
                     self.deals += 1
                     w = info.win
-                    self._stats_append(
-                        f"{int(time.time())},{self.deals},{'win' if w else ('lose' if w is False else '?')},"
-                        f"{self.tag or '-'},{info.raw.strip()[:60]}"
-                    )
                     self._log(f"[结算] 第{self.deals}局: {'我方升级' if w else ('对手升级' if w is False else '未判定')}")
                 self._log(f"[进桌] 点开始/续局 {sb}")
                 self.dev.tap(sb[0], sb[1], wait=3.0)

@@ -22,7 +22,7 @@ if [ "$REC" = "1" ]; then
     echo "采集 $i 帧" ) &
 fi
 
-STATS_FILE=/tmp/guandan_stats.csv PYTHONPATH=src timeout $SECS \
+PYTHONPATH=src timeout $SECS \
   $PY -u -m landlord_counter.guandan.agent $((SECS - 10))
 
 if [ "$REC" = "1" ]; then

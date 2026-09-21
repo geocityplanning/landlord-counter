@@ -833,6 +833,22 @@ class GuandanAdapter(GameAdapter):
                 print(f"  [代价] RL 想 {R.group_to_str(choice)}(炸弹/用万能 ✗)"
                       f" → 改用 {R.group_to_str(_alt)}(不用炸弹/万能也能压 ✓)", flush=True)
                 choice = _alt
+        # ★★ 2026-09-21 用户开工②: 代价过滤**扩展到领出** ✓
+        #   实测: 领出时它拿**万能牌**去凑"对子5"这种小牌 ✗ (太浪费 —— 万能牌是宝贝 ✓)
+        #   规则: 领出且这手用了万能 ⇒ 候选里若有"**同牌型、不用万能**"的, 换最省的那手 ✓
+        #   边界(保守 ✓):
+        #     · 只换"同牌型" —— 领出随便出什么, 换牌型等于改策略 ✗ (不动 ✓)
+        #     · 只管"用万能" —— 领出打炸弹有时是战术(抢主动权), 不拦 ✓
+        if (choice is not None and cands
+                and not bool((obs.extra or {}).get("need_beat"))
+                and getattr(choice, "wild_used", 0) > 0):
+            _same = [g for g in cands
+                     if g.xing == choice.xing and getattr(g, "wild_used", 0) == 0]
+            if _same:
+                _alt = min(_same, key=lambda g: (g.chang_du, g.zhu_zhi))
+                print(f"  [代价·领出] RL 想 {R.group_to_str(choice)}(用了万能 ✗)"
+                      f" → 改用 {R.group_to_str(_alt)}(同牌型、不用万能 ✓)", flush=True)
+                choice = _alt
         _md = "压" if (obs.extra or {}).get("need_beat") else "领出"
         # ★ 2026-09-21 诊断: 打出"桌上那手 + 用的级牌 + 我们选的点数"
         #   目的: 出现"牌太小，压不过"时, 一眼看出是"读错桌上牌"还是"算错大小" ✓

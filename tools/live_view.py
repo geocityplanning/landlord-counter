@@ -69,6 +69,10 @@ def _tail(path: str, n: int = 60) -> str:
         return "(暂无日志)"
 
 
+_HUA = {0: "♠", 1: "♥", 2: "♣", 3: "♦", 4: "★"}
+_ZHI = {11: "J", 12: "Q", 13: "K", 14: "A", 15: "小王", 16: "大王"}
+
+
 def _events(n: int = 40) -> str:
     """最近 n 手 —— **从 sqlite 读**(2026-09-21 用户: 数据一律从 sql 拿, json 全删 ✗)"""
     import sqlite3
@@ -93,7 +97,12 @@ def _events(n: int = 40) -> str:
             cs = _j.loads(cards) if cards else []
         except Exception:  # noqa: BLE001
             cs = []
-        txt = " ".join(str(c) for c in cs)
+        def _c(c):
+            if isinstance(c, dict):
+                return f"{_HUA.get(int(c.get('hua') or 0), '?')}{_ZHI.get(int(c.get('zhi') or 0), c.get('zhi'))}"
+            return str(c)
+
+        txt = " ".join(_c(c) for c in cs)
         who = f"{seat}{'(我)' if mine else ''}"
         out.append(f"#{seq} {who} {txt}")
     return "\n".join(out)

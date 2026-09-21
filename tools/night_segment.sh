@@ -41,9 +41,16 @@ python3 "$(dirname "$0")/night_arm.py" >> "$LOG" 2>&1
 ARM=$(python3 "$(dirname "$0")/night_pick_arm.py")
 echo "$(date '+%F %T') [起跑] arm=$ARM 时长=$(( ${1:-3300} / 60 ))分" >> "$LOG"
 
-# ④ 设备/页面就绪(醒了 / 进桌 ✓) —— 复用现成工具, 失败也往下走(托管自己会等 ✓)
+# ④ 设备/页面就绪 —— 顺序有讲究(2026-09-21 实测踩过 ✓)
+#    a. 清堆积页签 + 把**游戏页拉到前台**:
+#       适配器 find_truth() 要求页面 visible ✓ 设备里只有前台标签 visible
+#       ⇒ 前台停在别处 ⇒ 真值找不到 ⇒ 整轮跑废 ✗ (夜里无人值守最怕这个 ✗)
+#       页签堆积会被拖死(实测堆到 205 个 ⇒ devtools 全不应答 ✗)
+timeout 200 python3 tools/bring_game_front.py --close-stale --ensure-live >> "$RUN/prep-$TS.log" 2>&1 || true
 timeout 120 bash tools/wake_up.sh        >> "$RUN/prep-$TS.log" 2>&1 || true
 timeout 240 python3 tools/guandan_prep.py >> "$RUN/prep-$TS.log" 2>&1 || true
+#    b. prep 之后再拉一次前台(进桌后可能又被别的标签抢走焦点 ✓)
+timeout 90 python3 tools/bring_game_front.py >> "$RUN/prep-$TS.log" 2>&1 || true
 
 # ⑤ 跑一段
 L="$RUN/$ARM-$TS.log"

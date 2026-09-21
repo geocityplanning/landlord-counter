@@ -93,6 +93,7 @@
     <section><h3>出牌记录 <span id="playCount"></span></h3><div id="plays"></div></section>
     <section><h3>牌池 <span id="poolHint">剩余张数</span></h3><div class="pool" id="pool"></div></section>
     <section><h3>出牌推荐 <span id="recHint"></span></h3><div id="recs"></div></section>
+    <section><h3>策略指标 <span id="mHint">团队口径</span></h3><div class="pool" id="metrics"></div></section>
     <section><button id="host" onclick="toggleHost()">AI 托管：关</button></section>
   </div>
   <footer><span id="acc">准确率 –</span><span id="updated">–</span></footer>
@@ -109,6 +110,32 @@ function toggleBall(){
 }
 if (localStorage.getItem('ball') === '1') document.body.classList.add('collapsed');
 
+/* ---------- 策略指标(团队口径 + 整场; 变化慢 ⇒ 每 5 次拉一回 ✓) ---------- */
+let _mTick = 0;
+async function tickMetrics(){
+  if (++_mTick % 5) return;
+  try {
+    const r = await (await fetch("/api/metrics")).json();
+    const m = (r && r.metrics) || {};
+    if (m.err) { document.getElementById("metrics").innerHTML =
+      `<div style="color:#d29922">指标出错: ${m.err}</div>`; return; }
+    document.getElementById("mHint").textContent =
+      `${m.deals || 0} 局 · 整场 ${m.matches_finished || 0} 场`;
+    const pct = v => (v == null ? "–" : (v * 100).toFixed(0) + "%");
+    const rows = [
+      ["场均升级", m.main_sheng_ji_per_deal == null ? "–"
+        : (m.main_sheng_ji_per_deal > 0 ? "+" : "") + m.main_sheng_ji_per_deal],
+      ["头游率", pct(m.tou_you_rate)],
+      ["双上率", pct(m.shuang_shang_rate)],
+      ["被双下率", pct(m.bei_shuang_xia_rate)],
+      ["过A率", pct(m.pass_a_rate)],
+      ["场均局数", m.games_per_match == null ? "–" : m.games_per_match],
+    ];
+    document.getElementById("metrics").innerHTML = rows.map(([k, v]) =>
+      `<div class="pcell"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+  } catch (e) { /* 静默: 指标拿不到不影响记牌 ✓ */ }
+}
+
 /* ---------- 拉数据(2 秒一次; 悬浮球收起时也拉, 让角标还活着 ✓) ---------- */
 async function tick(){
   try {
@@ -118,6 +145,7 @@ async function tick(){
     const a = await (await fetch('/api/accuracy')).json();
     document.getElementById('acc').textContent =
       a.verified ? `准确率 ${a.agree}/${a.verified} = ${(a.accuracy*100).toFixed(1)}%` : '准确率 暂无数据';
+    tickMetrics();                                   // ★ 策略指标(每 5 次一拉 ✓)
   } catch (e) { document.getElementById('updated').textContent = '连接失败'; }
 }
 

@@ -80,6 +80,16 @@ class Handler(BaseHTTPRequestHandler):
                         "host": STORE.host_intent()})
         elif p == "/api/accuracy":                               # "记忆": 操作准确率
             self._json(STORE.accuracy(q.get("gid", [None])[0]))
+        elif p == "/api/metrics":                                # ★ 策略指标(团队口径 + 整场 ✓)
+            # 口径: 场均升级数(有符号, 主指标) / 头游率 / 双上率 / 被双下率 / **过A率**
+            # 数据源: 只认**有结构化结算**的局(宁缺毋滥 ✓ 老记录不计, 不充数 ✓)
+            try:
+                from landlord_counter.companion import metrics as M
+                rep = M.from_store(STORE, game_type=q.get("game_type", ["guandan"])[0],
+                                   limit=int(q.get("limit", ["200"])[0]))
+            except Exception as e:                               # noqa: BLE001
+                rep = {"err": f"{type(e).__name__}: {e}"}
+            self._json({"metrics": rep})
         else:
             self._json({"err": "unknown", "path": p}, 404)
 

@@ -181,18 +181,6 @@ const AILogic = (function() {
             }
         }
 
-        // ★★ 2026-09-21(用户点出的根因): 规则**写了两遍** ✗ —— 判定层(gameRules.js 的
-        //   jieXiPaiXing)和出牌层(本函数自己按长度扫牌)各一套 ⇒ 一旦只改一边就分叉 ✗
-        //   而 AI 的牌**又不过校验**(main.js 只给"人点牌"调 yanZhengChuPai ✗)
-        //   ⇒ 分叉的后果是"AI 直接打出游戏不认的牌" ✗
-        //   根治: 造完**统一用判定层过一遍** ⇒ 判定层成为**唯一事实来源** ✓
-        //   以后规则怎么改, 这里都自动跟着对 ✓ (不用再两处同步 ✗)
-        for (const _k of Object.keys(zuHe)) {
-            zuHe[_k] = zuHe[_k].filter(function (c) {
-                return !!(c && c.length) && jieXiPaiXing(c).xing !== PAI_XING.WU_XIAO;
-            });
-        }
-
         return zuHe;
     }
 

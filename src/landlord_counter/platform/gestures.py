@@ -347,6 +347,35 @@ class Executor:
         return "fail"
 
     # ---------- 伺服式直选(用户 2026-09-17 设计的算法) ----------
+    def _receipt_by_truth(self, want_cards, polls: int = 6, poll_s: float = 0.4) -> bool:
+        """出牌回执(**真值版** ✓): 想出的那几张牌已经**不在手里** ⇒ 这手出掉了 ✓
+
+        为什么要它(2026-09-21 实测):
+          画面版回执(wait_receipt, 看白像素变化)会误判 ✗ ——
+          实测日志: 报"出牌未生效"✗, 可下一轮去选牌时发现 ♣K **已经不在手里** ✗
+          ⇒ 其实早就出掉了 ⇒ 白重试一次 + 误报一次失败 ✓✓
+          教训同上: **有真值就别猜画面** ✓
+        """
+        cdp = getattr(self, "cdp", None)
+        if cdp is None or not mode.TRUTH or not want_cards:
+            return False
+        for _ in range(polls):
+            try:
+                t = cdp.truth() or {}
+                hf = (t.get("handsFull") or {}).get("0") or []
+            except Exception:                      # noqa: BLE001
+                hf = []
+            if hf:
+                left = [(int(c["zhi"]), int(c["hua"])) for c in hf]
+                for c in want_cards:
+                    k = (int(getattr(c, "zhi", -1)), int(getattr(c, "hua", -1)))
+                    if k in left:
+                        left.remove(k)             # 按张数消费 ✓
+                    else:
+                        return True                # ★ 有一张不在了 ⇒ 已经出掉 ✓
+            time.sleep(poll_s)
+        return False
+
     def _wait_ready(self, n: int, timeout: float = 5.0) -> bool:
         """等到"**画面停稳 且 牌位数量 == n**"为止(2026-09-18 用户两次指出的坑)。
 
@@ -544,7 +573,13 @@ class Executor:
                 self.clear(idxs, n)
                 continue
             self._press(pp, wait=1.6)
+            # ★★ 回执: 画面版 **或** 真值版(2026-09-21) —— 画面版会误判"未生效" ✗
+            #   (实测: 报未生效, 但那几张牌其实已经出掉了 ⇒ 白重试+误报失败 ✓)
             if self.wait_receipt(before):
+                return True
+            if self._receipt_by_truth(want_cards):
+                self.log("  [gesture] ✓ 真值回执: 想出的牌已不在手里 ⇒ 判定已出 ✓"
+                         " (画面版曾误判\"未生效\" ✗)")
                 return True
             # ★★ 失败回滚: 优先"真值精确回落"(2026-09-18), 没真值就用老办法 ✓
             self.log("  [gesture] ↻ 出牌未生效 → 精确回落")

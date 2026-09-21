@@ -5,77 +5,156 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>掼蛋伴随 · 记牌助手</title>
 <style>
-  :root { --bg:#151a21; --card:#1e2530; --line:#2c3746; --fg:#e6edf3; --dim:#8b98a9;
-          --ok:#3fb950; --warn:#d29922; --mine:#2f81f7; }
+  :root {
+    --bg: rgba(10, 15, 24, 0.82);
+    --panel: rgba(17, 25, 39, 0.9);
+    --panel-2: rgba(25, 37, 52, 0.88);
+    --card: rgba(31, 46, 63, 0.92);
+    --card-2: rgba(42, 59, 81, 0.9);
+    --line: rgba(146, 176, 214, 0.16);
+    --fg: #edf5ff;
+    --muted: #9bb0c9;
+    --ok: #53d78a;
+    --warn: #f4c76d;
+    --mine: #68a7ff;
+    --shadow: 0 18px 42px rgba(0, 0, 0, 0.45);
+  }
   * { box-sizing:border-box; margin:0; padding:0; }
-  body { background:#0d1117; color:var(--fg); font:13px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+  body {
+    /* ⚠ 页面内容全是 position:fixed(悬浮球+面板) ⇒ 不参与文档流 ⇒ body/html 高度=0
+       ⇒ 写在这里的渐变"没地方画" ⇒ 露出浏览器默认白 ✗ (2026-09-21 实测)
+       ⇒ 给个体面的最小高度, 渐变才铺得开 ✓ */
+    min-height: 100vh;
+    background: radial-gradient(circle at top, rgba(39, 64, 92, 0.8), rgba(6, 11, 18, 1) 50%);
+    background-color: #060b12;        /* 兜底: 万一渐变也不算, 至少不是白 ✓ */
+    color: var(--fg);
+    font: 12px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+  }
 
   /* ---------- 悬浮球(收起态) ---------- */
-  #ball { position:fixed; right:16px; bottom:16px; width:52px; height:52px; border-radius:50%;
-          background:linear-gradient(145deg,#2f81f7,#1f6feb); display:none; align-items:center;
-          justify-content:center; cursor:pointer; box-shadow:0 6px 20px rgba(0,0,0,.5); z-index:99;
-          font-size:22px; user-select:none; }
-  #ball .badge { position:absolute; top:-4px; right:-4px; background:var(--warn); color:#000;
-                 font-size:11px; font-weight:700; border-radius:10px; padding:1px 6px; }
-  body.collapsed #ball { display:flex; }
+  #ball {
+    position: fixed; right: 16px; bottom: 16px; width: 44px; height: 44px; border-radius: 50%;
+    background: linear-gradient(145deg, rgba(49, 69, 92, 0.96), rgba(17, 27, 41, 0.96));
+    display: none; align-items: center; justify-content: center; cursor: pointer;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255,255,255,0.1);
+    border: 1px solid rgba(146, 176, 214, 0.26); z-index: 99;
+    font-size: 18px; user-select: none; backdrop-filter: blur(12px);
+    transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  }
+  #ball:hover {
+    transform: translateY(-2px);
+    border-color: rgba(104, 167, 255, 0.5);
+    box-shadow: 0 13px 30px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255,255,255,0.14);
+  }
+  #ball .badge {
+    position: absolute; top: -4px; right: -4px; background: var(--warn); color:#111;
+    font-size: 10px; font-weight: 800; border-radius: 999px; min-width: 16px; height: 16px;
+    line-height: 16px; padding: 0 4px; box-shadow: 0 5px 14px rgba(244, 199, 109, 0.35);
+  }
+  body.collapsed #ball { display: flex; }
 
   /* ---------- 主面板 ---------- */
-  #panel { position:fixed; right:16px; bottom:16px; width:340px; max-height:88vh; background:var(--bg);
-           border:1px solid var(--line); border-radius:12px; display:flex; flex-direction:column;
-           box-shadow:0 10px 40px rgba(0,0,0,.6); z-index:98; overflow:hidden; }
-  body.collapsed #panel { display:none; }
-  header { display:flex; align-items:center; gap:8px; padding:10px 12px; background:var(--card);
-           border-bottom:1px solid var(--line); cursor:move; }
-  header b { font-size:14px; }
-  header .tag { background:#21262d; color:var(--dim); border-radius:6px; padding:1px 6px; font-size:11px; }
+  #panel {
+    position: fixed; right: 16px; bottom: 16px; width: 320px;
+    max-height: 82vh;                        /* 老浏览器兜底 */
+    max-height: calc(100dvh - 24px);         /* 手机: 避开地址栏, 尽量多显示 ✓ */
+    background: rgba(14, 20, 31, 0.86); border: 1px solid var(--line); border-radius: 15px;
+    display: flex; flex-direction: column; box-shadow: var(--shadow); z-index: 98;
+    overflow: hidden; backdrop-filter: blur(12px);
+  }
+  body.collapsed #panel { display: none; }
+  header {
+    display:flex; align-items:center; gap:6px; padding:8px 10px; background: linear-gradient(180deg, rgba(38, 54, 75, 0.95), rgba(21, 31, 45, 0.9));
+    border-bottom: 1px solid var(--line); cursor: move;
+  }
+  header b { font-size: 13px; letter-spacing: 0.04em; }
+  header .tag {
+    background: rgba(255,255,255,0.04); border: 1px solid var(--line); color: var(--muted);
+    border-radius: 7px; padding: 1px 6px; font-size: 10px;
+  }
   header .sp { flex:1; }
-  header button { background:#21262d; color:var(--fg); border:0; border-radius:6px; padding:3px 8px;
-                  cursor:pointer; font-size:12px; }
-  .body { overflow-y:auto; padding:10px 12px; display:flex; flex-direction:column; gap:12px; }
-  section h3 { font-size:12px; color:var(--dim); font-weight:600; margin-bottom:6px;
-               display:flex; justify-content:space-between; }
+  header button {
+    background: rgba(255,255,255,0.03); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 7px; padding: 2px 7px; cursor: pointer; font-size: 11px;
+  }
+  .body {
+    overflow-y: auto; padding: 9px; display:flex; flex-direction:column; gap: 8px;
+  }
+  section {
+    background: rgba(255,255,255,0.02); border: 1px solid var(--line); border-radius: 10px;
+    padding: 8px;
+  }
+  section h3 {
+    font-size: 10px; color: var(--muted); font-weight: 600; margin: 0 0 6px;
+    display: flex; justify-content: space-between; letter-spacing: 0.08em; text-transform: uppercase;
+  }
 
-  /* 出牌记录 */
-  .rec { display:flex; gap:6px; align-items:baseline; padding:3px 0; border-bottom:1px dashed #222c38; }
-  .rec .who { color:var(--dim); min-width:26px; }
-  .rec.mine .who { color:var(--mine); font-weight:700; }
-  .rec .cs { display:flex; gap:3px; flex-wrap:wrap; }
-  .c { background:var(--card); border:1px solid var(--line); border-radius:4px; padding:0 4px;
-       font-family:ui-monospace,monospace; }
-  .c.pass { color:var(--dim); border-style:dashed; }
+  /* 出牌记录（扁平滚动框） */
+  .plays-box {
+    max-height: 126px; overflow-y: auto; padding-right: 3px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .plays-box::-webkit-scrollbar { width: 5px; }
+  .plays-box::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.12); border-radius: 999px;
+  }
+  .rec {
+    display:flex; gap:5px; align-items:flex-start; padding: 3px 5px; border-radius: 6px;
+    background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04);
+  }
+  .rec .who { color: var(--muted); min-width: 22px; font-weight: 600; }
+  .rec.mine .who { color: var(--mine); }
+  .rec .cs { display:flex; gap:3px; flex-wrap:wrap; align-items:center; }
+  .c {
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 4px; padding: 0 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .c.pass { color: var(--muted); border-style: dashed; }
 
   /* 牌池 */
-  .pool { display:grid; grid-template-columns:repeat(5,1fr); gap:4px; }
-  .pcell { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:4px;
-           text-align:center; font-family:ui-monospace,monospace; }
-  .pcell .k { color:var(--dim); font-size:11px; }
-  .pcell .v { font-size:15px; font-weight:700; }
-  .pcell.z .v { color:var(--ok); }        /* 剩0 = 打完了 ✓ */
-
-  /* 四家出牌 */
-  .seats { display:grid; grid-template-columns:repeat(2,1fr); gap:6px; }
-  .seatbox { background:var(--card); border:1px solid var(--line); border-radius:6px;
-             padding:5px 7px; min-height:40px; }
-  .seatbox.mine { border-color:var(--mine); }
-  .seatbox .who { color:var(--dim); font-size:11px; }
-  .seatbox .cs { font-family:ui-monospace,monospace; font-size:12px; word-break:break-all; }
-  .seatbox .cs.pass { color:var(--dim); }
+  .pool { display:grid; grid-template-columns:repeat(5, minmax(0,1fr)); gap:4px; }
+  .pcell {
+    background: rgba(255,255,255,0.02); border: 1px solid var(--line); border-radius: 6px;
+    padding: 4px 3px; text-align:center; font-family: ui-monospace,monospace; min-height: 43px;
+  }
+  .pcell .k { color: var(--muted); font-size: 10px; }
+  .pcell .v { font-size: 14px; font-weight: 700; margin-top: 1px; }
+  .pcell.z {
+    background: linear-gradient(180deg, rgba(83, 215, 138, 0.12), rgba(14, 27, 24, 0.9));
+    border-color: rgba(83, 215, 138, 0.3);
+  }
+  .pcell.z .v { color: var(--ok); }
 
   /* 推荐 / 托管 */
-  .rec-row { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:6px 8px;
-             display:flex; justify-content:space-between; align-items:center; }
-  .rec-row .n { color:var(--dim); font-size:11px; }
-  #host { width:100%; padding:9px; border:0; border-radius:8px; font-size:14px; font-weight:700;
-          cursor:pointer; background:#21262d; color:var(--fg); }
-  #host.on { background:var(--ok); color:#04140a; }
-  footer { padding:8px 12px; border-top:1px solid var(--line); color:var(--dim); font-size:11px;
-           display:flex; justify-content:space-between; }
+  .recs-box { display:flex; flex-direction:column; gap:6px; }
+  .rec-row {
+    background: rgba(255,255,255,0.02); border: 1px solid var(--line); border-radius: 7px;
+    padding: 5px 7px; display:flex; justify-content:space-between; align-items:center; gap:6px;
+  }
+  .rec-row .main { flex:1; min-width:0; }
+  .rec-row .n { color: var(--muted); font-size: 10px; white-space: nowrap; }
+    #host { width:100%; padding:8px 10px; border:1px solid rgba(255,255,255,0.08); border-radius:8px;
+      font-size:13px; font-weight:700; cursor:pointer; background: linear-gradient(180deg, #1b2a3c, #172334); color: var(--fg); }
+  #host.on { background: linear-gradient(180deg, rgba(83,215,138,0.2), rgba(35,90,60,0.9)); border-color: rgba(83,215,138,0.38); color: #eafff3; }
+  footer {
+    padding: 6px 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px;
+    display:none;
+  }
+
+  @media (max-width: 420px) {
+    #panel {
+      width: min(90vw, 310px);
+      right: 8px; bottom: 8px;
+    }
+    .body { padding: 8px; }
+    section { padding: 7px; }
+  }
 </style>
 </head>
 <body>
 
 <!-- 悬浮球 -->
-<div id="ball" onclick="toggleBall()">🃏<span class="badge" id="ballBadge">–</span></div>
+  <div id="ball" onclick="toggleBall()" title="当前手牌：–张">🃏<span class="badge" id="ballBadge">牌–</span></div>
 
 <!-- 主面板 -->
 <div id="panel">
@@ -88,12 +167,9 @@
   </header>
 
   <div class="body">
-    <section><h3>四家出牌 <span id="seatHint">各家最近一手</span></h3>
-      <div class="seats" id="seats"></div></section>
-    <section><h3>出牌记录 <span id="playCount"></span></h3><div id="plays"></div></section>
+    <section><h3>出牌记录 <span id="playCount"></span></h3><div class="plays-box" id="plays"></div></section>
     <section><h3>牌池 <span id="poolHint">剩余张数</span></h3><div class="pool" id="pool"></div></section>
     <section><h3>出牌推荐 <span id="recHint"></span></h3><div id="recs"></div></section>
-    <section><h3>策略指标 <span id="mHint">团队口径</span></h3><div class="pool" id="metrics"></div></section>
     <section><button id="host" onclick="toggleHost()">AI 托管：关</button></section>
   </div>
   <footer><span id="acc">准确率 –</span><span id="updated">–</span></footer>
@@ -110,32 +186,6 @@ function toggleBall(){
 }
 if (localStorage.getItem('ball') === '1') document.body.classList.add('collapsed');
 
-/* ---------- 策略指标(团队口径 + 整场; 变化慢 ⇒ 每 5 次拉一回 ✓) ---------- */
-let _mTick = 0;
-async function tickMetrics(){
-  if (++_mTick % 5) return;
-  try {
-    const r = await (await fetch("/api/metrics")).json();
-    const m = (r && r.metrics) || {};
-    if (m.err) { document.getElementById("metrics").innerHTML =
-      `<div style="color:#d29922">指标出错: ${m.err}</div>`; return; }
-    document.getElementById("mHint").textContent =
-      `${m.deals || 0} 局 · 整场 ${m.matches_finished || 0} 场`;
-    const pct = v => (v == null ? "–" : (v * 100).toFixed(0) + "%");
-    const rows = [
-      ["场均升级", m.main_sheng_ji_per_deal == null ? "–"
-        : (m.main_sheng_ji_per_deal > 0 ? "+" : "") + m.main_sheng_ji_per_deal],
-      ["头游率", pct(m.tou_you_rate)],
-      ["双上率", pct(m.shuang_shang_rate)],
-      ["被双下率", pct(m.bei_shuang_xia_rate)],
-      ["过A率", pct(m.pass_a_rate)],
-      ["场均局数", m.games_per_match == null ? "–" : m.games_per_match],
-    ];
-    document.getElementById("metrics").innerHTML = rows.map(([k, v]) =>
-      `<div class="pcell"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
-  } catch (e) { /* 静默: 指标拿不到不影响记牌 ✓ */ }
-}
-
 /* ---------- 拉数据(2 秒一次; 悬浮球收起时也拉, 让角标还活着 ✓) ---------- */
 async function tick(){
   try {
@@ -145,32 +195,18 @@ async function tick(){
     const a = await (await fetch('/api/accuracy')).json();
     document.getElementById('acc').textContent =
       a.verified ? `准确率 ${a.agree}/${a.verified} = ${(a.accuracy*100).toFixed(1)}%` : '准确率 暂无数据';
-    tickMetrics();                                   // ★ 策略指标(每 5 次一拉 ✓)
   } catch (e) { document.getElementById('updated').textContent = '连接失败'; }
 }
 
 function render(j){
   document.getElementById('gid').textContent = j.gid;
   document.getElementById('ji').textContent  = '级牌 ' + (ZHI[j.ji_pai] || (j.ji_pai||'–'));
-  document.getElementById('ballBadge').textContent = (j.hand||[]).length;
+  const handCount = (j.hand || []).length;
+  document.getElementById('ballBadge').textContent = `牌${handCount}`;
+  document.getElementById('ball').title = `当前手牌：${handCount}张`;
   document.getElementById('updated').textContent = new Date().toLocaleTimeString();
 
-  // ①a 四家出牌 —— 每家最近一手(谁领出/谁压/谁不出, 一眼看清 ✓)
-  const SEATS = ["南", "西", "北", "东"];
-  const all = j.plays || [];
-  document.getElementById("seats").innerHTML = SEATS.map(s => {
-    const me = s === "南";
-    const last = [...all].reverse().find(p => (p.mine ? "南" : p.seat) === s);
-    const body = !last ? "—"
-      : last.kind === "pass" ? "不出"
-      : (last.cards || []).map(c => cname(c)).join(" ");
-    return `<div class="seatbox ${me ? "mine" : ""}">
-        <div class="who">${me ? "我(南)" : s}</div>
-        <div class="cs ${last && last.kind === "pass" ? "pass" : ""}">${body}</div>
-      </div>`;
-  }).join("");
-
-  // ①b 出牌记录(最近 12 手)
+  // 出牌记录(最近 12 手，扁平滚动框)
   const ps = (j.plays||[]).slice(-12);
   document.getElementById('playCount').textContent = `${(j.plays||[]).length} 手`;
   document.getElementById('plays').innerHTML = ps.map(p => `
@@ -190,13 +226,15 @@ function render(j){
     return `<div class="pcell ${v===0?'z':''}"><div class="k">${ZHI[k]||k}</div><div class="v">${v}</div></div>`;
   }).join('') || '<div style="color:#8b98a9">还没有快照</div>';
 
-  // ③ 出牌推荐: 显示最近 3 次决策(候选数 + 压/领出 + 是否对账一致 ✓)
-  const ds = (j.decisions||[]).slice(0,3);
-  document.getElementById('recHint').textContent = `候选数 / ${ds.some(d=>d.need_beat)?'需压':'领出'}`;
+  // ③ 出牌推荐: 最近 3 条决策(显示**后端真有的**字段: 候选数 + 对账是否一致 ✓)
+  //    ⚠ 2026-09-21: 之前读 d.score 排序 ⇒ 后端没这字段 ⇒ 全 0 且显示 "0.0分" ✗ 已改回
+  const ds = (j.decisions||[]).slice(0, 3);
+  document.getElementById('recHint').textContent =
+    `${ds.length} 条 · ${ds.some(d=>d.need_beat)?'需压':'领出'}`;
   document.getElementById('recs').innerHTML = ds.map((d,i) => `
     <div class="rec-row">
-      <span>方案${i+1}：${(d.chosen||[]).map(c=>cname(c)).join(' ') || '不出'}</span>
-      <span class="n">${d.need_beat?'压':'领'} · ${d.cand_n}候选 · ${d.agree===1?'✓一致':(d.agree===0?'✗不一致':'未验')}</span>
+      <div class="main">${i + 1}. ${(d.chosen||[]).map(c=>cname(c)).join(' ') || '不出'}</div>
+      <span class="n">${d.cand_n ?? '–'}候选 · ${d.agree===1?'✓一致':(d.agree===0?'✗不一致':'未验')}</span>
     </div>`).join('') || '<div style="color:#8b98a9">还没有决策</div>';
 
   // ④ 托管按钮(只写"意图" ✓ 执行归现有托管循环 ✓)

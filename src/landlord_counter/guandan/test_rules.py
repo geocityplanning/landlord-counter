@@ -307,6 +307,22 @@ def run():
                      _c(13, 0, 25), _c(13, 1, 26)], 8)
     check("四带二主值=四张那组(4444+KK → 4)", si.zhu_zhi == 4, f"实际 {si.zhu_zhi}")
 
+    # ★★ 2026-09-21 用户实报: "红桃K8866, 相当于88866, 压不过" ✓
+    #   原来被误判成'同花顺' ✗ (同花顺分支漏了"张数=不同点数个数"护栏 ⇒
+    #   zhiz 去重后 [6,7,8] 看着连续 ✗) ⇒ 拿它去压 AAA+KK ⇒ 被游戏拒 ✓
+    R.she_zhi_ji_pai(13)                                  # 打 K ⇒ ♥K 是万能 ✓
+    _kk = [_c(6, 0, 31), _c(6, 0, 32), _c(8, 0, 33), _c(8, 0, 34), _c(13, 1, 35)]
+    g88 = R.identify(_kk, 13)
+    check("♥K+8866 该是三带二(不是同花顺!)",
+          g88.xing == R.PAI_XING["SAN_DAI_ER"], f"实际 {R.PAI_XING_NAME[g88.xing]}")
+    check("♥K+8866 主值 = 8(888+66)", g88.zhu_zhi == 8, f"实际 {g88.zhu_zhi}")
+    _aaa = R.identify([_c(14, 0, 41), _c(14, 1, 42), _c(14, 3, 43),
+                       _c(13, 2, 44), _c(13, 3, 45)], 13)
+    check("♥K+8866 压不过 AAA+KK(和游戏一致 ✓)", not R.can_beat(g88, _aaa))
+    check("重复牌不能算同花顺(6,6,8,8+一张7)",
+          R.identify([_c(6, 0, 51), _c(6, 0, 52), _c(8, 0, 53), _c(8, 0, 54),
+                      _c(7, 0, 55)], 13).xing != R.PAI_XING["TONG_HUA_SHUN"])
+
     print(f"\n通过 {PASS} 项, 失败 {FAIL} 项")
     if FAIL_MSGS:
         sys.exit(1)

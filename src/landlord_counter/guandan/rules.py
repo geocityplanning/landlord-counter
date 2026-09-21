@@ -430,7 +430,12 @@ def _identify_core(cards: list, jipai: int) -> "Group":
     if n == 6 and counts == [3, 3] and _lian(zhiz):
         return Group(PAI_XING["GANG_BAN"], zz(), 2, cards)
     # 同花顺
-    if n >= 5:
+    if n >= 5 and counts == [1] * n:          # ★★ 必须是"n 张 n 个不同点数" ✗
+        # ★★ 2026-09-21 修(用户报的实例: 红桃K + 8866 ⇒ 该是 888+66 ✗):
+        #   原来这句**漏了 `counts == [1]*n`** ✗ ⇒ zhiz 是**去重**后的点数,
+        #   重复张被掩盖 ⇒ [♠6 ♠6 ♠8 ♠8 + 万能→7] 的 zhiz 只剩 [6,7,8] ⇒ 连续 ⇒
+        #   被误判成"**同花顺**" ✗✗(同花顺层级最高 ⇒ 它会压过一切 ⇒ 拿着去压 AAA+KK 被拒 ✓)
+        #   游戏版是按花色分组后要求 zhiList.length === n ⇒ 天然挡住重复 ✓ 以它为准 ✓
         h = _uniform_hua(cards)
         if h is not None and _lian(zhiz):
             return Group(PAI_XING["TONG_HUA_SHUN"], zz(), n, cards, hua=h)

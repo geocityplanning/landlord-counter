@@ -396,6 +396,16 @@ def _identify_core(cards: list, jipai: int) -> "Group":
     def zz() -> int:
         return max(huo_qu_shiji_paizhi(z, jipai) for z in zhiz)
 
+    def zu_zhi(rank: int) -> int:
+        """**某一组**的点数(含级牌换算 ✓) —— 三带二/四带二的主值必须取"主体那组" ✓
+
+        ★★ 2026-09-21 修(实测踩到): 原来这两个牌型也用 zz()=max(全部牌) ✗
+           ⇒ 666+JJ 的主值算成 11(J) ⇒ 误判"能压 101010+77" ⇒ 出牌被拒"牌太小" ✗
+              (反向更危险: 桌上 999+AA 主值算成 44 ⇒ 我们永远以为压不过 ✗)
+           游戏版为准(gameRules.js): 三带二取 fz.san[0] ✓ 四带二取 fz.si[0] ✓
+        """
+        return huo_qu_shiji_paizhi(rank, jipai)
+
     # 天王炸(4 王)
     if n == 4 and all(c.zhi >= PAI_ZHI["XIAO_WANG"] for c in cards):
         return Group(PAI_XING["TIAN_WANG_ZHA"], 100, 4, cards)
@@ -407,13 +417,15 @@ def _identify_core(cards: list, jipai: int) -> "Group":
     if n == 3 and counts == [3]:
         return Group(PAI_XING["SAN_ZHANG"], zz(), 1, cards)
     if n == 5 and counts == [3, 2]:
-        return Group(PAI_XING["SAN_DAI_ER"], zz(), 1, cards)
+        return Group(PAI_XING["SAN_DAI_ER"],
+                     zu_zhi(next(k for k, v in rc.items() if v == 3)), 1, cards)
     # 炸弹(4-6 张相同)
     if 4 <= n <= 6 and counts == [n]:
         return Group(PAI_XING["ZHA_DAN"], zz(), n, cards)
     # 四带二(任意 4 张同点 + 2 张)
     if n == 6 and any(v == 4 for v in rc.values()):
-        return Group(PAI_XING["SI_DAI_ER"], zz(), 1, cards)
+        return Group(PAI_XING["SI_DAI_ER"],
+                     zu_zhi(next(k for k, v in rc.items() if v == 4)), 1, cards)
     # 钢板(两个连续三张)
     if n == 6 and counts == [3, 3] and _lian(zhiz):
         return Group(PAI_XING["GANG_BAN"], zz(), 2, cards)

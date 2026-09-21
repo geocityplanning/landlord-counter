@@ -80,23 +80,41 @@ def run():
     check("炸弹6", g6.xing == R.PAI_XING["ZHA_DAN"] and g6.chang_du == 6)
     check("天王炸", G(["BJ", "BJ", "RJ", "RJ"]).xing == R.PAI_XING["TIAN_WANG_ZHA"])
     check("顺子5(混合花色)", G(["3s", "4h", "5c", "6d", "7s"]).xing == R.PAI_XING["SHUN_ZI"])
+    # ★★ 2026-09-21(用户查证官方规则): 顺子**只能 5 张** ⇒ 6 张必须判无效 ✗
     gs6 = G(["9s", "10h", "Jc", "Qd", "Ks", "As"])
-    check("顺子6(9..A)", gs6.xing == R.PAI_XING["SHUN_ZI"] and gs6.chang_du == 6)
+    check("顺子6(9..A) ⇒ 无效(官方只允许 5 张)", gs6.is_invalid)
     check("顺子含2非法", G(["10s", "Jh", "Qc", "Kd", "2s"]).xing != R.PAI_XING["SHUN_ZI"])
     gld = G(["3s", "3h", "4s", "4h", "5s", "5h"])
     check("连对3", gld.xing == R.PAI_XING["LIAN_DUI"] and gld.chang_du == 3)
+    # ★★ 三连(>=3 组)是**斗地主**牌型 ⇒ 掼蛋里必须判无效 ✗
     gsl = G(["3s", "3h", "3c", "4s", "4h", "4c", "5s", "5h", "5c"])
-    check("三连3", gsl.xing == R.PAI_XING["SAN_LIAN"] and gsl.chang_du == 3)
+    check("三连3组 ⇒ 无效(斗地主牌型, 掼蛋没有)", gsl.is_invalid)
     ggb = G(["3s", "3h", "3c", "4s", "4h", "4c"])
     check("钢板(两连三)", ggb.xing == R.PAI_XING["GANG_BAN"] and ggb.chang_du == 2)
-    gfj = G(["5s", "5h", "5c", "6s", "6h", "6c", "8s", "9h"])
-    check("飞机(单翼)", gfj.xing == R.PAI_XING["FEI_JI"] and gfj.chang_du == 2)
-    gfj2 = G(["5s", "5h", "5c", "6s", "6h", "6c", "8s", "8h", "9s", "9h"])
-    check("飞机(对翼)", gfj2.xing == R.PAI_XING["FEI_JI"] and gfj2.chang_du == 2)
+    # ★★ 飞机是**斗地主**牌型 ⇒ 掼蛋里必须判无效 ✗
+    check("飞机(单翼) ⇒ 无效", G(["5s", "5h", "5c", "6s", "6h", "6c", "8s", "9h"]).is_invalid)
+    check("飞机(对翼) ⇒ 无效", G(["5s", "5h", "5c", "6s", "6h", "6c", "8s", "8h", "9s", "9h"]).is_invalid)
     ths = G(["3s", "4s", "5s", "6s", "7s"])
     check("同花顺", ths.xing == R.PAI_XING["TONG_HUA_SHUN"] and ths.chang_du == 5 and ths.hua == 0)
-    check("四带二", G(["5s", "5h", "5c", "5d", "3s", "8h"]).xing == R.PAI_XING["SI_DAI_ER"])
+    # ★★ 四带二是**斗地主**牌型 ⇒ 掼蛋里必须判无效 ✗
+    check("四带二 ⇒ 无效", G(["5s", "5h", "5c", "5d", "3s", "8h"]).is_invalid)
+    # 炸弹官方可到 8 张(两副牌) ✓
+    check("炸弹8张", G(["5s", "5h", "5c", "5d", "5s", "5h", "5c", "5d"]).xing == R.PAI_XING["ZHA_DAN"])
     check("无效(2+3)", G(["2s", "3h"]).is_invalid)
+
+    # ---------------- ★★ 官方牌型白名单守卫(2026-09-21 立) ----------------
+    #   用户查证(中国掼蛋竞赛规则 / 东南大学·南信大规则文件 / 维基):
+    #     掼蛋官方**只有这 10 种牌型** —— 飞机/四带二/三连 是**斗地主**的, 掼蛋没有 ✗
+    #   本守卫的目的: 以后谁再往 PAI_XING 里混进斗地主牌型, **这条测试直接红** ✓
+    _OFFICIAL = {
+        "DAN_ZHANG", "DUI_ZI", "SAN_ZHANG", "SAN_DAI_ER", "SHUN_ZI",
+        "LIAN_DUI", "GANG_BAN", "ZHA_DAN", "TONG_HUA_SHUN", "TIAN_WANG_ZHA",
+    }
+    _extra = set(R.PAI_XING) - _OFFICIAL - {"WU_XIAO"}
+    check("官方牌型白名单: 不许混入斗地主牌型(飞机/四带二/三连)", not _extra,
+          f"多出来的: {sorted(_extra)}")
+    check("官方牌型白名单: 十种都要在", not (_OFFICIAL - set(R.PAI_XING)),
+          f"少的: {sorted(_OFFICIAL - set(R.PAI_XING))}")
 
     # ---------------- 主牌(红桃级牌)万能 ----------------
     gw1 = G(["2h", "5s"])
@@ -124,9 +142,12 @@ def run():
           R.can_beat(ths, G(["9s", "9h", "9c", "9d", "9s"])))
     check("6炸压同花顺", R.can_beat(G(["9s", "9h", "9c", "9d", "9s", "9h"]), ths)
           and not R.can_beat(ths, G(["9s", "9h", "9c", "9d", "9s", "9h"])))
-    check("顺子长度不同不可比",
-          not R.can_beat(G(["4s", "5h", "6c", "7d", "8s"]),
-                         G(["3s", "4h", "5c", "6d", "7s", "8h"])))
+    # ★ 官方掼蛋顺子**只能 5 张** ⇒ 6 张那个是无效牌型, 自然压不过 ✓
+    check("6张顺子无效 ⇒ 压不过 5 张顺子",
+          not R.can_beat(G(["4s", "5h", "6c", "7d", "8s", "9h"]),
+                         G(["3s", "4h", "5c", "6d", "7s"])))
+    check("顺子比点数(8>3)", R.can_beat(G(["4s", "5h", "6c", "7d", "8s"]),
+                                        G(["3s", "4h", "5c", "6d", "7s"])))
 
     # ---------------- 出牌校验 yan_zheng_chu_pai ----------------
     shou = C(["3s", "3h", "3c", "3d", "5s"])
@@ -291,9 +312,10 @@ def run():
     check("级牌对照: 888(级牌) 压得过 999 ✓",
           R.can_beat(R.identify([_c(8, 0, 27), _c(8, 1, 28), _c(8, 2, 29),
                                  _c(5, 0, 30), _c(5, 3, 31)], 8), me2))
-    si = R.identify([_c(4, 0, 21), _c(4, 1, 22), _c(4, 2, 23), _c(4, 3, 24),
-                     _c(13, 0, 25), _c(13, 1, 26)], 8)
-    check("四带二主值=四张那组(4444+KK → 4)", si.zhu_zhi == 4, f"实际 {si.zhu_zhi}")
+    # (2026-09-21 删) 四带二主值那条 —— 四带二是斗地主牌型, 掼蛋里已判无效 ✗
+    check("四带二(4444+KK) ⇒ 无效",
+          R.identify([_c(4, 0, 21), _c(4, 1, 22), _c(4, 2, 23), _c(4, 3, 24),
+                      _c(13, 0, 25), _c(13, 1, 26)], 8).is_invalid)
 
     # ★★ 2026-09-21 用户实报: "红桃K8866, 相当于88866, 压不过" ✓
     #   原来被误判成'同花顺' ✗ (同花顺分支漏了"张数=不同点数个数"护栏 ⇒

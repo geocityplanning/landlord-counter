@@ -36,13 +36,11 @@ const AILogic = (function() {
             sanDaiEr: [],
             shunZi: [],
             lianDui: [],
-            sanLian: [],
             gangBan: [],
             zhaDan: [],
             tongHuaShun: [],
-            tianWangZha: [],
-            siDaiEr: [],
-            feiJi: []
+            tianWangZha: []
+            // (2026-09-21 删) sanLian/siDaiEr/feiJi —— 斗地主牌型, 掼蛋没有 ✗
         };
 
         // 单张
@@ -107,15 +105,6 @@ const AILogic = (function() {
             zuHe.tianWangZha.push([...xiaoWang.slice(0, 2), ...daWang.slice(0, 2)]);
         }
 
-        // 四带二
-        for (const siZhi of fz.si) {
-            const si = shouPai.filter(p => p.zhi === siZhi);
-            const others = shouPai.filter(p => p.zhi !== siZhi);
-            if (others.length >= 2) {
-                zuHe.siDaiEr.push([...si, others[0], others[1]]);
-            }
-        }
-
         // 钢板（两个连续三张）
         const sanList = fz.san.filter(z => z <= PAI_ZHI.A && z > PAI_ZHI.ER).sort((a, b) => a - b);
         for (let i = 0; i < sanList.length - 1; i++) {
@@ -160,24 +149,6 @@ const AILogic = (function() {
                 if (lianXu) {
                     const lianDui = subList.flatMap(zhi => shouPai.filter(p => p.zhi === zhi).slice(0, 2));
                     zuHe.lianDui.push(lianDui);
-                }
-            }
-        }
-
-        // 三连（两个或以上连续三张，不带牌）
-        for (let len = 2; len <= sanList.length; len++) {
-            for (let start = 0; start <= sanList.length - len; start++) {
-                const subList = sanList.slice(start, start + len);
-                let lianXu = true;
-                for (let i = 1; i < subList.length; i++) {
-                    if (subList[i] !== subList[i - 1] + 1) {
-                        lianXu = false;
-                        break;
-                    }
-                }
-                if (lianXu) {
-                    const sanLian = subList.flatMap(zhi => shouPai.filter(p => p.zhi === zhi));
-                    zuHe.sanLian.push(sanLian);
                 }
             }
         }
@@ -313,15 +284,6 @@ const AILogic = (function() {
                 }
                 break;
 
-            case PAI_XING.SAN_LIAN:
-                for (const sl of zuHe.sanLian) {
-                    const slPaiXing = jieXiPaiXing(sl);
-                    if (slPaiXing.changDu === changDu && slPaiXing.zhuZhi > zhuZhi) {
-                        keChuPai.push(sl);
-                    }
-                }
-                break;
-
             case PAI_XING.GANG_BAN:
                 for (const gb of zuHe.gangBan) {
                     const gbPaiXing = jieXiPaiXing(gb);
@@ -331,14 +293,6 @@ const AILogic = (function() {
                 }
                 break;
 
-            case PAI_XING.SI_DAI_ER:
-                for (const sd of zuHe.siDaiEr) {
-                    const sdPaiXing = jieXiPaiXing(sd);
-                    if (sdPaiXing.zhuZhi > zhuZhi) {
-                        keChuPai.push(sd);
-                    }
-                }
-                break;
         }
 
         return keChuPai;
@@ -415,9 +369,6 @@ const AILogic = (function() {
         // 出三连/钢板
         if (zuHe.gangBan.length > 0) {
             return { pai: zuHe.gangBan[0], guo: false };
-        }
-        if (zuHe.sanLian.length > 0) {
-            return { pai: zuHe.sanLian[0], guo: false };
         }
 
         // 出三带二

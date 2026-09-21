@@ -66,20 +66,22 @@ PAI_XING = {
     "DUI_ZI": 2,           # 对子
     "SAN_ZHANG": 3,        # 三张
     "SAN_DAI_ER": 4,       # 三带二(三 + 对)
-    "SHUN_ZI": 5,          # 顺子(>=5 张连续单张)
-    "LIAN_DUI": 6,         # 连对(>=3 对连续对子)
-    "SAN_LIAN": 7,         # 三连(>=3 个连续三张)
-    "FEI_JI": 8,           # 飞机(三连 + 翅膀)
-    "GANG_BAN": 9,         # 钢板(两个连续三张)
-    "ZHA_DAN": 10,         # 炸弹(4-6 张同点)
-    "TONG_HUA_SHUN": 11,   # 同花顺(>=5 张同花色顺子)
+    "SHUN_ZI": 5,          # 顺子(**恰好 5 张**连续单张 ✓ 官方规则)
+    "LIAN_DUI": 6,         # 连对(**恰好 3 对** ✓ 官方规则)
+    "GANG_BAN": 9,         # 钢板(两个连续三张 —— 恰好 2 组 ✓)
+    "ZHA_DAN": 10,         # 炸弹(4~8 张同点 ✓ 两副牌同点最多 8 张)
+    "TONG_HUA_SHUN": 11,   # 同花顺(恰好 5 张 ✓)
     "TIAN_WANG_ZHA": 12,   # 天王炸(4 个王)
-    "SI_DAI_ER": 13,       # 四带二
 }
+# ★★ 2026-09-21(用户查证): 掼蛋官方牌型只有 10 种, **没有 飞机/四带二/三连** ✗
+#   那三个是**斗地主**的牌型(来源: 中国掼蛋竞赛规则 / 东南大学·南信大规则文件 / 维基 ✓)
+#   我们这份规则是从一个"掼蛋外壳+斗地主内核"的现成实现移植的 ⇒ 连带混进来了 ✗
+#   ⇒ 已删除(停用=删掉 ✓), 并加了一条"官方牌型白名单"测试守卫(见 test_rules.py) ✓
+#   编号 7/8/13 从此不再使用(保留空洞, 不动其它编号 —— 别处按数字引用 ✓)
 
 PAI_XING_NAME = {
     0: "无效", 1: "单张", 2: "对子", 3: "三张", 4: "三带二", 5: "顺子", 6: "连对",
-    7: "三连", 8: "飞机", 9: "钢板", 10: "炸弹", 11: "同花顺", 12: "天王炸", 13: "四带二",
+    9: "钢板", 10: "炸弹", 11: "同花顺", 12: "天王炸",
 }
 
 # 花色符号 / 令牌映射
@@ -360,20 +362,6 @@ def _lian(zhiz: list) -> bool:
     return all(s[i] == s[i - 1] + 1 for i in range(1, len(s)))
 
 
-def _longest_run_ranks(zhiz: list) -> list:
-    """在已排序去重的牌值里找最长连续段, 返回该段牌值列表。"""
-    best: list = []
-    cur: list = []
-    for z in sorted(set(zhiz)):
-        if cur and z == cur[-1] + 1:
-            cur.append(z)
-        else:
-            cur = [z]
-        if len(cur) > len(best):
-            best = list(cur)
-    return best
-
-
 def _uniform_hua(cards: list):
     """全部牌的花色; 若含 None(万能占位)则忽略之。冲突返回 None。"""
     huas = {c.hua for c in cards if c.hua is not None}
@@ -419,18 +407,18 @@ def _identify_core(cards: list, jipai: int) -> "Group":
     if n == 5 and counts == [3, 2]:
         return Group(PAI_XING["SAN_DAI_ER"],
                      zu_zhi(next(k for k, v in rc.items() if v == 3)), 1, cards)
-    # 炸弹(4-6 张相同)
-    if 4 <= n <= 6 and counts == [n]:
+    # 炸弹(4~8 张相同 ✓ 两副牌同点最多 8 张; 官方还有"逢人配可到 10 张" ✓)
+    if 4 <= n <= 8 and counts == [n]:
         return Group(PAI_XING["ZHA_DAN"], zz(), n, cards)
-    # 四带二(任意 4 张同点 + 2 张)
-    if n == 6 and any(v == 4 for v in rc.values()):
-        return Group(PAI_XING["SI_DAI_ER"],
-                     zu_zhi(next(k for k, v in rc.items() if v == 4)), 1, cards)
+    # (2026-09-21 删) 四带二 —— 斗地主牌型, 掼蛋没有 ✗
     # 钢板(两个连续三张)
     if n == 6 and counts == [3, 3] and _lian(zhiz):
-        return Group(PAI_XING["GANG_BAN"], zz(), 2, cards)
-    # 同花顺
-    if n >= 5 and counts == [1] * n:          # ★★ 必须是"n 张 n 个不同点数" ✗
+        # ★ 2026-09-21 对齐游戏(gameRules.js): 钢板主值取**较大的那组三张** ✓
+        #   原来用 zz()=max(全部牌按级牌加权) ✗ ⇒ 若小的那组是级牌, 会把级牌当主体
+        #   (实测: 级牌=5 时 555+666 我们算 55, 游戏算 6 ⇒ 两边不一致 ✗)
+        return Group(PAI_XING["GANG_BAN"], zu_zhi(max(zhiz)), 2, cards)
+    # 同花顺(★ 官方: **恰好 5 张** ✓ —— 原来写 n>=5 ✗ 是斗地主式放宽)
+    if n == 5 and counts == [1] * n:          # ★★ 必须是"n 张 n 个不同点数" ✗
         # ★★ 2026-09-21 修(用户报的实例: 红桃K + 8866 ⇒ 该是 888+66 ✗):
         #   原来这句**漏了 `counts == [1]*n`** ✗ ⇒ zhiz 是**去重**后的点数,
         #   重复张被掩盖 ⇒ [♠6 ♠6 ♠8 ♠8 + 万能→7] 的 zhiz 只剩 [6,7,8] ⇒ 连续 ⇒
@@ -438,35 +426,27 @@ def _identify_core(cards: list, jipai: int) -> "Group":
         #   游戏版是按花色分组后要求 zhiList.length === n ⇒ 天然挡住重复 ✓ 以它为准 ✓
         h = _uniform_hua(cards)
         if h is not None and _lian(zhiz):
-            return Group(PAI_XING["TONG_HUA_SHUN"], zz(), n, cards, hua=h)
-    # 顺子
-    if n >= 5 and counts == [1] * n and _lian(zhiz):
+            # ★ 2026-09-21 对齐游戏: 同花顺主值 = **最大那张牌**(再按级牌加权) ✓
+            #   游戏是 `huoQuShiJiPaiZhi(Math.max(...zhiList))` ✓
+            #   (顺子/连对在游戏里用的是"按级牌加权后取最大" ⇒ 与 zz() 等价 ✓, 同花顺不同 ✓)
+            return Group(PAI_XING["TONG_HUA_SHUN"], zu_zhi(max(zhiz)), n, cards, hua=h)
+    # 顺子(★ 官方: **恰好 5 张** ✓)
+    if n == 5 and counts == [1] * n and _lian(zhiz):
         return Group(PAI_XING["SHUN_ZI"], zz(), n, cards)
-    # 连对
-    if n >= 6 and n % 2 == 0 and counts == [2] * (n // 2) and _lian(zhiz):
-        return Group(PAI_XING["LIAN_DUI"], zz(), len(zhiz), cards)
-    # 三连(>=3 个连续三张)
-    if n >= 6 and n % 3 == 0 and counts == [3] * (n // 3) and _lian(zhiz):
-        return Group(PAI_XING["SAN_LIAN"], zz(), len(zhiz), cards)
-    # 飞机(三连 + 翅膀; 翅膀张数 = 连数 或 连数×2)
-    if n >= 8:
-        tri = sorted(k for k, v in rc.items() if v >= 3 and _RUN_MIN <= k <= _RUN_MAX)
-        run = _longest_run_ranks(tri)
-        m = len(run)
-        if m >= 2:
-            wings = n - 3 * m
-            if wings == m or wings == 2 * m:
-                return Group(PAI_XING["FEI_JI"],
-                             max(huo_qu_shiji_paizhi(z, jipai) for z in run), m, cards)
+    # 连对(★ 官方: **恰好 3 对** ✓ —— 不可二连对, 也不可四连对以上)
+    if n == 6 and counts == [2, 2, 2] and _lian(zhiz):
+        return Group(PAI_XING["LIAN_DUI"], zz(), 3, cards)
+    # (2026-09-21 删) 三连(>=3 组) 与 飞机 —— 都是斗地主牌型, 掼蛋没有 ✗
+    #   注: "两个连续三张"在掼蛋里叫**钢板**, 上面已处理 ✓ (恰好 2 组 ✓)
     return Group()
 
 
 # 解释优先级(同一次选牌可能多种解释时取"最强"者)
 _TIER = {
     PAI_XING["WU_XIAO"]: 0, PAI_XING["DAN_ZHANG"]: 1, PAI_XING["DUI_ZI"]: 1,
-    PAI_XING["SAN_ZHANG"]: 1, PAI_XING["SAN_DAI_ER"]: 1, PAI_XING["SI_DAI_ER"]: 1,
+    PAI_XING["SAN_ZHANG"]: 1, PAI_XING["SAN_DAI_ER"]: 1,
     PAI_XING["SHUN_ZI"]: 2, PAI_XING["LIAN_DUI"]: 2,
-    PAI_XING["GANG_BAN"]: 3, PAI_XING["SAN_LIAN"]: 3, PAI_XING["FEI_JI"]: 3,
+    PAI_XING["GANG_BAN"]: 3,
     PAI_XING["ZHA_DAN"]: 4, PAI_XING["TONG_HUA_SHUN"]: 5, PAI_XING["TIAN_WANG_ZHA"]: 6,
 }
 
@@ -638,31 +618,14 @@ def _pick(by_zhi: dict, wilds: list, zhi: int, k: int, used: set):
     return None
 
 
-def _pick_any(hand: list, used: set, k: int):
-    out = []
-    for c in hand:
-        if c.id not in used:
-            used.add(c.id)
-            out.append(c)
-            if len(out) == k:
-                return out
-    for c in out:
-        used.discard(c.id)
-    return None
+def _gen_runs(by_zhi: dict, wilds: list, per: int, L: int) -> list:
+    """生成**恰好 L 组**的连续牌型: per=1 顺子(L=5), per=2 连对(L=3 对), per=3 钢板(L=2 组)。
 
-
-def _pick_pair_any(by_zhi: dict, wilds: list, used: set):
-    for z in list(by_zhi):
-        got = _pick(by_zhi, wilds, z, 2, used)
-        if got:
-            return got
-    return None
-
-
-def _gen_runs(by_zhi: dict, wilds: list, per: int, min_len: int) -> list:
-    """生成连续牌型: per=1 顺子, per=2 连对, per=3 三连(含钢板)。"""
+    ★ 2026-09-21: 原来是 range(min_len, 13) ⇒ 会造出 6 张顺子/4 连对/3 组三连 ✗
+      官方掼蛋: 顺子**只能 5 张**、连对**只能 3 对**、钢板**只能 2 组** ✓ ⇒ 改成定长 ✓
+    """
     res = []
-    for L in range(min_len, 13):
+    for L in (L,):                                   # 定长(保留 for 结构好读 ✓)
         for s in range(_RUN_MIN, _RUN_MAX - L + 2):
             used: set = set()
             cards: list = []
@@ -679,10 +642,10 @@ def _gen_runs(by_zhi: dict, wilds: list, per: int, min_len: int) -> list:
 
 
 def _gen_tong_hua_shun(hand: list, wilds: list) -> list:
-    """生成同花顺(同花色连续 >=5 张, 主牌可补)。"""
+    """生成同花顺(同花色**恰好 5 张** ✓ 官方规则; 主牌可补)。"""
     res = []
     for hua in range(4):
-        for L in range(5, 13):
+        for L in (5,):
             for s in range(_RUN_MIN, _RUN_MAX - L + 2):
                 used: set = set()
                 cards: list = []
@@ -706,40 +669,8 @@ def _gen_tong_hua_shun(hand: list, wilds: list) -> list:
     return res
 
 
-def _gen_fei_ji(hand: list, by_zhi: dict, wilds: list) -> list:
-    """生成飞机(>=2 连三张 + 单翼或对翼)。"""
-    res = []
-    for m in range(2, 6):
-        for s in range(_RUN_MIN, _RUN_MAX - m + 2):
-            used: set = set()
-            trips: list = []
-            ok = True
-            for r in range(s, s + m):
-                got = _pick(by_zhi, wilds, r, 3, used)
-                if not got:
-                    ok = False
-                    break
-                trips += got
-            if not ok:
-                continue
-            # 单翼(m 张)
-            one = _pick_any(hand, set(used), m)
-            if one:
-                res.append(trips + one)
-            # 对翼(m 对)
-            u2 = set(used)
-            pairs: list = []
-            ok2 = True
-            for _ in range(m):
-                got = _pick_pair_any(by_zhi, wilds, u2)
-                if not got:
-                    ok2 = False
-                    break
-                pairs += got
-            if ok2:
-                res.append(trips + pairs)
-    return res
-
+# (2026-09-21 删) `_gen_fei_ji`(飞机生成器) + `_pick_pair_any`(只给它配"对翼") ✗
+#   飞机是斗地主牌型, 掼蛋没有 ✓ (见上)
 
 def _gen_all(hand: list, jipai: int) -> list:
     """从手牌生成所有"候选牌组"(未去重, 已是实际 Card 组合)。"""
@@ -771,19 +702,12 @@ def _gen_all(hand: list, jipai: int) -> list:
                 out.append(tri + pr)
 
     # 四带二
-    for t in list(by_zhi):
-        quad = _pick(by_zhi, wilds, t, 4, set())
-        if not quad:
-            continue
-        two = _pick_any(hand, {c.id for c in quad}, 2)
-        if two:
-            out.append(quad + two)
+    # (2026-09-21 删) 四带二生成 —— 斗地主牌型 ✗
 
-    out += _gen_runs(by_zhi, wilds, 1, 5)     # 顺子
-    out += _gen_runs(by_zhi, wilds, 2, 3)     # 连对
-    out += _gen_runs(by_zhi, wilds, 3, 2)     # 三连/钢板
-    out += _gen_tong_hua_shun(hand, wilds)    # 同花顺
-    out += _gen_fei_ji(hand, by_zhi, wilds)   # 飞机
+    out += _gen_runs(by_zhi, wilds, 1, 5)     # 顺子(恰好 5 张 ✓)
+    out += _gen_runs(by_zhi, wilds, 2, 3)     # 连对(恰好 3 对 ✓)
+    out += _gen_runs(by_zhi, wilds, 3, 2)     # 钢板(恰好 2 组 ✓)
+    out += _gen_tong_hua_shun(hand, wilds)    # 同花顺(恰好 5 张 ✓)
 
     # 天王炸
     xw = sum(1 for c in hand if c.zhi == PAI_ZHI["XIAO_WANG"])

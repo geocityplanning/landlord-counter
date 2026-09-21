@@ -33,15 +33,14 @@ const GameRules = (function() {
         DUI_ZI: 2,            // 对子
         SAN_ZHANG: 3,         // 三张
         SAN_DAI_ER: 4,        // 三带二（必须是三+对）
-        SHUN_ZI: 5,           // 顺子（5张或以上）
-        LIAN_DUI: 6,          // 连对（3对或以上）
-        SAN_LIAN: 7,          // 三连（两个或以上连续三张，如333444）
-        FEI_JI: 8,            // 飞机（三连+翅膀）
-        GANG_BAN: 9,          // 钢板（两个三张）
-        ZHA_DAN: 10,          // 炸弹（4-6张相同）
-        TONG_HUA_SHUN: 11,    // 同花顺（5张或以上同花色顺子）
-        TIAN_WANG_ZHA: 12,    // 天王炸（4个王）
-        SI_DAI_ER: 13         // 四带二
+        SHUN_ZI: 5,           // 顺子（**恰好 5 张** ✓ 官方规则）
+                    LIAN_DUI: 6,          // 连对（**恰好 3 对** ✓ 官方规则）
+        GANG_BAN: 9,          // 钢板（两个三张 —— 恰好 2 组 ✓）
+        ZHA_DAN: 10,          // 炸弹（4~8张相同 ✓ 两副牌同点最多 8 张）
+        TONG_HUA_SHUN: 11,    // 同花顺（恰好 5 张 ✓）
+        TIAN_WANG_ZHA: 12     // 天王炸（4个王）
+        // ★★ 2026-09-21(用户查证官方规则): 掼蛋**没有 飞机/四带二/三连** ✗(那是斗地主的)
+        //    7/8/13 三个编号从此不用(保留空洞, 不动其它编号 ✓)
     };
 
     /**
@@ -49,9 +48,9 @@ const GameRules = (function() {
      */
     const PAI_XING_NAME = {
         0: '无效', 1: '单张', 2: '对子', 3: '三张',
-        4: '三带二', 5: '顺子', 6: '连对', 7: '三连',
-        8: '飞机', 9: '钢板', 10: '炸弹', 11: '同花顺',
-        12: '天王炸', 13: '四带二'
+        4: '三带二', 5: '顺子', 6: '连对',
+        9: '钢板', 10: '炸弹', 11: '同花顺',
+        12: '天王炸'
     };
 
     /**
@@ -276,23 +275,19 @@ const GameRules = (function() {
             return { xing: PAI_XING.SAN_DAI_ER, zhuZhi: huoQuShiJiPaiZhi(fz.san[0]), changDu: 1 };
         }
 
-        // 炸弹（4-6张相同）
-        if (n >= 4 && n <= 6) {
+        // 炸弹（4~8张相同 ✓ 官方: 四张及以上; 两副牌同点最多 8 张）
+        if (n >= 4 && n <= 8) {
             if (fz.si.length === 1 && n === 4) {
                 return { xing: PAI_XING.ZHA_DAN, zhuZhi: huoQuShiJiPaiZhi(fz.si[0]), changDu: 4 };
             }
             if (fz.wu.length === 1 && n === 5) {
                 return { xing: PAI_XING.ZHA_DAN, zhuZhi: huoQuShiJiPaiZhi(fz.wu[0]), changDu: 5 };
             }
-            if (fz.liu.length === 1 && n === 6) {
-                return { xing: PAI_XING.ZHA_DAN, zhuZhi: huoQuShiJiPaiZhi(fz.liu[0]), changDu: 6 };
+            if (fz.liu.length === 1 && n >= 6) {     // 6/7/8 张都落在 liu 桶(≥6) ✓
+                return { xing: PAI_XING.ZHA_DAN, zhuZhi: huoQuShiJiPaiZhi(fz.liu[0]), changDu: n };
             }
         }
-
-        // 四带二
-        if (n === 6 && fz.si.length === 1) {
-            return { xing: PAI_XING.SI_DAI_ER, zhuZhi: huoQuShiJiPaiZhi(fz.si[0]), changDu: 1 };
-        }
+        // (2026-09-21 删) 四带二 —— 斗地主牌型, 掼蛋没有 ✗
 
         // 钢板（两个三张）
         if (n === 6 && fz.san.length === 2) {
@@ -302,8 +297,8 @@ const GameRules = (function() {
             }
         }
 
-        // 同花顺（5张或以上同花色顺子）
-        if (n >= 5) {
+        // 同花顺（★ 官方: **恰好 5 张** ✓ —— 原来 n>=5 ✗ 是斗地主式放宽）
+        if (n === 5) {
             const huaSeMap = new Map();
             for (const pai of paiList) {
                 if (!huaSeMap.has(pai.hua)) huaSeMap.set(pai.hua, []);
@@ -318,52 +313,22 @@ const GameRules = (function() {
             }
         }
 
-        // 顺子（5张或以上连续单张）
-        if (n >= 5 && fz.dan.length === n) {
+        // 顺子（★ 官方: **恰好 5 张** ✓）
+        if (n === 5 && fz.dan.length === 5) {
             if (shiFouLianXu(fz.dan)) {
                 return { xing: PAI_XING.SHUN_ZI, zhuZhi: huoQuShiJiPaiZhi(fz.dan[0]), changDu: n };
             }
         }
 
-        // 连对（3对或以上连续对子）
-        if (n >= 6 && n % 2 === 0 && fz.dui.length === n / 2) {
+        // 连对（★ 官方: **恰好 3 对** ✓ —— 不可二连对, 也不可四连对以上）
+        if (n === 6 && fz.dui.length === 3) {
             if (shiFouLianXu(fz.dui)) {
-                return { xing: PAI_XING.LIAN_DUI, zhuZhi: huoQuShiJiPaiZhi(fz.dui[0]), changDu: fz.dui.length };
+                return { xing: PAI_XING.LIAN_DUI, zhuZhi: huoQuShiJiPaiZhi(fz.dui[0]), changDu: 3 };
             }
         }
 
-        // 三连（两个或以上连续三张，不带牌）
-        if (n >= 6 && n % 3 === 0 && fz.san.length === n / 3) {
-            if (shiFouLianXu(fz.san)) {
-                return { xing: PAI_XING.SAN_LIAN, zhuZhi: huoQuShiJiPaiZhi(fz.san[0]), changDu: fz.san.length };
-            }
-        }
-
-        // 飞机（三连+翅膀）
-        // 这里简化处理，实际掼蛋规则更复杂
-        if (n >= 8) {
-            const sanCount = fz.san.length;
-            if (sanCount >= 2) {
-                const sanList = fz.san.sort((a, b) => a - b);
-                // 检查是否有连续的三张
-                let lianXuCount = 1;
-                for (let i = 1; i < sanList.length; i++) {
-                    if (sanList[i] === sanList[i - 1] + 1 && sanList[i] < PAI_ZHI.A && sanList[i] > PAI_ZHI.ER) {
-                        lianXuCount++;
-                    } else {
-                        break;
-                    }
-                }
-                
-                if (lianXuCount >= 2) {
-                    const expectedWings = n - lianXuCount * 3;
-                    // 翅膀可以是单张或对子
-                    if (expectedWings === lianXuCount || expectedWings === lianXuCount * 2) {
-                        return { xing: PAI_XING.FEI_JI, zhuZhi: huoQuShiJiPaiZhi(sanList[lianXuCount - 1]), changDu: lianXuCount };
-                    }
-                }
-            }
-        }
+        // (2026-09-21 删) 三连(>=3组) 与 飞机 —— 都是斗地主牌型, 掼蛋没有 ✗
+        //   注: "两个连续三张"在掼蛋里叫**钢板**, 上面已处理 ✓
 
         return { xing: PAI_XING.WU_XIAO, zhuZhi: 0, changDu: 0 };
     }

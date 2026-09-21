@@ -84,17 +84,15 @@ const AILogic = (function() {
             }
         }
 
-        // 炸弹（4-6张）
-        for (const zhi of fz.si) {
-            const zha = shouPai.filter(p => p.zhi === zhi);
-            zuHe.zhaDan.push(zha);
-        }
-        for (const zhi of fz.wu) {
-            const zha = shouPai.filter(p => p.zhi === zhi);
-            zuHe.zhaDan.push(zha);
-        }
-        for (const zhi of fz.liu) {
-            const zha = shouPai.filter(p => p.zhi === zhi);
+        // 炸弹（★ 2026-09-21 用户定: **三家 AI 也封顶 6 张** ✓ 与托管侧对称）
+        //   背景: 托管侧用的是**训练好的 RL 模型**, 它的动作空间里炸弹只有 4/5/6 张 ✗
+        //        ⇒ 我们出不了 7/8 张; 而这边原来取"该点数**全部**牌" ✗ ⇒ 手里有 7/8 张同点
+        //          就会打 7/8 张炸弹 ⇒ **对手能炸我们、我们炸不了他们** ✗(用户: 相当于我们被压)
+        //   ⇒ 两边都封顶 6 张 ✓ (规则层仍认 7/8 —— 官方如此, 只是这台机器上没人出 ✓)
+        //   注: 多出来的那一两张仍留在手里, 可以当单张打 ✓ (和托管侧行为一致 ✓)
+        const _zhaZhis = [...fz.si, ...fz.wu, ...fz.liu];
+        for (const zhi of _zhaZhis) {
+            const zha = shouPai.filter(p => p.zhi === zhi).slice(0, 6);
             zuHe.zhaDan.push(zha);
         }
 

@@ -21,9 +21,6 @@ from ...guandan import rules as R
 from ...guandan.agent import BTN_HINT, BTN_PASS, BTN_PLAY, JIPAI, gold_button
 
 # 读牌帧留证目录(读牌与"块宽真值"分歧时存帧, 供离线判定谁对)
-READ_DUMP_DIR = os.getenv("GUANDAN_READ_DUMP_DIR", "/tmp/guandan_read_dumps")
-DUMP_MAX = int(os.getenv("GUANDAN_READ_DUMP_MAX", "20"))     # 单次运行最多存几帧
-DUMP_GAP = float(os.getenv("GUANDAN_READ_DUMP_GAP", "15"))   # 两帧最小间隔(秒)
 
 
 class GuandanAdapter(GameAdapter):
@@ -72,8 +69,6 @@ class GuandanAdapter(GameAdapter):
         self._read_fail_n = 0        # 连续读牌失败次数(空读治理: 不空转)
         self._turn_checked_at = 0.0  # 上次"游戏真值"复核时刻(CDP 用)
         self._n_truth = 0            # 实测(反推)到的确切张数
-        self._dump_n = 0             # 帧留证计数
-        self._dump_t = 0.0
 
     def attach(self, device, vision=None) -> None:
         super().attach(device, vision)
@@ -195,30 +190,6 @@ class GuandanAdapter(GameAdapter):
         if pe:
             return pe
         return P.card_positions(frame, n)
-
-    def _dump_read_evidence(self, frame, tag: str, info: dict) -> None:
-        """帧留证: 读牌与块宽真值分歧时, 存一帧 PNG + 两种读数 JSON。
-
-        目的: 现场只看到"读 6 张 vs 块宽推 13 张"这类分歧, 无法判定谁对;
-        存下帧后可用 tools/analyze_read_dumps.py 离线复读(同一帧跑多种读法), 一次定案。
-        """
-        now = time.time()
-        if frame is None or self._dump_n >= DUMP_MAX or now - self._dump_t < DUMP_GAP:
-            return
-        self._dump_n += 1
-        self._dump_t = now
-        try:
-            import cv2
-
-            os.makedirs(READ_DUMP_DIR, exist_ok=True)
-            ts = time.strftime("%Y%m%d_%H%M%S")
-            base = os.path.join(READ_DUMP_DIR, f"{ts}_{tag}")
-            cv2.imwrite(base + ".png", frame)
-            with open(base + ".json", "w", encoding="utf-8") as f:
-                json.dump({"tag": tag, "ts": ts, **info}, f, ensure_ascii=False, indent=1)
-            print(f"  [留证] {base}.png | {info}", flush=True)
-        except Exception as e:  # noqa: BLE001
-            print(f"  [留证] 失败: {e}", flush=True)
 
     def _band_looks_like_hand(self, frame) -> bool:
         """手牌带是否**真的**是手牌: 有足够宽的块且块内白密度够高。
@@ -535,9 +506,6 @@ class GuandanAdapter(GameAdapter):
                 hand = P.read_hand_ordered(self.vision, frame, expected=n_vis)
             self._meter_vlm("hand", ok=bool(hand), n_est=n_vis)
         if not hand:
-            self._read_fail_evidence = {"n_est": n_vis, "n_read": None,
-                                        "block": list(P.hand_block(frame) or (None, None))}
-            self._dump_read_evidence(frame, "read_empty", self._read_fail_evidence)
             self._read_fail_n += 1
             if self._read_fail_n == 3:      # 连续读不到 → 打印一次, 但**不放弃**(保流程优先)
                 print("  [读牌] 连续 3 次读不到手牌 → 退回提示驱动(牌局继续推进, 记牌器继续观测)",
@@ -562,10 +530,6 @@ class GuandanAdapter(GameAdapter):
             if hand2:
                 hand = hand2
             if abs(n_vis - len(hand)) > 2:      # 重读后仍离谱 → 不敢用, 走提示驱动
-                self._dump_read_evidence(frame, "mismatch", {
-                    "n_est": n_vis, "n_read": len(hand),
-                    "block": list(P.hand_block(frame) or (None, None)),
-                    "cards": [str(c) for c in hand]})
                 return Observation(frame=frame, my_turn=True, hand=None, extra={"read_fail": True})
         return Observation(frame=frame, my_turn=True, hand=hand, table=cards,
                            extra={"n_vis": n_vis})
@@ -948,7 +912,7 @@ class GuandanAdapter(GameAdapter):
                                         hand_left=max(0, len(obs.hand) - len(action.combo.cards)),
                                         src="own")
                     # 出牌**成功后**才设期望(按我们意图的张数) → 下次读手牌做校验
-                    return ExecResult(True, 0, "直选出牌(RL)")
+                    return ExecResult(True, 0, f"直选出牌({self.arm})")
                 why = ""
                 if getattr(ex, "cdp", None) is not None:
                     try:

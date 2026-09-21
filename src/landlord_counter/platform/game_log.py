@@ -5,12 +5,10 @@
   2. 后台**能调出数据** —— 至少能追溯出牌历史(谁打了什么牌)、池子里还有哪些牌;
   3. 数据要能长期保留、可回放、可导出(为后面的伴随应用/后台看板打底)。
 
-落盘格式(追加式, 一行一事件, 重启可恢复):
-  data/games/<game_id>.jsonl
-    {"t": 1789..., "seq": 1, "type": "deal_start", "seats": [...], "jipai": 2}
-    {"t": ..., "seq": 2, "type": "play", "seat": "南", "cards": ["♠5","♥5"], "action": "play", "hand_left": 25}
-    {"t": ..., "seq": 3, "type": "pass", "seat": "西"}
-    {"t": ..., "seq": 4, "type": "deal_end", "result": {...}, "raw": "头游=北"}
+落盘(2026-09-21 用户定): **不落盘** ✗
+  本对象只在内存里攒事件, 通过 sink 直接进 sqlite(companion.db) ✓
+  要导出 CSV 跑 tools/export_csv.py ✓ (按需生成, 平时不留文件 ✓)
+  以前那套 data/games/<局号>.jsonl 已废(和库重复 ✗)
 
 查询(内存态由事件重放得到, 重启后 load() 即可恢复):
   .history(seat=None)   → 逐手(谁打了什么)

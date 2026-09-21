@@ -170,9 +170,19 @@ class CompanionStore:
         self.db.commit()
 
     def end_deal(self, gid: str, result: dict | None = None) -> None:
-        """结算回填: **结束日期时间** + 结果(名次/升级/队友名次 …) ✓"""
+        """结算回填: **结束日期时间** + 结果(名次/升级/队友名次 …) ✓
+
+        ⚠ 必须能**自己建行**(2026-09-21 实测): A组打了 5 局, 库里只落了 2 局 ✗
+          根因: deal_start 事件偶尔漏(手牌读数错过"27 张"那一刻) ⇒ 行没建 ⇒
+          原来的纯 UPDATE **影响 0 行** ⇒ 结算被**静默丢掉** ✗ (最难受的错:
+          不报错、看着像没这局)。改成 upsert: 行不在就补一行 ✓
+        """
+        now = time.time()
+        self.db.execute(
+            "INSERT OR IGNORE INTO deal(gid, ts, started_at, game_type) VALUES(?,?,?,?)",
+            (gid, now, now, "guandan"))
         self.db.execute("UPDATE deal SET ended_at=?, result_json=? WHERE gid=?",
-                        (time.time(), json.dumps(result or {}, ensure_ascii=False), gid))
+                        (now, json.dumps(result or {}, ensure_ascii=False), gid))
         self.db.commit()
 
     def mark_match_over(self, gid: str, data: dict, extra: dict | None = None) -> None:

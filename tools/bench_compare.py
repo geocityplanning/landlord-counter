@@ -4,7 +4,7 @@
 用户(2026-09-21): "一个全游戏(游戏自己跟自己打), 再换 RL(RL 和游戏打)"
 
 组别靠 gid 前缀区分(库里同表, 都是走同一套托管链 ✓):
-  A 组 = gai-…   (南=**游戏本体 AI**, 其它三家=游戏 AI)  GUANDAN_ARM=gameai
+  A 组 = gameai-…   (南=**游戏本体 AI**, 其它三家=游戏 AI)  GUANDAN_ARM=gameai
   B 组 = gd-…    (南=**RL**, 其它三家=游戏 AI)           GUANDAN_ARM=rl
 
   两点说明:
@@ -27,11 +27,14 @@ sys.path.insert(0, os.path.join(ROOT, "src"))
 from landlord_counter.companion.store import CompanionStore   # noqa: E402
 
 
-def load(store: CompanionStore, prefix: str) -> list[dict]:
+def load(store: CompanionStore, prefix: str, since: float = 0.0) -> list[dict]:
+    """since: 只统计这个时刻之后开始的局(排除改代码之前跑的旧数据 ✗)"""
     out = []
     for r in store.list_games(limit=100000):
         gid = str(r.get("gid", ""))
         if not gid.startswith(prefix):
+            continue
+        if since and float(r.get("started_at") or 0) < since:
             continue
         try:
             d = json.loads(r.get("result_json") or "{}")
@@ -72,11 +75,16 @@ def line(name: str, s: dict) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--min-deals", type=int, default=0, help="少于这么多局就提示样本不足")
+    ap.add_argument("--since-min", type=float, default=0, help="只看最近 N 分钟内开始的局")
     a = ap.parse_args()
+    import time as _t
+    since = (_t.time() - a.since_min * 60) if a.since_min else 0.0
     st = CompanionStore()
-    A = stats(load(st, "gai-"))
-    B = stats(load(st, "gd-"))
+    A = stats(load(st, "gameai-", since))
+    B = stats(load(st, "gd-", since))
     OLD = stats(load(st, "allai-"))          # 早期用"改游戏"采的那批(已废弃 ✗)
+    if since:
+        print(f"\n  (只统计最近 {a.since_min:g} 分钟内开始的局 ✓)")
 
     print("\n══════ A/B 对照: 南那席 谁来打(其它三家都是游戏 AI) ══════")
     print(line("A 游戏AI打南(=自己打自己)", A))

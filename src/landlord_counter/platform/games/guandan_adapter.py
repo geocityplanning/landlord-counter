@@ -37,14 +37,19 @@ class GuandanAdapter(GameAdapter):
         self.ours = (os.getenv("GUANDAN_OURS", "0") == "1") if ours is None else ours
         self._last_seat = {"who": None, "blocks": {}}
         self._ex = None
-        # RL 决策臂(2026-09-15): 开源预训练权重在我方合法候选里选牌 → 必须走点选直出
-        # ★ 2026-09-21(用户): "既然规则这个不行, 直接不修了, 删了吧, 直接用RL"
-        #   ⇒ 规则决策臂已删(原 ai.choose_play) ⇒ 决策**恒为 RL**, 不再看环境变量 ✓
-        self.rl = True
+        # ★★ 2026-09-21(用户): 两个**平级**的决策臂(都是"脑子", 都走同一条执行+护栏链 ✓)
+        #   rl     = 开源预训练 RL 权重(默认 ✓)
+        #   gameai = **游戏本体那份 AI 原样搬过来**(game_ai/ ✓) —— 做 A/B 对照用 ✓
+        #     "如果自己跟自己打胜率远低于50%，那就是我们的代码里面有拖后腿的代码" ✓
+        #   切换: GUANDAN_ARM=rl|gameai ✓ (记账前缀也分开: gd- / gai- ⇒ 好分组统计 ✓)
+        self.arm = (os.getenv("GUANDAN_ARM", "rl").strip().lower() or "rl")
+        self.rl = (self.arm == "rl")
         self._rl = None
+        self._gai = None
         self._rl_hist: list = []
+        _gid_pre = "gd-" if self.rl else f"{self.arm}-"
         # 记牌器 + 牌局事件日志(追溯"谁打了什么牌"/"池子里还剩什么"; 见 docs/记牌器_调研.md)
-        self.log = GameLog(game_id=f"gd-{time.strftime('%Y%m%d-%H%M')}", game_type="guandan")
+        self.log = GameLog(game_id=f"{_gid_pre}{time.strftime('%Y%m%d-%H%M')}", game_type="guandan")
         # ★ 伴随应用 M1 (2026-09-19): 给事件流挂上"旁观者" —— 牌局事件自动进本地库 ✓
         #   · 只收不发(bridge 只搬字段 ✗ 不算牌); 出事绝不影响牌局(GameLog.append 里兜住 ✓)
         #   · 任何环节出问题都只是"不记录", 打牌照常 ✓
@@ -751,12 +756,12 @@ class GuandanAdapter(GameAdapter):
         if not self.ours:
             # ours 未开 = 没启用我们自己的决策 → 不动作(提示臂已禁用, 不许偷偷退回 ✗)
             return Action("none", meta={"why": "ours 未开(提示臂已禁用)"})
-        self.usage.decide(arm="rl", hand=len(obs.hand))
+        self.usage.decide(arm=self.arm, hand=len(obs.hand))
         last = R.identify(cards, self._jp()) if cards else None
-        # ★★ 2026-09-21(用户): "既然规则这个不行, 直接不修了, 删了吧, 直接用RL"
-        #   A/B 实测(同机同局): 规则脚本 被拒 11.8% / 没生效 23.5%; RL 两项全 0 ✓✓
-        #   ⇒ 规则决策臂(ai.choose_play + 它的领出兜底)**整段删除** ✗, 决策只有 RL 一条路 ✓
-        #   注: "领出不能不出"的硬约束在 RL 臂里仍然生效(见 _decide_rl 的候选兜底)✓
+        # ★★ 2026-09-21(用户): 两个臂**平级**, 走同一条执行+护栏链 ✓ (差异只在"谁来选牌" ✓)
+        #   rl     = RL 权重(默认)  |  gameai = 游戏本体 AI(原样搬运, A/B 对照)
+        if self.arm == "gameai":
+            return self._decide_gameai(obs, last, cards)
         return self._decide_rl(obs, last, cards)
 
     def _jp(self) -> int:
@@ -766,6 +771,84 @@ class GuandanAdapter(GameAdapter):
         真值每局都给 jiPai; 拿不到(视觉模式)才退回环境变量 GUANDAN_JIPAI(默认 2) ✓
         """
         return int(getattr(self, "_jipai_now", None) or JIPAI)
+
+    def _apply_guards(self, choice, cands: list, need_beat: bool, arm: str):
+        """★★ 两个决策臂(RL / 游戏AI)**共用**的护栏 —— 保证 A/B 只差"策略", 不差"执行" ✓
+
+        ① 该压时: 若"**不用炸弹、不用万能**"也能压过 ⇒ 不许动它们 ✗
+           实测证据(用户): "为压一对K, 炸掉5张(含万能)" —— RL 的 value 分不出这种代价 ✓
+        ② 领出时: 若这手**用了万能** ⇒ 换"同牌型、不用万能"的最省那手 ✓
+           (万能牌是宝贝, 领出去凑"对子5"太浪费 ✓; 只换同牌型, 不擅自改策略 ✓)
+        """
+        if choice is None or not cands:
+            return choice
+        _BOMB = (R.PAI_XING["ZHA_DAN"], R.PAI_XING["TONG_HUA_SHUN"], R.PAI_XING["TIAN_WANG_ZHA"])
+        if need_beat:                                   # ① 该压
+            _expensive = choice.xing in _BOMB or getattr(choice, "wild_used", 0) > 0
+            _cheap = [g for g in cands if g.xing not in _BOMB and not getattr(g, "wild_used", 0)]
+            if _expensive and _cheap:
+                _alt = min(_cheap, key=lambda g: (g.chang_du, g.zhu_zhi))
+                print(f"  [代价] {arm} 想 {R.group_to_str(choice)}(炸弹/用万能 ✗)"
+                      f" → 改用 {R.group_to_str(_alt)}(不用炸弹/万能也能压 ✓)", flush=True)
+                choice = _alt
+        elif getattr(choice, "wild_used", 0) > 0:       # ② 领出
+            _same = [g for g in cands
+                     if g.xing == choice.xing and getattr(g, "wild_used", 0) == 0]
+            if _same:
+                _alt = min(_same, key=lambda g: (g.chang_du, g.zhu_zhi))
+                print(f"  [代价·领出] {arm} 想 {R.group_to_str(choice)}(用了万能 ✗)"
+                      f" → 改用 {R.group_to_str(_alt)}(同牌型、不用万能 ✓)", flush=True)
+                choice = _alt
+        return choice
+
+    def _decide_gameai(self, obs: Observation, last, cards: list) -> Action:
+        """**游戏AI臂**(第二个"脑子"): 问游戏本体那份 AI 出哪几张 ⇒ 走同一条执行+护栏链 ✓
+
+        用户(2026-09-21): "将游戏的AI复制出来处理一下，放在和RL同样的地位，加同样的护栏那一套东西"
+        用途: A/B 对照 —— ①四家都用游戏AI(自己跟自己打) ②南=RL, 其它三家=游戏AI ✓
+        """
+        if self._gai is None:
+            from ...guandan.game_ai import GameAIPolicy
+
+            if not GameAIPolicy.available():
+                raise RuntimeError("选了 gameai 臂但没有 node ⇒ 装 node 或用 GUANDAN_ARM=rl ✓")
+            self._gai = GameAIPolicy()
+            print(f"▶ 游戏AI 决策器已加载(原样搬运, nanDu={self._gai.nan_du})", flush=True)
+        _n_now = len(obs.hand)
+        _prev_n = getattr(self, "_last_hand_n", None)
+        if _prev_n is not None and _prev_n < 25 and _n_now >= 25:
+            self._new_deal()
+        self._last_hand_n = _n_now
+        if last is not None and (not self._rl_hist or self._rl_hist[-1][1] is not last):
+            self._rl_hist.append(({"right": 1, "top": 2, "left": 3}.get(self._last_seat.get("who") or "", 1), last))
+        self._set_my_hand(obs.hand)
+        # 问游戏 AI(它自带"队友让牌"策略 ⇒ 需要告诉它上家是不是队友 ✓)
+        shi_dui_you = self._last_seat.get("who") == "top"
+        picked, info = self._gai.choose(obs.hand, last, shi_dui_you, self._jp())
+        choice = None
+        if picked:
+            g = R.identify(list(picked), self._jp())
+            if getattr(g, "is_invalid", False):
+                print(f"  [gameai] ⚠ 它出的牌我们判无效 ⇒ 按不出处理: {R.cards_to_str(picked)}", flush=True)
+            else:
+                choice = g
+        need_beat = bool((obs.extra or {}).get("need_beat"))
+        cands = R.find_all_plays(obs.hand, last, self._jp())
+        choice = self._apply_guards(choice, cands, need_beat, "游戏AI")
+        _md = "压" if need_beat else "领出"
+        _tbl = (f"{R.group_to_str(last)}(zhi={last.zhu_zhi})" if last is not None else "无(我领出)")
+        _me = (f"{R.group_to_str(choice)}(zhi={[c.zhi for c in choice.cards]})"
+               if choice is not None else "不出")
+        print(f"  [gameai] 手牌{len(obs.hand)} [{_md}] 候选{len(cands)} → {_me}"
+              f" | 桌上={_tbl} 级牌={self._jp()} 队友上家={shi_dui_you}", flush=True)
+        if choice is None:
+            if not need_beat and cands:                 # 领出不能不出 ✓
+                choice = min(cands, key=lambda g: (g.xing, g.chang_du, g.zhu_zhi))
+                print(f"  [gameai] ⚠ 领出兜底(原判不出) → {R.group_to_str(choice)}", flush=True)
+            else:
+                return Action("pass", meta={"why": "游戏AI:不出"})
+        self._rl_hist.append((0, choice))
+        return Action("play", combo=choice, meta={"why": "游戏AI决策", "direct": True, "planned": True})
 
     def _decide_rl(self, obs: Observation, last, cards: list) -> Action:
         """RL 臂: 预训练权重在"我方全部合法出牌"里选 → 标记 direct(执行层点选直出)。"""
@@ -819,37 +902,7 @@ class GuandanAdapter(GameAdapter):
                 print(f"  [注意] RL 选的 {R.group_to_str(choice)} 不在候选表里 ⇒ 按不出处理",
                       flush=True)
                 choice = None
-        # ★★ 2026-09-21 用户指出"为压一对K, 炸掉5张(含万能)": RL 会瞎炸 ✗
-        #   掼蛋常识: 该压时若"**不用炸弹、不用万能**"就能压过 ⇒ 不许动它们 ✓
-        #   (RL 的 value 分不出这种代价 —— 记忆里的"96% 挤在 ±0.05" ✗ —— 只能靠规则拦 ✓)
-        if (choice is not None and cands
-                and bool((obs.extra or {}).get("need_beat"))):
-            _BOMB = (R.PAI_XING["ZHA_DAN"], R.PAI_XING["TONG_HUA_SHUN"],
-                     R.PAI_XING["TIAN_WANG_ZHA"])
-            _expensive = choice.xing in _BOMB or getattr(choice, "wild_used", 0) > 0
-            _cheap = [g for g in cands
-                      if g.xing not in _BOMB and not getattr(g, "wild_used", 0)]
-            if _expensive and _cheap:
-                _alt = min(_cheap, key=lambda g: (g.chang_du, g.zhu_zhi))
-                print(f"  [代价] RL 想 {R.group_to_str(choice)}(炸弹/用万能 ✗)"
-                      f" → 改用 {R.group_to_str(_alt)}(不用炸弹/万能也能压 ✓)", flush=True)
-                choice = _alt
-        # ★★ 2026-09-21 用户开工②: 代价过滤**扩展到领出** ✓
-        #   实测: 领出时它拿**万能牌**去凑"对子5"这种小牌 ✗ (太浪费 —— 万能牌是宝贝 ✓)
-        #   规则: 领出且这手用了万能 ⇒ 候选里若有"**同牌型、不用万能**"的, 换最省的那手 ✓
-        #   边界(保守 ✓):
-        #     · 只换"同牌型" —— 领出随便出什么, 换牌型等于改策略 ✗ (不动 ✓)
-        #     · 只管"用万能" —— 领出打炸弹有时是战术(抢主动权), 不拦 ✓
-        if (choice is not None and cands
-                and not bool((obs.extra or {}).get("need_beat"))
-                and getattr(choice, "wild_used", 0) > 0):
-            _same = [g for g in cands
-                     if g.xing == choice.xing and getattr(g, "wild_used", 0) == 0]
-            if _same:
-                _alt = min(_same, key=lambda g: (g.chang_du, g.zhu_zhi))
-                print(f"  [代价·领出] RL 想 {R.group_to_str(choice)}(用了万能 ✗)"
-                      f" → 改用 {R.group_to_str(_alt)}(同牌型、不用万能 ✓)", flush=True)
-                choice = _alt
+        choice = self._apply_guards(choice, cands, bool((obs.extra or {}).get("need_beat")), "RL")
         _md = "压" if (obs.extra or {}).get("need_beat") else "领出"
         # ★ 2026-09-21 诊断: 打出"桌上那手 + 用的级牌 + 我们选的点数"
         #   目的: 出现"牌太小，压不过"时, 一眼看出是"读错桌上牌"还是"算错大小" ✓

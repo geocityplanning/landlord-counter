@@ -74,19 +74,54 @@ def _truth_cached() -> dict:
             return {"err": type(e).__name__}
 
 
-def _tap_device(x: int, y: int) -> str:
-    """点一下设备 —— **走 MaaTouch 拟人化**(压力/微移/随机时长 ✓), 不走 adb input ✗"""
-    from landlord_counter.platform.maatouch import MaaTouch
+def _screen_to_css(x: int, y: int):
+    """设备坐标 -> 页面 CSS 坐标(工具栏高度按当前页面实测, 不写死 ✗ 换屏也不怕 ✓)"""
+    from landlord_counter.platform.cdp import CDP
 
-    with _TAP["lock"]:
-        mt = _TAP["mt"]
-        if mt is None or not mt.alive():
-            mt = _TAP["mt"] = MaaTouch(SERIAL)
-            if not mt.ensure():
-                _TAP["mt"] = None
-                return "MaaTouch 起不来(点不了 ✗)"
-        mt.tap(int(x), int(y))
-    return f"已点 ({int(x)},{int(y)}) · 拟人化 ✓"
+    c = CDP(port=9222, url_filter="8123")
+    d = float(c.eval_js("window.devicePixelRatio") or 2)
+    off = float(os.getenv("GUANDAN_CDP_OFFSET", "155"))   # 浏览器工具栏高度(实测 ✓ 和 cdp.py 同一套)
+    # ⚠️ 别用页面里的 screen.height 换算 ✗ —— 浏览器按 CSS 尺寸报, 算出来是错的
+    return c, (x / d, (y - off) / d)
+
+
+def _tap_device(x: int, y: int) -> str:
+    """点一下设备 —— 走 **CDP 合成鼠标事件**。
+
+    ⚠️ 2026-09-22 实测: 容器里**只有 CDP 合成的输入能到页面** ✓
+    真触摸注入(adb input / MaaTouch)到不了浏览器页面 ✗(和"adb 点不动出牌"是同一个老毛病)
+    ⇒ 手动操作台改走 CDP(等价于用户直接点页面 ✓); MaaTouch 留给**真机/闭源游戏**那条产品路 ✓
+    """
+    try:
+        c, (cx, cy) = _screen_to_css(x, y)
+        for t in ("mousePressed", "mouseReleased"):
+            c._call("Input.dispatchMouseEvent",
+                    {"type": t, "x": cx, "y": cy, "button": "left", "clickCount": 1,
+                     "buttons": 1 if t == "mousePressed" else 0})
+        return f"已点 ({int(x)},{int(y)}) · CDP ✓"
+    except Exception as e:  # noqa: BLE001
+        return f"点失败: {type(e).__name__} {str(e)[:70]}"
+
+
+def _drag_device(x0: int, y0: int, x1: int, y1: int, ms: int = 400) -> str:
+    """拖动(按住 -> 分步移动 -> 松手) —— 用来拖悬浮球 ✓"""
+    try:
+        c, (cx0, cy0) = _screen_to_css(x0, y0)
+        _, (cx1, cy1) = _screen_to_css(x1, y1)
+        c._call("Input.dispatchMouseEvent",
+                {"type": "mousePressed", "x": cx0, "y": cy0, "button": "left", "clickCount": 1, "buttons": 1})
+        steps = 8
+        for i in range(1, steps + 1):
+            t = i / steps
+            c._call("Input.dispatchMouseEvent",
+                    {"type": "mouseMoved", "x": cx0 + (cx1 - cx0) * t, "y": cy0 + (cy1 - cy0) * t,
+                     "button": "left", "buttons": 1})
+            time.sleep(ms / 1000.0 / steps)
+        c._call("Input.dispatchMouseEvent",
+                {"type": "mouseReleased", "x": cx1, "y": cy1, "button": "left", "clickCount": 1, "buttons": 0})
+        return f"已拖 ({x0},{y0})->({x1},{y1}) · CDP ✓"
+    except Exception as e:  # noqa: BLE001
+        return f"拖动失败: {type(e).__name__} {str(e)[:70]}"
 REC = {"on": False, "dir": "", "n": 0, "started": 0.0}
 
 
@@ -189,6 +224,8 @@ button:hover{background:#2c2c2c}
       <label style="color:#ffb"><input type="checkbox" id="allow"> 允许点击(必须先勾上 ✓)</label>
       <div style="margin-top:4px">
         <button onclick="snap()">📸 截图并保存</button>
+        <button onclick="rec('start')" style="background:#3a2020;border-color:#633">● 开始录屏</button>
+        <button onclick="rec('stop')" style="background:#203a24;border-color:#363">■ 停止并出片</button>
         <button onclick="qt(360,1113)">出牌键</button>
         <button onclick="qt(359,939)">大金钮</button>
         <button onclick="qt(360,875)">中区</button>
@@ -211,6 +248,12 @@ function snap(){                                   // ★ 截图: 把当前帧�
   a.download = 'yunji_' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.png';
   a.href = c.toDataURL('image/png');
   document.body.appendChild(a); a.click(); a.remove();
+}
+async function rec(a){                              // ★ 录屏开关(用户在页面上自己控制 ✓)
+  try{
+    const t = await (await fetch('/rec/' + a + (KW ? ('?k=' + KW) : ''))).text();
+    if (a === 'stop') { alert(t); } else { document.getElementById('tapinfo').textContent = t; }
+  }catch(e){ alert('录屏请求失败: ' + e); }
 }
 async function tickTruth(){                        // ★ 状态: 轮到我了吗 / 手牌几张 ✓
   try{
@@ -279,20 +322,27 @@ class H(BaseHTTPRequestHandler):
                     got = kv[2:].split("&")[0]
         if tok and got != tok:
             return self._send("需要口令: 请在网址后加 ?k=<口令>", code=403)
-        if self.path.split("?")[0] != "/tap":
+        route = self.path.split("?")[0]
+        if route not in ("/tap", "/drag"):
             return self._send("not found", code=404)
         try:
             n = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(n) or b"{}")
-            x, y = int(body.get("x")), int(body.get("y"))
         except Exception as e:  # noqa: BLE001
             return self._send(f"参数错: {e}", code=400)
-        if not (0 <= x <= 720 and 0 <= y <= 1280):
-            return self._send(f"坐标越界: ({x},{y})", code=400)
+        if route == "/tap":
+            x, y = int(body.get("x")), int(body.get("y"))
+            if not (0 <= x <= 720 and 0 <= y <= 1280):
+                return self._send(f"坐标越界: ({x},{y})", code=400)
+            try:
+                return self._send(_tap_device(x, y))
+            except Exception as e:  # noqa: BLE001
+                return self._send(f"点击异常: {type(e).__name__}: {e}", code=500)
+        x0, y0, x1, y1 = (int(body.get(k, 0)) for k in ("x0", "y0", "x1", "y1"))
         try:
-            return self._send(_tap_device(x, y))
+            return self._send(_drag_device(x0, y0, x1, y1))
         except Exception as e:  # noqa: BLE001
-            return self._send(f"点击异常: {type(e).__name__}: {e}", code=500)
+            return self._send(f"拖动异常: {type(e).__name__}: {e}", code=500)
 
     def do_GET(self) -> None:  # noqa: N802
         # ★ 临时口令(2026-09-17): 公网直连必须带 ?k=<口令> —— 不接受无鉴权直连 ✓

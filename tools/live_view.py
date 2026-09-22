@@ -217,8 +217,6 @@ button:hover{background:#2c2c2c}
   <div><h3>云手机画面（点画面 = 点手机 ✓）</h3>
     <div id="wrap" style="position:relative;display:inline-block">
       <img id="scr" src="/stream">
-      <div id="mk" style="position:absolute;width:16px;height:16px;margin:-8px 0 0 -8px;border:2px solid #ff5555;
-           border-radius:50%;display:none;pointer-events:none"></div>
     </div>
     <div style="margin-top:6px">
       <label style="color:#ffb"><input type="checkbox" id="allow"> 允许点击(必须先勾上 ✓)</label>
@@ -270,9 +268,6 @@ async function tickTruth(){                        // ★ 状态: 轮到我了�
 setInterval(tickTruth, 2000); tickTruth();
 async function qt(x, y){                       // 发一次点击(设备坐标 ✓)
   if(!document.getElementById('allow').checked){ document.getElementById('tapinfo').textContent='先勾上"允许点击"'; return; }
-  const mk=document.getElementById('mk'), img=document.getElementById('scr');
-  const r=img.getBoundingClientRect();
-  mk.style.left=(x*r.width/720)+'px'; mk.style.top=(y*r.height/1280)+'px'; mk.style.display='block';
   try{
     const res=await fetch('/tap'+(KW?('?k='+KW):''),{method:'POST',headers:{'Content-Type':'application/json'},
                      body:JSON.stringify({x:x,y:y})});

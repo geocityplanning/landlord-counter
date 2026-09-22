@@ -180,10 +180,12 @@
 
   // ---------- AI 托管: 用游戏自带 AI 替"南"出牌(全本地) ----------
   var lastAct = 0;
+  var autoDelay = 2200;          // 出牌间隔**随机**(2026-09-22: 原来固定 1.2s, 用户反馈"打得好快" ✗)
+                                 // 人类节奏: 每手 1.6~3.0 秒, 每次动作后重新摇一个 ✓
   function autoMaybe() {
     if (!auto) return;
     var now = Date.now();
-    if (now - lastAct < 1200) return;
+    if (now - lastAct < autoDelay) return;
     try {
       var D = window.__demo;
       if (!D) return;                               // main.js 没开接口(非 demo 入口)就跳过

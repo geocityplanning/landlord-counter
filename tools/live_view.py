@@ -42,6 +42,38 @@ FRAME = {"jpg": b"", "t": 0.0, "fps": 0.0, "err": ""}
 _TAP = {"mt": None, "lock": threading.Lock()}
 
 
+_TRUTH = {"cdp": None, "lock": threading.Lock(), "t": 0.0, "val": {}}
+
+
+def _truth_cached() -> dict:
+    """读游戏真值(缓存 0.5 秒 ✓ —— CDP 连接很贵, 页面每 2 秒问一次受不了 ✗)"""
+    import json as _j
+    import time as _t
+
+    with _TRUTH["lock"]:
+        if _TRUTH["cdp"] is None:
+            from landlord_counter.platform.cdp import CDP
+
+            _TRUTH["cdp"] = CDP()
+        if _t.time() - _TRUTH["t"] < 0.5 and _TRUTH["val"]:
+            return _TRUTH["val"]
+        try:
+            c = _TRUTH["cdp"]
+            if not c.find_truth():
+                return {"err": "找不到游戏页(它在前台吗?)"}
+            t = c.truth()
+            v = {"phase": t.get("phase"), "current": t.get("current"),
+                 "ji_pai": t.get("jiPai"),
+                 "hand": len((t.get("handsFull") or {}).get("0") or []),
+                 "need_beat": t.get("needBeat")}
+            if v["phase"] != "playing":
+                v["need_beat"] = None
+            _TRUTH["val"], _TRUTH["t"] = v, _t.time()
+            return v
+        except Exception as e:  # noqa: BLE001
+            return {"err": type(e).__name__}
+
+
 def _tap_device(x: int, y: int) -> str:
     """点一下设备 —— **走 MaaTouch 拟人化**(压力/微移/随机时长 ✓), 不走 adb input ✗"""
     from landlord_counter.platform.maatouch import MaaTouch
@@ -135,24 +167,33 @@ def _events(n: int = 40) -> str:
     return "\n".join(out)
 
 
-PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>云手机直播</title>
+PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>云手机 · 手动操作台</title>
 <style>body{background:#111;color:#ddd;font:14px/1.5 monospace;margin:0;padding:12px}
-img{width:360px;border:1px solid #333;border-radius:6px}
+img{width:432px;border:1px solid #333;border-radius:6px;cursor:crosshair}
 .row{display:flex;gap:16px;align-items:flex-start}
 pre{background:#000;padding:8px;border-radius:6px;max-height:80vh;overflow:auto;flex:1}
-h3{margin:8px 0}</style></head><body>
+h3{margin:8px 0}
+button{padding:4px 10px;margin:2px;border-radius:6px;border:1px solid #444;background:#222;color:#ddd;cursor:pointer}
+button:hover{background:#2c2c2c}
+#truth{background:#000;border-radius:6px;padding:6px 8px;margin-top:6px;color:#9f9}
+#truth.turn{color:#ff6;font-weight:700}
+.k{color:#888}</style></head><body>
 <div class="row">
-  <div><h3>画面 (MJPEG)</h3>
+  <div><h3>云手机画面（点画面 = 点手机 ✓）</h3>
     <div id="wrap" style="position:relative;display:inline-block">
       <img id="scr" src="/stream">
-      <div id="mk" style="position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border:2px solid #ff5555;
+      <div id="mk" style="position:absolute;width:16px;height:16px;margin:-8px 0 0 -8px;border:2px solid #ff5555;
            border-radius:50%;display:none;pointer-events:none"></div>
     </div>
     <div style="margin-top:6px">
-      <label style="color:#ffb"><input type="checkbox" id="allow"> 允许点击(点画面 = 点手机)</label>
-      <div style="margin-top:4px"><button onclick="qt(360,1113)">出牌键</button>
+      <label style="color:#ffb"><input type="checkbox" id="allow"> 允许点击(必须先勾上 ✓)</label>
+      <div style="margin-top:4px">
+        <button onclick="snap()">📸 截图并保存</button>
+        <button onclick="qt(360,1113)">出牌键</button>
         <button onclick="qt(359,939)">大金钮</button>
-        <button onclick="qt(360,875)">中区</button></div>
+        <button onclick="qt(360,875)">中区</button>
+      </div>
+      <div id="truth">读状态中…</div>
       <div id="tapinfo" style="color:#888">未点过</div>
     </div>
     <div id="meta" style="color:#888"></div></div>
@@ -161,6 +202,29 @@ h3{margin:8px 0}</style></head><body>
 </div>
 <script>
 const KW = new URLSearchParams(location.search).get('k') || '';
+function snap(){                                   // ★ 截图: 把当前帧存成 PNG ✓
+  const img = document.getElementById('scr');
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth || 720; c.height = img.naturalHeight || 1280;
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  const a = document.createElement('a');
+  a.download = 'yunji_' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.png';
+  a.href = c.toDataURL('image/png');
+  document.body.appendChild(a); a.click(); a.remove();
+}
+async function tickTruth(){                        // ★ 状态: 轮到我了吗 / 手牌几张 ✓
+  try{
+    const t = await (await fetch('/truth' + (KW ? ('?k=' + KW) : ''))).json();
+    const el = document.getElementById('truth');
+    if (t.err) { el.textContent = '状态读不到: ' + t.err; el.className = ''; return; }
+    const mine = (t.current === 0);
+    el.textContent = `phase=${t.phase} · 级牌 ${t.ji_pai} · 我手牌 ${t.hand} 张 · `
+      + (mine ? '★ 轮到我出牌' : `轮到座位 ${t.current}`)
+      + (t.need_beat === null ? '' : ` · ${t.need_beat ? '要压' : '可领出'}`);
+    el.className = mine ? 'turn' : '';
+  }catch(e){}
+}
+setInterval(tickTruth, 2000); tickTruth();
 async function qt(x, y){                       // 发一次点击(设备坐标 ✓)
   if(!document.getElementById('allow').checked){ document.getElementById('tapinfo').textContent='先勾上"允许点击"'; return; }
   const mk=document.getElementById('mk'), img=document.getElementById('scr');
@@ -266,6 +330,9 @@ class H(BaseHTTPRequestHandler):
             return self._send(_tail(LOG_FILE, n))
         if path == "/events":
             return self._send(_events())
+        if path == "/truth":                                  # ★ 给手动操作台的状态 ✓
+            return self._send(json.dumps(_truth_cached(), ensure_ascii=False),
+                              "application/json; charset=utf-8")
         if path == "/meta":
             age = round(time.time() - FRAME["t"], 1) if FRAME["t"] else -1
             return self._send(f"帧率 {FRAME['fps']}/s · 最后帧 {age}s 前 · 录屏 "

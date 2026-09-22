@@ -11,6 +11,7 @@ SDK=${ANDROID_SDK_ROOT:-/opt/android-sdk}
 BT="$SDK/build-tools/34.0.0"
 PLAT="$SDK/platforms/android-34/android.jar"
 SRC="$(cd "$(dirname "$0")/.." && pwd)/android"
+REPO="$(cd "$SRC/.." && pwd)"
 OUT="$SRC/build"
 PY=/usr/local/lib/hermes-agent/venv/bin/python3
 
@@ -18,7 +19,17 @@ for f in "$BT/aapt2" "$BT/d8" "$BT/apksigner" "$BT/zipalign" "$PLAT"; do
   [ -e "$f" ] || { echo "✗ 缺 $f (先装 Android SDK ✓)"; exit 1; }
 done
 
-rm -rf "$OUT"; mkdir -p "$OUT/gen" "$OUT/classes" "$OUT/dex"
+rm -rf "$OUT"; mkdir -p "$OUT/gen" "$OUT/classes" "$OUT/dex" "$OUT/assets"
+
+# ⓪ 游戏资源: **打包时**从唯一源码拷进 build 临时目录 ✓
+#    ⚠ 不落仓库(android/assets/ 已 gitignore 且已删 ✗) —— 靠人记着拷迟早对不上
+#      (2026-09-22 实测: assets 里那份还是 demo 之前的旧拷贝 ⇒ 打出来的包没有记牌器 ✗)
+GAME_SRC="$REPO/lab/guandan_www"
+[ -d "$GAME_SRC" ] || { echo "✗ 找不到游戏源码 $GAME_SRC"; exit 1; }
+echo "⓪ 拷游戏(lab/guandan_www → build/assets/game)"
+cp -r "$GAME_SRC/." "$OUT/assets/game/"
+echo "   $(find "$OUT/assets/game" -type f | wc -l) 个文件 $(du -sh "$OUT/assets/game" | cut -f1)"
+[ -f "$OUT/assets/game/js/demo.js" ] || { echo "✗ 缺 js/demo.js(伴随前端) ⇒ 拒绝打包 ✗"; exit 1; }
 
 echo "① 编译资源"
 "$BT/aapt2" compile --dir "$SRC/res" -o "$OUT/res.zip"
@@ -27,7 +38,7 @@ echo "② 链接资源+清单(生成 R.java)"
 # ⚠ 编译产物要当**位置参数**给 aapt2 ✓ (写成 -R 会被当成"覆盖包" ⇒
 #   "resource ... does not override an existing resource" ✗ 2026-09-22 踩过)
 "$BT/aapt2" link -o "$OUT/base.apk" -I "$PLAT" --manifest "$SRC/AndroidManifest.xml" \
-    "$OUT/res.zip" --java "$OUT/gen" --min-sdk-version 26 --target-sdk-version 28
+    "$OUT/res.zip" -A "$OUT/assets" --java "$OUT/gen" --min-sdk-version 26 --target-sdk-version 28
 
 echo "③ javac"
 javac -source 8 -target 8 -nowarn -bootclasspath "$PLAT" -classpath "$PLAT" \

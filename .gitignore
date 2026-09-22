@@ -36,3 +36,6 @@ data/companion.db*
 # Android 构建产物 + 试用签名(不进公开仓 ✓)
 android/build/
 android/debug.keystore
+
+# 游戏资源由 tools/build_apk.sh 在打包时拷进 build/assets(唯一源码 = lab/guandan_www)
+android/assets/

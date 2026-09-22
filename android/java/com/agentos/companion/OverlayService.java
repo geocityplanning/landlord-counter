@@ -209,6 +209,10 @@ public class OverlayService extends Service {
             }
             panel = null;                  // 原生视图没有 destroy() ✓ 置空就够了
             panelOpen = false;
+            // ★ 2026-09-22 修的 bug: 这里必须把 poller 置空 ✗
+            //   否则下次展开时 startPolling() 被 "poller != null" 挡住 ⇒
+            //   轮询线程早就随上次收起退出了 ⇒ 面板永远停在"连接中…" ✗
+            poller = null;
             return;
         }
         LinearLayout box = new LinearLayout(this);

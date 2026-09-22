@@ -780,7 +780,11 @@ class GuandanAdapter(GameAdapter):
             print(f"▶ 游戏AI 决策器已加载(原样搬运, nanDu={self._gai.nan_du})", flush=True)
         _n_now = len(obs.hand)
         _prev_n = getattr(self, "_last_hand_n", None)
-        if _prev_n is not None and _prev_n < 25 and _n_now >= 25:
+        # ★ 2026-09-22 修: 原来只在"手牌 0→27"的跃变时才算新局 ✗
+        #   但我们**手动进局**(或中途接管)时, 第一次看到就已经是 27 张 ⇒ 跃变看不到
+        #   ⇒ 不建 deal 行 ⇒ 伴随面板只能显示**上一局** ⇒ 牌池当然对不上 ✗
+        #   (实测: 手动进局跑了 5 手, remains 有 27 条, 但 deal 表里没这局 ✗)
+        if _n_now >= 25 and (_prev_n is None or _prev_n < 25):
             self._new_deal()
         self._last_hand_n = _n_now
         if last is not None and (not self._rl_hist or self._rl_hist[-1][1] is not last):
@@ -825,7 +829,11 @@ class GuandanAdapter(GameAdapter):
         #   注意 `_last_hand_n` 只在**读到牌**时更新, 且读到少牌时不立刻清零(要等回升) ✓
         _n_now = len(obs.hand)
         _prev_n = getattr(self, "_last_hand_n", None)
-        if _prev_n is not None and _prev_n < 25 and _n_now >= 25:
+        # ★ 2026-09-22 修: 原来只在"手牌 0→27"的跃变时才算新局 ✗
+        #   但我们**手动进局**(或中途接管)时, 第一次看到就已经是 27 张 ⇒ 跃变看不到
+        #   ⇒ 不建 deal 行 ⇒ 伴随面板只能显示**上一局** ⇒ 牌池当然对不上 ✗
+        #   (实测: 手动进局跑了 5 手, remains 有 27 条, 但 deal 表里没这局 ✗)
+        if _n_now >= 25 and (_prev_n is None or _prev_n < 25):
             self._new_deal()
         self._last_hand_n = _n_now
         if last is not None and (not self._rl_hist or self._rl_hist[-1][1] is not last):

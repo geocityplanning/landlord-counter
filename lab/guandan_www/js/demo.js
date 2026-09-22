@@ -30,6 +30,7 @@
 
   var auto = false;            // AI 托管开关
   var panel = null, ball = null;
+  var lastDragTs = 0;          // 刚拖过的时刻 —— 拖动结束浏览器照样派发 click, 会误开关面板 ✗
 
   // ---------- 数据: 剩余牌池(只手牌 + 已出的牌, 不看别人手牌) ----------
   function remain() {
@@ -85,8 +86,20 @@
     document.body.appendChild(panel);
 
     ball.addEventListener('click', function () {
-      panel.style.display = (panel.style.display === 'flex') ? 'none' : 'flex';
-      if (panel.style.display === 'flex') refresh();
+      if (Date.now() - lastDragTs < 500) return;     // 这次点击是拖动的尾巴, 不算 ✓
+      if (panel.style.display === 'flex') { panel.style.display = 'none'; return; }
+      // 展开时**贴着球**: 右对齐球, 面板下沿落在球顶上方 12px(上面放不下就改放下面)
+      panel.style.right = 'auto'; panel.style.bottom = 'auto';
+      panel.style.display = 'flex';
+      refresh();                                     // ⚠ 必须先填内容再量高度 ✗ 量早了高度偏小, 面板会压到球上
+      var br = ball.getBoundingClientRect();
+      var pw = panel.offsetWidth, ph = panel.offsetHeight;
+      var left = Math.max(4, Math.min(window.innerWidth - pw - 4, br.left + br.width - pw));
+      var top = br.top - 12 - ph;
+      if (top < 4) top = Math.min(window.innerHeight - ph - 4, br.bottom + 12);
+      panel.style.left = left + 'px';
+      panel.style.top = top + 'px';
+      refresh();
     });
     panel.querySelector('#demo-close').addEventListener('click', function () { panel.style.display = 'none'; });
     panel.querySelector('#demo-auto').addEventListener('change', function (e) { auto = !!e.target.checked; });
@@ -112,7 +125,7 @@
       var t = e.touches ? e.touches[0] : e;
       var dx = t.clientX - sx, dy = t.clientY - sy;
       if (!moved && Math.abs(dx) + Math.abs(dy) < 8) return;   // 8px 内 = 点击, 不动它 ✓
-      moved = true;
+      moved = true; lastDragTs = Date.now();
       var x = ox + dx, y = oy + dy;
       x = Math.max(2, Math.min(window.innerWidth - target.offsetWidth - 2, x));
       y = Math.max(2, Math.min(window.innerHeight - 40, y));

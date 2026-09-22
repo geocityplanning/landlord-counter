@@ -273,7 +273,7 @@ const CardUI = (function() {
             // 2026-09-22 用户: 我方的信息框(名字/张数/打X)被手牌压住了 ⇒ 上移
             //   框高 45 ⇒ 原来贴 H-100, 手牌从 H-124 起 ⇒ 必然压住 ✗
             //   仅 ?fit=1 预览时上移(实验室那条路的坐标一点不动 ✓)
-            case 'bottom': x = 10; y = container.clientHeight - (window.__FIT ? 178 : 100); break;
+            case 'bottom': x = 10; y = container.clientHeight - (window.__FIT ? 198 : 100); break;
             case 'left': x = 10; y = 50; break;
             case 'top': x = container.clientWidth / 2 - 40; y = 10; break;
             case 'right': x = container.clientWidth - 90; y = 50; break;

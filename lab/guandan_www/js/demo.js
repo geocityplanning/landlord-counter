@@ -74,13 +74,19 @@
       + 'cursor:move;display:flex;align-items:center;gap:6px;touch-action:none">'
       + '<b style="font-size:12px">🃏 记牌器</b><span id="demo-ji" style="color:#9BB0C9;font-size:11px"></span>'
       + '<span style="flex:1"></span><span id="demo-close" style="cursor:pointer;color:#9BB0C9;padding:0 4px">✕</span></div>'
-      + '<div style="padding:8px 9px;overflow-y:auto">'
+      // 结构: 头(可拖) + 中间可滚动(总览/牌池/最近出牌) + **底部钉住的托管开关**
+      // ⚠ 2026-09-22: 原来全塞一个滚动区 ⇒ 出牌一多就把"AI 托管"顶出屏幕, 只能看一半 ✗
+      + '<div id="demo-body" style="padding:8px 9px;overflow-y:auto;flex:1 1 auto;min-height:0">'
       + '<div id="demo-sum" style="margin-bottom:6px;padding:5px 6px;background:rgba(83,215,138,.10);'
       + 'border:1px solid rgba(83,215,138,.30);border-radius:6px;color:#BDEBCF;font-size:11px"></div>'
       + '<div id="demo-pool" style="display:grid;grid-template-columns:repeat(5,1fr);gap:3px"></div>'
       + '<div style="margin-top:7px;color:#9BB0C9;font-size:10px">各家最近出牌</div>'
-      + '<div id="demo-plays" style="margin-top:3px;color:#CFE0F5;font-size:11px;min-height:16px"></div>'
-      + '<label style="display:block;margin-top:9px;padding:6px;background:rgba(255,255,255,.04);border-radius:7px;cursor:pointer">'
+      + '<div id="demo-plays" style="margin-top:3px;color:#CFE0F5;font-size:11px;'
+      + 'max-height:84px;overflow-y:auto;border:1px solid rgba(146,176,214,.18);border-radius:6px;'
+      + 'padding:3px 5px"></div>'
+      + '</div>'
+      + '<div style="padding:6px 9px;border-top:1px solid rgba(146,176,214,.25);flex:0 0 auto">'
+      + '<label style="display:block;padding:5px 6px;background:rgba(255,255,255,.04);border-radius:7px;cursor:pointer">'
       + '<input type="checkbox" id="demo-auto"> <b>AI 托管</b> <span style="color:#9BB0C9;font-size:10px">(游戏自带AI替南)</span></label>'
       + '</div>';
     document.body.appendChild(panel);
@@ -94,11 +100,12 @@
       refresh();                                     // ⚠ 必须先填内容再量高度 ✗ 量早了高度偏小, 面板会压到球上
       var br = ball.getBoundingClientRect();
       var pw = panel.offsetWidth, ph = panel.offsetHeight;
+      panel.style.maxHeight = Math.max(160, br.top - 20) + 'px';   // 最多到球上方 12px, 多的部分内部滚 ✓
       var left = Math.max(4, Math.min(window.innerWidth - pw - 4, br.left + br.width - pw));
-      var top = br.top - 12 - ph;
-      if (top < 4) top = Math.min(window.innerHeight - ph - 4, br.bottom + 12);
+      // ⚠ 锚在**下沿**(不是上沿) —— 面板会越长越高 ✓ 越长越低就会压住球 ✗(实测间距 -48px)
       panel.style.left = left + 'px';
-      panel.style.top = top + 'px';
+      panel.style.top = 'auto';
+      panel.style.bottom = (window.innerHeight - (br.top - 12)) + 'px';
       refresh();
     });
     panel.querySelector('#demo-close').addEventListener('click', function () { panel.style.display = 'none'; });
@@ -163,7 +170,9 @@
     var unseen = 0; for (var k in left) unseen += left[k];
     panel.querySelector('#demo-sum').innerHTML = '场上未见 <b>' + unseen + '</b> 张 · 已出 ' + played
       + ' 张<br><span style="color:#7E93AB">我的牌已从池里扣掉(和真记牌器一样)</span>';
-    panel.querySelector('#demo-plays').innerHTML = lastPlays().join('<br>') || '—';
+    var plBox = panel.querySelector('#demo-plays');
+    plBox.innerHTML = lastPlays().join('<br>') || '—';
+    plBox.scrollTop = plBox.scrollHeight;          // 自动滚到最新一手 ✓
     var t = window.__truth ? window.__truth() : {};
     panel.querySelector('#demo-ji').textContent = '级牌' + (t.jiPai || '?') + ' · 我' + ((t.handsFull && t.handsFull[0] || []).length) + '张'
       + (t.current === 0 ? ' · 轮到我' : '');

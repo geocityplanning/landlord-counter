@@ -109,8 +109,12 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     port = int(os.getenv("COMPANION_PORT", "8131"))
-    print(f"[companion] 伴随应用服务 → http://127.0.0.1:{port}/  (库: {STORE.path})", flush=True)
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    # ★ 2026-09-22: 绑定地址可配 —— 云手机里的"伴随 APK"要能访问 ✓
+    #   默认仍只绑本机(安全 ✓); 云手机场景用 docker 桥地址(仅容器可达 ✓ 不暴露公网 ✓)
+    #   实测: 绑 127.0.0.1 时容器里的 WebView 白屏 ✗ ⇒ 必须绑到桥地址 ✓
+    host = os.getenv("COMPANION_HOST", "127.0.0.1")
+    print(f"[companion] 伴随应用服务 → http://{host}:{port}/  (库: {STORE.path})", flush=True)
+    ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 
 if __name__ == "__main__":

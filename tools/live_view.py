@@ -13,9 +13,16 @@
     /log         最近的运行日志(动作/结果/记牌)
     /events      最近的记牌事件(谁打了什么牌)
     /rec         录屏状态; /rec/start /rec/stop 开关(存 data/rec/*.mp4)
+
+★ 2026-09-22 新增 **可点** (用户: "想能 H5/Windows 手动操作"):
+    · 页面里点画面 = 点手机(坐标自动换算 ✓)
+    · 默认**关闭**, 要手动勾上"允许点击"才生效(防误触 ✓)
+    · 点下去走 **MaaTouch 拟人化**(压力/微移/随机时长 ✓) —— **不走 adb input** ✗
+    · POST /tap  {"x":360,"y":1113}   设备坐标(720x1280 ✓)  需带 ?k=<口令> ✓
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -23,11 +30,31 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+# 点击要能 import 到平台层(和 manual_tap.py 同一份实现 ✓ 别再写第二套 ✗)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
+
 SERIAL = os.getenv("DEVICE_SERIAL", "127.0.0.1:5555")
 LOG_FILE = os.getenv("LIVE_LOG", "/tmp/g1_long2.log")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REC_DIR = os.path.join(ROOT, "data", "rec")
 FRAME = {"jpg": b"", "t": 0.0, "fps": 0.0, "err": ""}
+# ★ 点击器: 单例 + 锁(MaaTouch 是常驻进程, 每次重建太贵 ✗)
+_TAP = {"mt": None, "lock": threading.Lock()}
+
+
+def _tap_device(x: int, y: int) -> str:
+    """点一下设备 —— **走 MaaTouch 拟人化**(压力/微移/随机时长 ✓), 不走 adb input ✗"""
+    from landlord_counter.platform.maatouch import MaaTouch
+
+    with _TAP["lock"]:
+        mt = _TAP["mt"]
+        if mt is None or not mt.alive():
+            mt = _TAP["mt"] = MaaTouch(SERIAL)
+            if not mt.ensure():
+                _TAP["mt"] = None
+                return "MaaTouch 起不来(点不了 ✗)"
+        mt.tap(int(x), int(y))
+    return f"已点 ({int(x)},{int(y)}) · 拟人化 ✓"
 REC = {"on": False, "dir": "", "n": 0, "started": 0.0}
 
 
@@ -115,11 +142,41 @@ img{width:360px;border:1px solid #333;border-radius:6px}
 pre{background:#000;padding:8px;border-radius:6px;max-height:80vh;overflow:auto;flex:1}
 h3{margin:8px 0}</style></head><body>
 <div class="row">
-  <div><h3>画面 (MJPEG)</h3><img src="/stream"><div id="meta" style="color:#888"></div></div>
+  <div><h3>画面 (MJPEG)</h3>
+    <div id="wrap" style="position:relative;display:inline-block">
+      <img id="scr" src="/stream">
+      <div id="mk" style="position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border:2px solid #ff5555;
+           border-radius:50%;display:none;pointer-events:none"></div>
+    </div>
+    <div style="margin-top:6px">
+      <label style="color:#ffb"><input type="checkbox" id="allow"> 允许点击(点画面 = 点手机)</label>
+      <div style="margin-top:4px"><button onclick="qt(360,1113)">出牌键</button>
+        <button onclick="qt(359,939)">大金钮</button>
+        <button onclick="qt(360,875)">中区</button></div>
+      <div id="tapinfo" style="color:#888">未点过</div>
+    </div>
+    <div id="meta" style="color:#888"></div></div>
   <div style="flex:1"><h3>操作日志(实时)</h3><pre id="log"></pre></div>
   <div style="flex:1"><h3>记牌事件(谁打了什么牌)</h3><pre id="ev"></pre></div>
 </div>
 <script>
+const KW = new URLSearchParams(location.search).get('k') || '';
+async function qt(x, y){                       // 发一次点击(设备坐标 ✓)
+  if(!document.getElementById('allow').checked){ document.getElementById('tapinfo').textContent='先勾上"允许点击"'; return; }
+  const mk=document.getElementById('mk'), img=document.getElementById('scr');
+  const r=img.getBoundingClientRect();
+  mk.style.left=(x*r.width/720)+'px'; mk.style.top=(y*r.height/1280)+'px'; mk.style.display='block';
+  try{
+    const res=await fetch('/tap'+(KW?('?k='+KW):''),{method:'POST',headers:{'Content-Type':'application/json'},
+                     body:JSON.stringify({x:x,y:y})});
+    document.getElementById('tapinfo').textContent=(await res.text())+'  →('+x+','+y+')';
+  }catch(e){ document.getElementById('tapinfo').textContent='点击失败:'+e; }
+}
+document.getElementById('scr').addEventListener('click', ev => {     // 点画面 = 换算成设备坐标
+  const r=ev.target.getBoundingClientRect();
+  const x=Math.round((ev.clientX-r.left)*720/r.width), y=Math.round((ev.clientY-r.top)*1280/r.height);
+  qt(x,y);
+});
 async function tick(){
   try{
     const r1=await fetch('/log?n=40'); document.getElementById('log').textContent=await r1.text();
@@ -142,6 +199,31 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def do_POST(self) -> None:  # noqa: N802
+        """★ 2026-09-22 新增: 网页点一下 = 点手机(用户要的 H5 手动操作 ✓)"""
+        tok = os.getenv("LIVE_TOKEN", "")
+        got = ""
+        if "?" in self.path:
+            for kv in self.path.split("?", 1)[1].split("&"):
+                if kv.startswith("k="):
+                    got = kv[2:].split("&")[0]
+        if tok and got != tok:
+            return self._send("需要口令: 请在网址后加 ?k=<口令>", code=403)
+        if self.path.split("?")[0] != "/tap":
+            return self._send("not found", code=404)
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(n) or b"{}")
+            x, y = int(body.get("x")), int(body.get("y"))
+        except Exception as e:  # noqa: BLE001
+            return self._send(f"参数错: {e}", code=400)
+        if not (0 <= x <= 720 and 0 <= y <= 1280):
+            return self._send(f"坐标越界: ({x},{y})", code=400)
+        try:
+            return self._send(_tap_device(x, y))
+        except Exception as e:  # noqa: BLE001
+            return self._send(f"点击异常: {type(e).__name__}: {e}", code=500)
 
     def do_GET(self) -> None:  # noqa: N802
         # ★ 临时口令(2026-09-17): 公网直连必须带 ?k=<口令> —— 不接受无鉴权直连 ✓

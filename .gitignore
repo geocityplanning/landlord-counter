@@ -32,3 +32,7 @@ data/calib/shots/
 
 # 伴随应用本地库(牌局数据敏感, 绝不进公开仓 ✓)
 data/companion.db*
+
+# Android 构建产物 + 试用签名(不进公开仓 ✓)
+android/build/
+android/debug.keystore

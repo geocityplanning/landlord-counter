@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  伴随应用 · 悬浮球 APK（2026-09-22 用户要："真机使用 + 悬浮球在棋牌界面上方 + 能做成 APK"）
+
+  形态: 装**云手机里**(有 root ✓ 免用户授权 ✓) ⇒ 球浮在棋牌界面上方 ✓
+        用户手机端只当"显示器+遥控器"(看云手机屏 ✓) ⇒ 天然就带这个球 ✓
+  ⚠ 不碰无障碍服务 ✗ · 不注入点击 ✗ —— 本 APK **只负责显示** ✓
+    点击/出牌仍走宿主侧的 MaaTouch 拟人化通道 ✓
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.agentos.companion"
+    android:versionCode="1"
+    android:versionName="0.1.0">
+
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="28" />
+
+    <!-- 悬浮窗(别的应用上层) ⇐ 云手机里用 appops 直接给 ✓ -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- 前台服务(保活: 别让系统把球收走 ✓) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="伴随应用"
+        android:usesCleartextTraffic="true">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <service
+            android:name=".OverlayService"
+            android:exported="false" />
+    </application>
+</manifest>

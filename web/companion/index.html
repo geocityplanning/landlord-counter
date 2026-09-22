@@ -141,6 +141,15 @@
     display:none;
   }
 
+  /* ---------- 嵌入模式(?embed=1): 面板塞进 APK 的 WebView 时用 ✓ ----------
+     2026-09-22: 球由 APK 的悬浮窗画(能压在游戏上 ✓), 网页这层只提供**面板内容** */
+  body.embed #ball { display: none !important; }
+  body.embed { background: transparent; min-height: 0; }
+  body.embed #panel {
+    position: static; width: 100%; max-height: none; box-shadow: none;
+    border-radius: 12px; background: rgba(14, 20, 31, 0.94);
+  }
+
   @media (max-width: 420px) {
     #panel {
       width: min(90vw, 310px);
@@ -185,6 +194,11 @@ function toggleBall(){
   localStorage.setItem('ball', document.body.classList.contains('collapsed') ? '1' : '0');
 }
 if (localStorage.getItem('ball') === '1') document.body.classList.add('collapsed');
+// ★ 嵌入模式: APK 的 WebView 里只要面板内容(球由悬浮窗画 ✓ 背景透明 ✓)
+if (new URLSearchParams(location.search).get('embed')) {
+  document.body.classList.add('embed');
+  document.body.classList.remove('collapsed');
+}
 
 /* ---------- 拉数据(2 秒一次; 悬浮球收起时也拉, 让角标还活着 ✓) ---------- */
 async function tick(){

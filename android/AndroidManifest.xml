@@ -34,5 +34,14 @@
         <service
             android:name=".OverlayService"
             android:exported="false" />
+
+        <!-- 远程展/收面板(容器里点不到球的替代通路 ✓) -->
+        <receiver
+            android:name=".ToggleReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.agentos.companion.TOGGLE" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

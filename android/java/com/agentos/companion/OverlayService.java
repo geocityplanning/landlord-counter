@@ -46,6 +46,21 @@ public class OverlayService extends Service {
     }
 
     @Override
+    public int onStartCommand(Intent it, int flags, int startId) {
+        // 远程开关: am broadcast -a com.agentos.companion.TOGGLE ✓
+        if (it != null && ToggleReceiver.ACTION.equals(it.getAction())) {
+            android.util.Log.i("companion", "远程 toggle");
+            try {
+                togglePanel();
+            } catch (Exception e) {
+                android.util.Log.i("companion", "toggle 失败: " + e);
+            }
+            return START_STICKY;
+        }
+        return START_STICKY;
+    }
+
+    @Override
     public void onCreate() {
         super.onCreate();
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);

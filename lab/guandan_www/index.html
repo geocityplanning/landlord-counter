@@ -101,6 +101,14 @@
     <script src="js/cardUI.js?v=10"></script>
     <script src="js/storage.js?v=10"></script>
     <script src="js/sound.js?v=10"></script>
-    <script src="js/main.js?v=22"></script>
+    <script src="js/main.js?v=23"></script>
+    <!-- 伴随应用(记牌助手) --- 只在 ?companion=1 时加载, 跑分那条路不受影响, 2026-09-22 -->
+    <script>
+      if (location.search.indexOf('companion=1') >= 0) {
+        var s = document.createElement('script');
+        s.src = 'js/companion.js?v=1';
+        document.body.appendChild(s);
+      }
+    </script>
 </body>
 </html>

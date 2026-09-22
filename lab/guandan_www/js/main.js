@@ -563,6 +563,13 @@
         }
     }
 
+    // 伴随应用(记牌助手)专用口 —— 只在 ?companion=1 时开 ✓ (2026-09-22)
+    // 为什么必须开: 本文件整个包在 IIFE 里, 页面内的伴随脚本**够不到** gameState/chuPai
+    // (实测 `typeof gameState` = undefined ⇒ 记牌器算不出手牌、托管也打不出牌)
+    if (location.search.indexOf('companion=1') >= 0) {
+        window.__demo = { get state() { return gameState; }, chuPai: chuPai, guoPai: guoPai };
+    }
+
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {

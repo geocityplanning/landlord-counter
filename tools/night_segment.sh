@@ -8,7 +8,11 @@
 #   · 同一设备**只能一个托管** ⇒ 有在跑的就跳过 ✓
 #   · 臂轮流(库里哪边少跑哪边 ✓) ⇒ 两组条件相近, 可对比 ✓
 #
-# 用法: bash tools/night_segment.sh [段秒数, 默认 3300 = 55 分钟]
+# 用法: bash tools/night_segment.sh [段秒数, 默认 3000 = 50 分钟]
+#
+# ⚠ 2026-09-22 修的坑: run_via_platform.py 的时长是**位置参数** [秒数],
+#   之前没传 ⇒ 它用默认 **300 秒** ⇒ 每段只跑 5 分钟就自己停了 ✗
+#   (实测: 一夜 11 段, 每段 5 分钟 ⇒ 白扔了 90% 的时间 ✗)
 #
 # ⚠ 为什么一段要够长(用户 2026-09-21 指出):
 #   掼蛋**一整场要以"过A"才算赢** ⇒ 30 分钟可能连一场都打不完 ✗
@@ -39,7 +43,8 @@ fi
 # ③ 本轮起点(存库里 ✓) + 选臂: 本轮里谁跑得少选谁 ⇒ 严格交替 ✓
 python3 "$(dirname "$0")/night_arm.py" >> "$LOG" 2>&1
 ARM=$(python3 "$(dirname "$0")/night_pick_arm.py")
-echo "$(date '+%F %T') [起跑] arm=$ARM 时长=$(( ${1:-3300} / 60 ))分" >> "$LOG"
+SECS="${1:-3000}"                      # 跑手自己能跑多久(位置参数 ✓ 别再忘了传 ✗)
+echo "$(date '+%F %T') [起跑] arm=$ARM 时长=$(( SECS / 60 ))分" >> "$LOG"
 
 # ④ 设备/页面就绪 —— 顺序有讲究(2026-09-21 实测踩过 ✓)
 #    a. 清堆积页签 + 把**游戏页拉到前台**:
@@ -54,7 +59,9 @@ timeout 90 python3 tools/bring_game_front.py >> "$RUN/prep-$TS.log" 2>&1 || true
 
 # ⑤ 跑一段
 L="$RUN/$ARM-$TS.log"
-GUANDAN_OURS=1 GUANDAN_ARM="$ARM" timeout "${1:-3300}" python3 -u tools/run_via_platform.py > "$L" 2>&1
+# 跑手自带时长 ⇒ 再套一层 timeout 兜底(+120s 防它卡住不退 ✓)
+GUANDAN_OURS=1 GUANDAN_ARM="$ARM" timeout "$((SECS + 120))" \
+    python3 -u tools/run_via_platform.py "$SECS" >> "$L" 2>&1
 
 # ⑥ 记时间 + 质量计数(日志只用于排查 ✓ 数据仍以库为准 ✓)
 echo "$(date '+%F %T') [结束] arm=$ARM 出牌=$(grep -c '直选出牌' "$L" 2>/dev/null) 对账=$(grep -c '\[对账\]' "$L" 2>/dev/null) 被拒=$(grep -c '出牌被游戏拒绝' "$L" 2>/dev/null) 未生效=$(grep -c '出牌未生效' "$L" 2>/dev/null)" >> "$LOG"

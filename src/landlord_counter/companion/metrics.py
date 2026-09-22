@@ -6,8 +6,13 @@
 口径
 ----
 · 我方 = 座位 0 与 2(对家) / 对方 = 座位 1 与 3
-· **主指标: 场均升级数(有符号)** —— 我方升级为正, 被对方升级为负 ✓
-· 辅指标: 头游率 / **双上率**(前两名都被我方包揽 ✓) / 被双下率 / 队友名次分布
+· **主指标(2026-09-22 用户定): 双上率 + 场均升级数(有符号)** —— 两个并列 ✓
+    · 双上率   = "一波带走"的能力(前两名全是我们 ⇒ 直接升 3 级 ✓)
+    · 场均升级 = 净升级收益(我方升级为正, 被对方升级为负 ✓)
+  ⇒ 为什么不用胜负当主指标: ① 掼蛋是队伍游戏, 胜负太粗 ✓
+    ② 实测(09-21 夜跑 8~10 局/臂) 胜负要 150~200 局才能分清 50% vs 60% ✗
+       而"双上率/场均升级"灵敏得多, 同样样本就能看出趋势 ✓
+· 辅指标: 胜负 / 头游率 / 被双下率 / 队友名次分布
 
 数据源
 ------
@@ -127,10 +132,13 @@ def aggregate(metrics: list[DealMetric]) -> dict:
         "pass_a_rate": (round(n_match_won / n_over, 3) if n_over else None),
         "games_per_match": (round(sum(x.match_games for x in overs) / n_over, 1)
                             if n_over else None),
-        "main_sheng_ji_per_deal": round(sum(x.sheng_ji for x in ms) / n, 2),  # ★ 主指标
+        # ★★ 两个主指标(2026-09-22 用户定, 谁读数都先看这两个 ✓)
+        "shuang_shang_rate": round(shang / n, 3),        # ★ 主指标1: 双上率
+        "main_sheng_ji_per_deal": round(sum(x.sheng_ji for x in ms) / n, 2),  # ★ 主指标2: 场均升级
+        "primary": ["shuang_shang_rate", "main_sheng_ji_per_deal"],   # 给前端/脚本的显式标记 ✓
+        # 以下为辅指标(参考, 别拿它们下结论 ✓ 样本需求大)
         "win_rate": round(wins / n, 3),
         "tou_you_rate": round(tou / n, 3),
-        "shuang_shang_rate": round(shang / n, 3),        # ★ 双上率(最强局面)
         "bei_shuang_xia_rate": round(xia / n, 3),
         "my_avg_rank": round(my_rank_avg, 2) if my_rank_avg else None,
     }

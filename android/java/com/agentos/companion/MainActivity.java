@@ -55,7 +55,7 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(root);
 
-        web.loadUrl("file:///android_asset/game/demo.html");
+        web.loadUrl("file:///android_asset/game/index.html");   // 等新界面定了再指过去(2026-09-22)
     }
 
     @Override

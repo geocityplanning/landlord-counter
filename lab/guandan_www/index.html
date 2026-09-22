@@ -98,15 +98,38 @@
     <script src="js/gameRules.js?v=12"></script>
     <script src="js/aiLogic.js?v=15"></script>
     <script src="js/teamLogic.js?v=10"></script>
-    <script src="js/cardUI.js?v=10"></script>
+    <script src="js/cardUI.js?v=13"></script>
     <script src="js/storage.js?v=10"></script>
     <script src="js/sound.js?v=10"></script>
-    <script src="js/main.js?v=23"></script>
+    <script src="js/main.js?v=24"></script>
+    <!-- 自适应缩放(仅 ?fit=1 ✓): 游戏按 360x640 设计, 这里让整页等比放大到屏宽
+         ⚠ 用 zoom(真缩放 ✓ 浏览器重新高清绘制) 而不是 transform(拉伸位图 ⇒ 糊 ✗)
+         2026-09-22: 只给"整机预览"用 ✓ 实验室跑分那条路不加这个参数 ⇒ 坐标标定不受影响 ✓ -->
+    <script>
+      if (location.search.indexOf('fit=1') >= 0) {
+        var fitZoom = function () { return window.innerWidth / 360; };
+        window.__FIT = true;                 // 标记: 预览模式(布局微调只在这里生效 ✓)
+        document.documentElement.style.zoom = fitZoom();
+        // ⚠ 关键(2026-09-22 用户看出"游戏和记牌条清晰度像两个图层"): 牌面画在 **canvas** 上,
+        //   canvas 分辨率 = 布局尺寸 × devicePixelRatio ⇒ 只 zoom 不抬 dpr ⇒ 位图被放大 ⇒ 糊 ✗
+        //   (记牌条是 DOM/文字 ⇒ 矢量 ⇒ 放大依然清晰 ⇒ 两边就"不像一个图层" ✗)
+        //   这里把 dpr 报大 zoom 倍 ⇒ canvas 按 3 倍分辨率重绘 ⇒ 清晰度对齐 ✓
+        var realDpr = window.devicePixelRatio || 1;
+        try {
+          Object.defineProperty(window, 'devicePixelRatio', {
+            configurable: true, get: function () { return realDpr * fitZoom(); }
+          });
+        } catch (e) { /* 老浏览器不支持就算了 ✓ 只影响清晰度 */ }
+        window.addEventListener('resize', function () {
+          document.documentElement.style.zoom = fitZoom();
+        });
+      }
+    </script>
     <!-- 伴随应用(记牌助手) --- 只在 ?companion=1 时加载, 跑分那条路不受影响, 2026-09-22 -->
     <script>
       if (location.search.indexOf('companion=1') >= 0) {
         var s = document.createElement('script');
-        s.src = 'js/companion.js?v=1';
+        s.src = 'js/companion.js?v=8';
         document.body.appendChild(s);
       }
     </script>

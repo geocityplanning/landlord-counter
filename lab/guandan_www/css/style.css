@@ -5,7 +5,7 @@
  */
 
 :root {
-    --jianghuai-bg: linear-gradient(135deg, #1a4d2e 0%, #0d3311 50%, #0a1f0a 100%);
+    --jianghuai-bg: #14603a;              /* 纯色(2026-09-22 用户: 牌的背景要纯色 ✓ 原来渐变) */
     --jianghuai-table: #1a5c3a;
     --jianghuai-card-bg: #fffef5;
     --jianghuai-text: #f5f0e6;

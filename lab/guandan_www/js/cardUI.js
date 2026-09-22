@@ -162,7 +162,8 @@ const CardUI = (function() {
         const container = canvas.parentElement;
         const totalWidth = (paiList.length - 1) * cardGap + cardWidth;
         let startX = (container.clientWidth - totalWidth) / 2;
-        const y = container.clientHeight - cardHeight - 15;
+        // 2026-09-22 用户: 南侧的牌往上一些 ✓ (仅 ?fit=1 预览时生效 ⇒ 实验室点牌坐标不变 ✓)
+        const y = container.clientHeight - cardHeight - (window.__FIT ? 62 : 15);
         const selectedSet = new Set(selectedIds);
 
         for (let i = 0; i < paiList.length; i++) {
@@ -269,7 +270,10 @@ const CardUI = (function() {
         let x, y;
 
         switch (position) {
-            case 'bottom': x = 10; y = container.clientHeight - 100; break;
+            // 2026-09-22 用户: 我方的信息框(名字/张数/打X)被手牌压住了 ⇒ 上移
+            //   框高 45 ⇒ 原来贴 H-100, 手牌从 H-124 起 ⇒ 必然压住 ✗
+            //   仅 ?fit=1 预览时上移(实验室那条路的坐标一点不动 ✓)
+            case 'bottom': x = 10; y = container.clientHeight - (window.__FIT ? 178 : 100); break;
             case 'left': x = 10; y = 50; break;
             case 'top': x = container.clientWidth / 2 - 40; y = 10; break;
             case 'right': x = container.clientWidth - 90; y = 50; break;
@@ -334,13 +338,8 @@ const CardUI = (function() {
         ctx.fillRect(0, 0, container.clientWidth, container.clientHeight);
 
         ctx.beginPath();
-        ctx.ellipse(
-            container.clientWidth / 2, 
-            container.clientHeight / 2, 
-            container.clientWidth * 0.35, 
-            container.clientHeight * 0.3, 
-            0, 0, Math.PI * 2
-        );
+        ctx.arc(container.clientWidth / 2, container.clientHeight / 2, Math.min(container.clientWidth * 0.35, container.clientHeight * 0.3), 0, Math.PI * 2
+        )   /* 2026-09-22 用户: 原来是 ellipse, 画布被拉伸就变椭圆 ✗ ⇒ 改成正圆(取较小半径 ✓) */;
         ctx.fillStyle = 'rgba(0,0,0,0.15)';
         ctx.fill();
         ctx.strokeStyle = theme.tableBorder;

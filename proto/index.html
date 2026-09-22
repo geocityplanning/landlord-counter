@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>掼蛋伴随 · 安卓样机效果图</title>
+<!-- ==========================================================================
+     安卓样机 + 整机预览 —— 里面装的是**真游戏**(不是画出来的效果图)
+     样机外框(2026-09-22 用户要"UI 原型图常见的真手机样式"):
+        · 机身圆角 + 深色边框 + 投影  · 挖孔摄像头
+        · 状态栏: 时间 / 信号 / WiFi / 电量(纯 CSS 画 ✓ 不依赖图标库 ✓)
+     游戏来自符号链接 proto/game -> lab/guandan_www(原样 ✓)
+     整机自动缩放到窗口 ⇒ 一眼看全 ✓
+     ========================================================================== -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body { margin:0; padding:0; background:transparent !important; height:100%; overflow:hidden; display:flex; align-items:center; justify-content:center; }
+  #stage { transform-origin: center center; }
+
+  /* ---------- 样机机身 ---------- */
+  .phone { position:relative; width:1080px; height:2074px; background:#0e1319;   /* 2026-09-22: 原来 2010 < 92+1918+52 ⇒ 底部按钮被切 ✗ 加长到刚好装下 ✓ */
+           border-radius:78px; padding:26px; box-sizing:border-box;
+           box-shadow:0 40px 90px rgba(0,0,0,.65), 0 0 0 3px #2b323d inset; }
+  .screen { position:relative; width:100%; height:100%; border-radius:56px; overflow:hidden;
+            background:#0e1319; }
+  /* 挖孔摄像头 */
+  .hole { position:absolute; top:22px; left:50%; transform:translateX(-50%); width:26px; height:26px;
+          border-radius:50%; background:#05070a; box-shadow:0 0 0 3px #1a2029; z-index:5; }
+
+  /* ---------- 状态栏(纯 CSS) ---------- */
+  .status { position:relative; height:92px; background:#0b1017; color:#eef4ff;
+            display:flex; align-items:center; justify-content:space-between;
+            padding:0 44px; font:600 32px/1 -apple-system,"PingFang SC",sans-serif; letter-spacing:.5px; }
+  .status .r { display:flex; align-items:center; gap:18px; }
+  /* 信号: 四根小格 */
+  .sig { display:flex; align-items:flex-end; gap:4px; height:26px; }
+  .sig i { display:block; width:6px; background:#eef4ff; border-radius:2px; }
+  .sig i:nth-child(1){height:8px} .sig i:nth-child(2){height:14px}
+  .sig i:nth-child(3){height:20px} .sig i:nth-child(4){height:26px}
+  /* WiFi: 三层弧 */
+  .wifi { width:30px; height:24px; position:relative; }
+  .wifi i { position:absolute; left:50%; transform:translateX(-50%); border:4px solid #eef4ff;
+            border-color:#eef4ff transparent transparent transparent; border-radius:50%; }
+  .wifi i:nth-child(1){ bottom:-14px; width:30px; height:30px; }
+  .wifi i:nth-child(2){ bottom:-8px; width:18px; height:18px; }
+  .wifi i:nth-child(3){ bottom:-2px; width:6px; height:6px; background:#eef4ff; border:0; border-radius:50%; }
+  /* 电量 */
+  .bat { width:64px; height:30px; border:3px solid #eef4ff; border-radius:8px; position:relative; }
+  .bat::before { content:''; position:absolute; right:-9px; top:8px; width:5px; height:12px;
+                 background:#eef4ff; border-radius:0 3px 3px 0; }
+  .bat i { position:absolute; left:4px; top:4px; bottom:4px; width:62%; background:#5be08a; border-radius:4px; }
+  .pct { font-size:26px; font-weight:600; }
+
+  #game { width:1028px; height:1918px; border:0; display:block; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div class="phone">
+      <div class="screen">
+        <div class="hole"></div>
+        <div class="status">
+          <span>9:41</span>
+          <span class="r">
+            <span class="sig"><i></i><i></i><i></i><i></i></span>
+            <span class="wifi"><i></i><i></i><i></i></span>
+            <span class="pct">86%</span>
+            <span class="bat"><i></i></span>
+          </span>
+        </div>
+        <iframe id="game" src="game/index.html?companion=1&fit=1" title="掼蛋"></iframe>
+      </div>
+    </div>
+  </div>
+  <script>
+    // 整机等比缩放到窗口 ⇒ 一眼看全 ✓
+    (function () {
+      var st = document.getElementById('stage');
+      function fit() {
+        var w = st.offsetWidth || 1132, h = st.offsetHeight || 2126;
+        var z = Math.min(window.innerWidth / w, window.innerHeight / h) * 0.98;
+        st.style.transform = 'scale(' + z + ')';
+      }
+      fit(); window.addEventListener('resize', fit);
+      setTimeout(fit, 400);
+    })();
+  </script>
+</body>
+</html>

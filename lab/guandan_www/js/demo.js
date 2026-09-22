@@ -87,7 +87,7 @@
       + '</div>'
       + '<div style="padding:6px 9px;border-top:1px solid rgba(146,176,214,.25);flex:0 0 auto">'
       + '<label style="display:block;padding:5px 6px;background:rgba(255,255,255,.04);border-radius:7px;cursor:pointer">'
-      + '<input type="checkbox" id="demo-auto"> <b>AI 托管</b> <span style="color:#9BB0C9;font-size:10px">(游戏自带AI替南)</span></label>'
+      + '<input type="checkbox" id="demo-auto"> <b>AI 托管</b></label>'
       + '</div>';
     document.body.appendChild(panel);
 
@@ -168,8 +168,7 @@
     var t0 = window.__truth ? window.__truth() : {};
     var played = (window.__plays || []).reduce(function (a, p) { return a + (p.zhi || []).length; }, 0);
     var unseen = 0; for (var k in left) unseen += left[k];
-    panel.querySelector('#demo-sum').innerHTML = '场上未见 <b>' + unseen + '</b> 张 · 已出 ' + played
-      + ' 张<br><span style="color:#7E93AB">我的牌已从池里扣掉(和真记牌器一样)</span>';
+    panel.querySelector('#demo-sum').innerHTML = '场上未见 <b>' + unseen + '</b> 张 · 已出 ' + played + ' 张';
     var plBox = panel.querySelector('#demo-plays');
     plBox.innerHTML = lastPlays().join('<br>') || '—';
     plBox.scrollTop = plBox.scrollHeight;          // 自动滚到最新一手 ✓

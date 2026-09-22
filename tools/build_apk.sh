@@ -29,7 +29,7 @@ GAME_SRC="$REPO/lab/guandan_www"
 echo "⓪ 拷游戏(lab/guandan_www → build/assets/game)"
 cp -r "$GAME_SRC/." "$OUT/assets/game/"
 echo "   $(find "$OUT/assets/game" -type f | wc -l) 个文件 $(du -sh "$OUT/assets/game" | cut -f1)"
-[ -f "$OUT/assets/game/js/demo.js" ] || { echo "✗ 缺 js/demo.js(伴随前端) ⇒ 拒绝打包 ✗"; exit 1; }
+[ -f "$OUT/assets/game/js/companion.js" ] || { echo "✗ 缺 js/companion.js(伴随前端) ⇒ 拒绝打包 ✗"; exit 1; }
 
 echo "① 编译资源"
 "$BT/aapt2" compile --dir "$SRC/res" -o "$OUT/res.zip"
